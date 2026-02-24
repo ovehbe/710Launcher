@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Screen: 720x720 at 208dpi -->
+    <dimen name="status_bar_height">40dp</dimen>
+    <dimen name="header_height">56dp</dimen>
+    <dimen name="action_bar_height">36dp</dimen>
+    <dimen name="tab_bar_height">36dp</dimen>
+    <dimen name="dock_height">56dp</dimen>
+
+    <!-- Typography -->
+    <dimen name="text_clock">40sp</dimen>
+    <dimen name="text_date">14sp</dimen>
+    <dimen name="text_status">11sp</dimen>
+    <dimen name="text_tab">13sp</dimen>
+    <dimen name="text_app_label">10sp</dimen>
+    <dimen name="text_search">14sp</dimen>
+    <dimen name="text_dialog_title">16sp</dimen>
+    <dimen name="text_dialog_item">14sp</dimen>
+    <dimen name="text_notification">13sp</dimen>
+
+    <!-- Icons -->
+    <dimen name="icon_grid_size">46dp</dimen>
+    <dimen name="icon_dock_size">42dp</dimen>
+    <dimen name="icon_status_size">14dp</dimen>
+    <dimen name="icon_action_size">28dp</dimen>
+
+    <!-- Spacing -->
+    <dimen name="grid_item_padding">4dp</dimen>
+    <dimen name="dock_item_padding">6dp</dimen>
+    <dimen name="content_padding_h">8dp</dimen>
+    <dimen name="divider_height">1dp</dimen>
+    <dimen name="search_bar_height">36dp</dimen>
+
+    <integer name="grid_columns">6</integer>
+</resources>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BB 710 Launcher</string>
+
+    <string name="tab_frequent">Frequent</string>
+    <string name="tab_all">All</string>
+    <string name="tab_favorites">Favorites</string>
+
+    <string name="search_hint">Search</string>
+    <string name="extended_search">Extended Search</string>
+    <string name="dial_prefix">Dial:</string>
+
+    <string name="profile_title">Select a Profile</string>
+    <string name="profile_all_off">All Alerts Off</string>
+    <string name="profile_normal">Normal</string>
+    <string name="profile_loud">Loud</string>
+    <string name="profile_medium">Medium</string>
+    <string name="profile_silent">Silent</string>
+    <string name="profile_vibrate">Vibrate Only</string>
+    <string name="profile_change_sounds">Change Sounds and Alerts</string>
+
+    <string name="no_notifications">You currently have\nno new notifications</string>
+    <string name="add_to_favorites">Add to Favorites</string>
+    <string name="remove_from_favorites">Remove from Favorites</string>
+    <string name="pin_to_dock">Pin to Dock</string>
+    <string name="unpin_from_dock">Unpin from Dock</string>
+    <string name="app_info">App Info</string>
+    <string name="uninstall">Uninstall</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="add_widget">Add Widget</string>
+    <string name="remove_widget">Remove Widget</string>
+    <string name="widget_removed">Widget removed</string>
+</resources>

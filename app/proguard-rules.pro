@@ -1,0 +1,2 @@
+-keepclassmembers class * extends androidx.room.RoomDatabase { *; }
+-keep class com.bbos7.launcher.model.** { *; }

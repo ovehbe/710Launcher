@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bb_black">#FF000000</color>
+    <color name="bb_background">#FF1A1A1A</color>
+    <color name="bb_overlay">#7D000000</color>
+    <color name="bb_overlay_dark">#CC000000</color>
+    <color name="bb_header_bg">#CC1C1C1C</color>
+
+    <color name="bb_text_primary">#FFFFFFFF</color>
+    <color name="bb_text_secondary">#FFB0B0B0</color>
+    <color name="bb_text_dim">#FF808080</color>
+
+    <color name="bb_tab_active">#FF0073BC</color>
+    <color name="bb_tab_active_start">#FF0088DD</color>
+    <color name="bb_tab_active_end">#FF005A99</color>
+    <color name="bb_tab_inactive">#00000000</color>
+
+    <color name="bb_divider">#40353536</color>
+    <color name="bb_divider_light">#20FFFFFF</color>
+
+    <color name="bb_icon_tint">#FFBBBBBB</color>
+    <color name="bb_dock_bg">#E6000000</color>
+
+    <color name="bb_dialog_bg">#F0222222</color>
+    <color name="bb_dialog_highlight">#FF0073BC</color>
+    <color name="bb_dialog_text">#FFFFFFFF</color>
+
+    <color name="bb_search_bg">#FFFFFFFF</color>
+    <color name="bb_search_text">#FF000000</color>
+    <color name="bb_search_cursor">#FF0073BC</color>
+
+    <color name="bb_notification_empty">#FFD0D0D0</color>
+
+    <color name="transparent">#00000000</color>
+</resources>

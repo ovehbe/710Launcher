@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BBOS7" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:colorBackground">@color/bb_black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/bb_black</item>
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:fontFamily">@font/bbalphas</item>
+        <item name="colorPrimary">@color/bb_tab_active</item>
+        <item name="colorPrimaryDark">@color/bb_black</item>
+        <item name="colorAccent">@color/bb_tab_active</item>
+    </style>
+
+    <style name="BBDialogTheme" parent="Theme.AppCompat.Dialog">
+        <item name="android:windowBackground">@drawable/dialog_bg</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.6</item>
+        <item name="android:fontFamily">@font/bbalphas</item>
+    </style>
+</resources>
