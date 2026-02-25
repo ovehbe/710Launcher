@@ -10,8 +10,10 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.AppInfo
+import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.ShortcutHelper
 import com.meowgi.launcher710.ui.widgets.WidgetContainer
 import com.meowgi.launcher710.ui.widgets.WidgetHost
 
@@ -41,11 +43,13 @@ class AppGridFragment : Fragment() {
     private lateinit var recycler: RecyclerView
     private lateinit var adapter: AppAdapter
     var repository: AppRepository? = null
-    var onAppLongClick: ((AppInfo, View) -> Unit)? = null
     var onEmptySpaceLongClick: (() -> Unit)? = null
     var widgetHost: WidgetHost? = null
 
     private var widgetContainer: WidgetContainer? = null
+
+    var shortcutHelper: ShortcutHelper? = null
+    var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
 
     private val supportsWidgets: Boolean
         get() = tab == TAB_FAVORITES || tab == TAB_CUSTOM
@@ -91,14 +95,34 @@ class AppGridFragment : Fragment() {
 
         adapter = AppAdapter(
             requireContext(),
-            onClick = { app -> repository?.launchApp(app) },
-            onLongClick = { app, view -> onAppLongClick?.invoke(app, view) },
+            onClick = { item ->
+                when (item) {
+                    is LaunchableItem.App -> repository?.launchApp(item.app)
+                    is LaunchableItem.Shortcut -> shortcutHelper?.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
+                    is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
+                }
+            },
+            onLongClick = { item, view -> onItemLongClick?.invoke(item, view) },
             viewMode = effectiveViewMode,
             iconResolver = if (repository != null) {
-                { app -> repository!!.getIconForPage(app, pageId) }
-            } else {
-                null
-            }
+                { item ->
+                    when (item) {
+                        is LaunchableItem.App -> repository!!.getIconForPage(item.app, pageId)
+                        is LaunchableItem.Shortcut -> repository!!.getIconForShortcut(item.shortcut, pageId)
+                        is LaunchableItem.IntentShortcut -> repository!!.getIconForIntentShortcut(item.info, pageId)
+                    }
+                }
+            } else { null },
+            labelResolver = if (repository != null) {
+                val prefs = LauncherPrefs(requireContext())
+                ({ item: LaunchableItem ->
+                    when (item) {
+                        is LaunchableItem.App -> repository!!.getDisplayLabel(item.app, pageId)
+                        is LaunchableItem.Shortcut -> prefs.getCustomLabel(item.shortcut.shortcutKey, pageId) ?: item.shortcut.label
+                        is LaunchableItem.IntentShortcut -> prefs.getCustomLabel(item.info.shortcutKey, pageId) ?: item.info.label
+                    }
+                })
+            } else null
         )
         recycler.adapter = adapter
         setupEmptySpaceLongClick()
@@ -191,14 +215,20 @@ class AppGridFragment : Fragment() {
     fun refreshList() {
         if (!::adapter.isInitialized) return
         val repo = repository ?: return
-        val list = when (tab) {
+        val appList = when (tab) {
             TAB_FREQUENT -> repo.getFrequentApps()
             TAB_ALL -> repo.getAllApps()
             TAB_FAVORITES -> repo.getFavoriteApps()
             TAB_CUSTOM -> repo.getAppsForPage(pageId)
             else -> emptyList()
         }
-        adapter.submitList(list)
+        val items = appList.map { LaunchableItem.App(it) }.toMutableList<LaunchableItem>()
+        if (supportsWidgets) {
+            val prefs = LauncherPrefs(requireContext())
+            shortcutHelper?.getShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.Shortcut(it)) }
+            shortcutHelper?.getIntentShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.IntentShortcut(it)) }
+        }
+        adapter.submitList(items)
     }
 
     fun addWidgetToPage(widgetId: Int, info: AppWidgetProviderInfo) {

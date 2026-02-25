@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import com.meowgi.launcher710.model.AppDatabase
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.model.AppStats
+import com.meowgi.launcher710.model.IntentShortcutInfo
+import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import kotlinx.coroutines.*
 
 class AppRepository(private val context: Context) {
@@ -191,4 +193,25 @@ class AppRepository(private val context: Context) {
 
     fun getIconForContext(app: AppInfo, isAllPage: Boolean) =
         getIconForPage(app, if (isAllPage) "all" else "__global__")
+
+    fun getDisplayLabel(app: AppInfo, pageId: String?): CharSequence =
+        prefs.getCustomLabel(app.componentName.flattenToString(), pageId) ?: app.label
+
+    fun getIconForShortcut(shortcut: ShortcutDisplayInfo, pageId: String): android.graphics.drawable.Drawable {
+        val customDrawableName = prefs.getCustomIcon(shortcut.shortcutKey, pageId)
+        if (customDrawableName != null) {
+            val customIcon = resolveCustomIconFromAnyPack(customDrawableName)
+            if (customIcon != null) return customIcon
+        }
+        return shortcut.icon
+    }
+
+    fun getIconForIntentShortcut(info: IntentShortcutInfo, pageId: String): android.graphics.drawable.Drawable {
+        val customDrawableName = prefs.getCustomIcon(info.shortcutKey, pageId)
+        if (customDrawableName != null) {
+            val customIcon = resolveCustomIconFromAnyPack(customDrawableName)
+            if (customIcon != null) return customIcon
+        }
+        return info.icon
+    }
 }

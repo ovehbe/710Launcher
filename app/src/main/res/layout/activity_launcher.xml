@@ -51,53 +51,56 @@
                 android:contentDescription="Sound Profile"
                 android:padding="2dp" />
 
-            <View
+            <FrameLayout
+                android:id="@+id/actionBarCenter"
                 android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <LinearLayout
-                android:id="@+id/notificationTickerBar"
-                android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:visibility="gone"
+                android:layout_weight="1"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
                 android:clickable="true"
-                android:focusable="true"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp">
+                android:focusable="true">
 
-                <TextView
-                    android:id="@+id/notificationTickerText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:maxWidth="120dp"
-                    android:textColor="@color/bb_text_secondary"
-                    android:textSize="12sp"
-                    android:fontFamily="@font/bbalphas" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
 
-                <TextView
-                    android:id="@+id/notificationCount"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:background="@drawable/tab_active_bg"
-                    android:paddingStart="6dp"
-                    android:paddingEnd="6dp"
-                    android:paddingTop="2dp"
-                    android:paddingBottom="2dp"
-                    android:textColor="@color/bb_text_primary"
-                    android:textSize="11sp"
-                    android:fontFamily="@font/bbalphas" />
-            </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/notificationTickerBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:visibility="gone"
+                    android:clickable="true"
+                    android:focusable="true">
 
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
+                    <TextView
+                        android:id="@+id/notificationTickerText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:maxWidth="160dp"
+                        android:textColor="@color/bb_text_secondary"
+                        android:textSize="12sp"
+                        android:fontFamily="@font/bbalphas" />
+
+                    <TextView
+                        android:id="@+id/notificationCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/tab_active_bg"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:textColor="@color/bb_text_primary"
+                        android:textSize="11sp"
+                        android:fontFamily="@font/bbalphas" />
+                </LinearLayout>
+            </FrameLayout>
 
             <ImageView
                 android:id="@+id/btnSearch"

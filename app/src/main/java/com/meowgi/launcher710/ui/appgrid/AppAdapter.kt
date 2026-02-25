@@ -9,15 +9,17 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.AppInfo
+import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.util.LauncherPrefs
 
 class AppAdapter(
     private val context: android.content.Context,
-    private var apps: List<AppInfo> = emptyList(),
-    private val onClick: (AppInfo) -> Unit,
-    private val onLongClick: (AppInfo, View) -> Unit,
+    private var items: List<LaunchableItem> = emptyList(),
+    private val onClick: (LaunchableItem) -> Unit,
+    private val onLongClick: (LaunchableItem, View) -> Unit,
     private val viewMode: Int = 0, // 0 = grid, 1 = list
-    private val iconResolver: ((AppInfo) -> android.graphics.drawable.Drawable)? = null // Optional icon resolver
+    private val iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null,
+    private val labelResolver: ((LaunchableItem) -> CharSequence)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -41,8 +43,8 @@ class AppAdapter(
     private val iconSizePx: Int
         get() = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
 
-    fun submitList(list: List<AppInfo>) {
-        apps = list
+    fun submitList(list: List<LaunchableItem>) {
+        items = list
         notifyDataSetChanged()
     }
 
@@ -66,8 +68,9 @@ class AppAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        val app = apps[position]
-        val icon = iconResolver?.invoke(app) ?: app.icon
+        val item = items[position]
+        val icon = iconResolver?.invoke(item) ?: item.icon
+        val label = labelResolver?.invoke(item) ?: item.label
         when (holder) {
             is GridVH -> {
                 holder.icon.setImageDrawable(icon)
@@ -75,24 +78,22 @@ class AppAdapter(
                     width = iconSizePx
                     height = iconSizePx
                 } ?: android.view.ViewGroup.LayoutParams(iconSizePx, iconSizePx)
-                holder.label.text = app.label
-                holder.itemView.setOnClickListener { onClick(app) }
-                holder.itemView.setOnLongClickListener { onLongClick(app, it); true }
+                holder.label.text = label
+                holder.itemView.setOnClickListener { onClick(item) }
+                holder.itemView.setOnLongClickListener { onLongClick(item, it); true }
             }
             is ListVH -> {
                 holder.icon.setImageDrawable(icon)
-                holder.label.text = app.label
-                // Set accent color on the square
-                holder.accentSquare.setBackgroundColor(prefs.accentColor)
-                // Set background opacity on the name bar
-                val bgAlpha = prefs.listViewBgAlpha
-                val bgColor = Color.argb(bgAlpha, 0, 0, 0)
-                holder.nameBar.setBackgroundColor(bgColor)
-                holder.itemView.setOnClickListener { onClick(app) }
-                holder.itemView.setOnLongClickListener { onLongClick(app, it); true }
+                holder.label.text = label
+                val iconBarColor = if (prefs.listViewUseAccent) prefs.accentColor else prefs.listViewCustomColor
+                holder.accentSquare.setBackgroundColor(Color.argb(prefs.listViewIconBarAlpha, Color.red(iconBarColor), Color.green(iconBarColor), Color.blue(iconBarColor)))
+                val nameBarColor = Color.argb(prefs.listViewNameBarAlpha, 0, 0, 0)
+                holder.nameBar.setBackgroundColor(nameBarColor)
+                holder.itemView.setOnClickListener { onClick(item) }
+                holder.itemView.setOnLongClickListener { onLongClick(item, it); true }
             }
         }
     }
 
-    override fun getItemCount() = apps.size
+    override fun getItemCount() = items.size
 }

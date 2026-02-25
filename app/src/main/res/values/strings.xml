@@ -20,6 +20,7 @@
     <string name="profile_change_sounds">Change Sounds and Alerts</string>
 
     <string name="no_notifications">You currently have\nno new notifications</string>
+    <string name="clear_all">Clear all</string>
     <string name="add_to_favorites">Add to Favorites</string>
     <string name="remove_from_favorites">Remove from Favorites</string>
     <string name="pin_to_dock">Pin to Dock</string>
@@ -29,6 +30,8 @@
 
     <string name="settings_title">Settings</string>
     <string name="add_widget">Add Widget</string>
+    <string name="add_app_shortcut">Add App Shortcut</string>
+    <string name="add_shortcut_all">Add shortcut…</string>
     <string name="remove_widget">Remove Widget</string>
     <string name="widget_removed">Widget removed</string>
 </resources>

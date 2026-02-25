@@ -32,9 +32,13 @@ import com.meowgi.launcher710.ui.settings.SettingsActivity
 import com.meowgi.launcher710.ui.statusbar.BBStatusBar
 import com.meowgi.launcher710.ui.widgets.WidgetHost
 import com.meowgi.launcher710.ui.widgets.WidgetPickerDialog
+import com.meowgi.launcher710.model.IntentShortcutInfo
+import com.meowgi.launcher710.model.LaunchableItem
+import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.ShortcutHelper
 import kotlinx.coroutines.*
 
 class LauncherActivity : AppCompatActivity() {
@@ -50,6 +54,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var dockIconPackManager: IconPackManager
     private lateinit var pagerAdapter: AppPagerAdapter
     private lateinit var widgetHost: WidgetHost
+    private lateinit var shortcutHelper: ShortcutHelper
 
     private lateinit var statusBar: BBStatusBar
     private lateinit var headerView: HeaderView
@@ -100,6 +105,34 @@ class LauncherActivity : AppCompatActivity() {
         pendingWidgetId = -1
     }
 
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) recreate()
+    }
+
+    private val createShortcutLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        val shortcutIntent = data.getParcelableExtra<Intent>(Intent.EXTRA_SHORTCUT_INTENT) ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        var iconPath: String? = null
+        val iconBmp = data.getParcelableExtra<android.graphics.Bitmap>(Intent.EXTRA_SHORTCUT_ICON)
+        if (iconBmp != null) {
+            try {
+                val f = java.io.File(cacheDir, "shortcut_icon_${System.currentTimeMillis()}.png")
+                java.io.FileOutputStream(f).use { iconBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+                iconPath = f.absolutePath
+            } catch (_: Exception) { }
+        }
+        prefs.addIntentShortcutToPage(pageId, name, intentUri, iconPath)
+        pagerAdapter.refreshAll()
+    }
+
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             refreshWallpaper()
@@ -136,6 +169,7 @@ class LauncherActivity : AppCompatActivity() {
         loadPageIconPacks()
 
         widgetHost = WidgetHost(this)
+        shortcutHelper = ShortcutHelper(this)
 
         rootFrame = findViewById(R.id.rootFrame)
         mainLayout = findViewById(R.id.mainLayout)
@@ -151,12 +185,22 @@ class LauncherActivity : AppCompatActivity() {
         notificationTickerText = findViewById(R.id.notificationTickerText)
         notificationCount = findViewById(R.id.notificationCount)
 
-        notificationTickerBar.setOnClickListener { notificationHub.show() }
+        val toggleHub: () -> Unit = {
+            if (notificationHub.visibility == View.VISIBLE) {
+                notificationHub.hide()
+            } else {
+                notificationHub.show(prefs.getNotificationAppWhitelist())
+            }
+        }
+        findViewById<View>(R.id.actionBarCenter).setOnClickListener { toggleHub() }
+        notificationTickerBar.setOnClickListener { toggleHub() }
 
         ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { view, insets ->
             val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navBarInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val topPad = if (prefs.systemStatusBarVisible) systemBarInsets.top else 0
-            view.setPadding(view.paddingLeft, topPad, view.paddingRight, view.paddingBottom)
+            val bottomPad = if (prefs.navigationBarVisible) navBarInsets.bottom else 0
+            view.setPadding(view.paddingLeft, topPad, view.paddingRight, bottomPad)
             insets
         }
 
@@ -164,8 +208,12 @@ class LauncherActivity : AppCompatActivity() {
         searchOverlay.onDismiss = { appPager.visibility = View.VISIBLE }
 
         dockBar.repository = repository
+        dockBar.launcherPrefs = prefs
+        dockBar.shortcutHelper = shortcutHelper
         dockBar.onAppLaunch = { app -> repository.launchApp(app) }
+        dockBar.onIntentShortcutLaunch = { shortcutHelper.launchIntentShortcut(it.intentUri) }
         dockBar.onDockIconLongClick = { app -> showDockIconContextMenu(app) }
+        dockBar.onIntentShortcutLongClick = { showDockIntentShortcutContextMenu(it) }
         dockBar.dockIconResolver = { app -> repository.getIconForDock(app) }
 
         repository.onAppsChanged = {
@@ -207,6 +255,11 @@ class LauncherActivity : AppCompatActivity() {
         } else {
             controller.hide(WindowInsetsCompat.Type.statusBars())
         }
+        if (prefs.navigationBarVisible) {
+            controller.show(WindowInsetsCompat.Type.navigationBars())
+        } else {
+            controller.hide(WindowInsetsCompat.Type.navigationBars())
+        }
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.isAppearanceLightStatusBars = false
@@ -246,14 +299,22 @@ class LauncherActivity : AppCompatActivity() {
         statusBar.visibility = if (prefs.statusBarVisible) View.VISIBLE else View.GONE
         statusBar.applyOpacity()
         headerView.applyOpacity()
+        actionBar.setBackgroundColor(Color.argb(prefs.actionBarAlpha, 0, 0, 0))
         tabBarContainer.background?.alpha = prefs.tabBarAlpha
         dockBar.applyOpacity()
+        notificationHub.applyOpacity(prefs.notificationHubAlpha)
     }
 
     private fun setupPager() {
         pagerAdapter = AppPagerAdapter(
-            this, repository, widgetHost,
-            onAppLongClick = { app, view -> showAppContextMenu(app, view) },
+            this, repository, shortcutHelper, widgetHost,
+            onItemLongClick = { item, view ->
+                when (item) {
+                    is LaunchableItem.App -> showAppContextMenu(item.app, view)
+                    is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
+                    is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                }
+            },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
         )
         appPager.adapter = pagerAdapter
@@ -381,12 +442,30 @@ class LauncherActivity : AppCompatActivity() {
     private fun showHomeContextMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(getString(R.string.add_widget))
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val canAddShortcut = pageId == "favorites" || pageId.startsWith("custom_")
+        if (canAddShortcut) {
+            popup.menu.add(getString(R.string.add_app_shortcut))
+            popup.menu.add(getString(R.string.add_shortcut_all))
+        }
         popup.menu.add("Choose Wallpaper")
         popup.menu.add(getString(R.string.settings_title))
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 getString(R.string.add_widget) -> {
                     showWidgetPicker()
+                    true
+                }
+                getString(R.string.add_app_shortcut) -> {
+                    showAppShortcutPicker()
+                    true
+                }
+                getString(R.string.add_shortcut_all) -> {
+                    try {
+                        createShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                    } catch (_: Exception) {
+                        android.widget.Toast.makeText(this, "No shortcut handler found", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                     true
                 }
                 "Choose Wallpaper" -> {
@@ -397,7 +476,248 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 getString(R.string.settings_title) -> {
-                    startActivity(Intent(this, SettingsActivity::class.java))
+                    settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun showAppShortcutPicker() {
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        // Apps that have at least one shortcut (manifest/dynamic/pinned)
+        val appsWithShortcuts = repository.apps
+            .filter { shortcutHelper.getShortcutsForPackage(it.packageName).isNotEmpty() }
+            .sortedBy { it.label.lowercase() }
+        if (appsWithShortcuts.isEmpty()) {
+            android.widget.Toast.makeText(this, "No app shortcuts available", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val appNames = appsWithShortcuts.map { it.label }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle(getString(R.string.add_app_shortcut))
+            .setItems(appNames) { _, which ->
+                val app = appsWithShortcuts[which]
+                val shortcuts = shortcutHelper.getShortcutsForPackage(app.packageName)
+                if (shortcuts.isEmpty()) return@setItems
+                val shortcutLabels = shortcuts.map { it.shortLabel?.toString() ?: it.longLabel?.toString() ?: it.id }.toTypedArray()
+                AlertDialog.Builder(this, R.style.BBDialogTheme)
+                    .setTitle(app.label)
+                    .setItems(shortcutLabels) { _, idx ->
+                        val info = shortcuts[idx]
+                        prefs.addShortcutToPage(pageId, app.packageName, info.id)
+                        pagerAdapter.refreshAll()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showShortcutContextMenu(shortcut: ShortcutDisplayInfo, anchor: View) {
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add("Remove from page")
+        popup.menu.add("Change Name")
+        popup.menu.add("Change Icon")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title) {
+                "Remove from page" -> {
+                    prefs.removeShortcutFromPage(pageId, shortcut.packageName, shortcut.shortcutId)
+                    pagerAdapter.refreshAll()
+                    true
+                }
+                "Change Name" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change name for...")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val pageIdForName = if (which == 0) pageId else null
+                            val current = prefs.getCustomLabel(shortcut.shortcutKey, pageIdForName) ?: shortcut.label
+                            val input = android.widget.EditText(this).apply {
+                                setText(current.toString())
+                                setPadding(dp(24), dp(16), dp(24), dp(16))
+                                hint = "Name"
+                            }
+                            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                                .setTitle("Name")
+                                .setView(input)
+                                .setPositiveButton("OK") { _, _ ->
+                                    val name = input.text.toString().trim()
+                                    prefs.setCustomLabel(shortcut.shortcutKey, if (name.isEmpty()) null else name, pageIdForName)
+                                    pagerAdapter.refreshAll()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                "Change Icon" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change icon")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val isPageOnly = which == 0
+                            val pageIdForIcon = if (isPageOnly) pageId else null
+                            val pickerDialog = IconPickerDialog(this,
+                                onIconSelected = { drawableName, _ ->
+                                    prefs.setCustomIcon(shortcut.shortcutKey, drawableName, pageIdForIcon)
+                                    pagerAdapter.refreshAll()
+                                },
+                                onReset = {
+                                    prefs.setCustomIcon(shortcut.shortcutKey, null, pageIdForIcon)
+                                    pagerAdapter.refreshAll()
+                                }
+                            )
+                            pickerDialog.showPackPicker()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun showIntentShortcutContextMenu(info: IntentShortcutInfo, anchor: View) {
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val inDock = dockBar.getDockIntentShortcutsList().any { it.intentUri == info.intentUri }
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add("Remove from page")
+        if (inDock) popup.menu.add(getString(R.string.unpin_from_dock))
+        else popup.menu.add(getString(R.string.pin_to_dock))
+        popup.menu.add("Change Name")
+        popup.menu.add("Change Icon")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title) {
+                "Remove from page" -> {
+                    prefs.removeIntentShortcutFromPage(pageId, info.intentUri)
+                    pagerAdapter.refreshAll()
+                    true
+                }
+                getString(R.string.pin_to_dock) -> {
+                    dockBar.addIntentShortcutToDock(info)
+                    true
+                }
+                getString(R.string.unpin_from_dock) -> {
+                    dockBar.removeIntentShortcutFromDock(info)
+                    true
+                }
+                "Change Name" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change name for...")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val pageIdForName = if (which == 0) pageId else null
+                            val current = prefs.getCustomLabel(info.shortcutKey, pageIdForName) ?: info.label
+                            val input = android.widget.EditText(this).apply {
+                                setText(current.toString())
+                                setPadding(dp(24), dp(16), dp(24), dp(16))
+                                hint = "Name"
+                            }
+                            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                                .setTitle("Name")
+                                .setView(input)
+                                .setPositiveButton("OK") { _, _ ->
+                                    val name = input.text.toString().trim()
+                                    prefs.setCustomLabel(info.shortcutKey, if (name.isEmpty()) null else name, pageIdForName)
+                                    pagerAdapter.refreshAll()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                "Change Icon" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change icon")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val isPageOnly = which == 0
+                            val pageIdForIcon = if (isPageOnly) pageId else null
+                            val pickerDialog = IconPickerDialog(this,
+                                onIconSelected = { drawableName, _ ->
+                                    prefs.setCustomIcon(info.shortcutKey, drawableName, pageIdForIcon)
+                                    pagerAdapter.refreshAll()
+                                },
+                                onReset = {
+                                    prefs.setCustomIcon(info.shortcutKey, null, pageIdForIcon)
+                                    pagerAdapter.refreshAll()
+                                }
+                            )
+                            pickerDialog.showPackPicker()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun showDockIntentShortcutContextMenu(info: IntentShortcutInfo) {
+        val popup = PopupMenu(this, dockBar)
+        popup.menu.add(getString(R.string.unpin_from_dock))
+        popup.menu.add("Change Name")
+        popup.menu.add("Change Icon")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title) {
+                getString(R.string.unpin_from_dock) -> {
+                    dockBar.removeIntentShortcutFromDock(info)
+                    true
+                }
+                "Change Name" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change name for...")
+                        .setItems(arrayOf("Dock only", "Everywhere (global)")) { _, which ->
+                            val pageIdForName = if (which == 0) "dock" else null
+                            val current = prefs.getCustomLabel(info.shortcutKey, pageIdForName) ?: info.label
+                            val input = android.widget.EditText(this).apply {
+                                setText(current.toString())
+                                setPadding(dp(24), dp(16), dp(24), dp(16))
+                                hint = "Name"
+                            }
+                            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                                .setTitle("Name")
+                                .setView(input)
+                                .setPositiveButton("OK") { _, _ ->
+                                    val name = input.text.toString().trim()
+                                    prefs.setCustomLabel(info.shortcutKey, if (name.isEmpty()) null else name, pageIdForName)
+                                    dockBar.loadDock()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                "Change Icon" -> {
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change icon")
+                        .setItems(arrayOf("Dock only", "Everywhere (global)")) { _, which ->
+                            val pageId = if (which == 0) "dock" else null
+                            val pickerDialog = IconPickerDialog(this,
+                                onIconSelected = { drawableName, _ ->
+                                    prefs.setCustomIcon(info.shortcutKey, drawableName, pageId)
+                                    dockBar.loadDock()
+                                },
+                                onReset = {
+                                    prefs.setCustomIcon(info.shortcutKey, null, pageId)
+                                    dockBar.loadDock()
+                                }
+                            )
+                            pickerDialog.showPackPicker()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                     true
                 }
                 else -> false
@@ -445,7 +765,7 @@ class LauncherActivity : AppCompatActivity() {
     private fun setupNotifications() {
         NotifListenerService.onNotificationsChanged = {
             runOnUiThread {
-                notificationHub.refresh()
+                notificationHub.refresh(prefs.getNotificationAppWhitelist())
                 refreshNotificationTicker()
             }
         }
@@ -454,9 +774,11 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun refreshNotificationTicker() {
         val service = NotifListenerService.instance
-        val notifs = service?.getNotifications()?.filter {
+        var notifs = service?.getNotifications()?.filter {
             it.notification.extras.getCharSequence("android.title") != null
         } ?: emptyList()
+        val whitelist = prefs.getNotificationAppWhitelist()
+        if (whitelist.isNotEmpty()) notifs = notifs.filter { it.packageName in whitelist }
         if (notifs.isEmpty()) {
             notificationTickerBar.visibility = View.GONE
         } else {
@@ -505,6 +827,7 @@ class LauncherActivity : AppCompatActivity() {
             } else {
                 add(getString(R.string.pin_to_dock))
             }
+            add("Change Name")
             add("Change Icon")
             add(getString(R.string.app_info))
         }
@@ -535,6 +858,33 @@ class LauncherActivity : AppCompatActivity() {
                 }
                 title == getString(R.string.unpin_from_dock) -> {
                     dockBar.removeFromDock(app)
+                    true
+                }
+                title == "Change Name" -> {
+                    val currentPageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change name for...")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val pageId = if (which == 0) currentPageId else null
+                            val current = prefs.getCustomLabel(cn, pageId) ?: app.label
+                            val input = android.widget.EditText(this).apply {
+                                setText(current.toString())
+                                setPadding(dp(24), dp(16), dp(24), dp(16))
+                                hint = "Name"
+                            }
+                            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                                .setTitle("Name")
+                                .setView(input)
+                                .setPositiveButton("OK") { _, _ ->
+                                    val name = input.text.toString().trim()
+                                    prefs.setCustomLabel(cn, if (name.isEmpty()) null else name, pageId)
+                                    reloadAppsAndRefresh()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                     true
                 }
                 title == "Change Icon" -> {
@@ -587,11 +937,39 @@ class LauncherActivity : AppCompatActivity() {
     private fun showDockIconContextMenu(app: AppInfo) {
         val popup = PopupMenu(this, dockBar)
         popup.menu.add(getString(R.string.unpin_from_dock))
+        popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 getString(R.string.unpin_from_dock) -> {
                     dockBar.removeFromDock(app)
+                    true
+                }
+                "Change Name" -> {
+                    val cn = app.componentName.flattenToString()
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change name for...")
+                        .setItems(arrayOf("Dock only", "Everywhere (global)")) { _, which ->
+                            val pageId = if (which == 0) "dock" else null
+                            val current = prefs.getCustomLabel(cn, pageId) ?: app.label
+                            val input = android.widget.EditText(this).apply {
+                                setText(current.toString())
+                                setPadding(dp(24), dp(16), dp(24), dp(16))
+                                hint = "Name"
+                            }
+                            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                                .setTitle("Name")
+                                .setView(input)
+                                .setPositiveButton("OK") { _, _ ->
+                                    val name = input.text.toString().trim()
+                                    prefs.setCustomLabel(cn, if (name.isEmpty()) null else name, pageId)
+                                    reloadAppsAndRefresh()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                     true
                 }
                 "Change Icon" -> {
@@ -625,7 +1003,7 @@ class LauncherActivity : AppCompatActivity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_MENU) {
             notificationHub.let {
-                if (it.visibility == View.VISIBLE) it.hide() else it.show()
+                if (it.visibility == View.VISIBLE) it.hide() else it.show(prefs.getNotificationAppWhitelist())
             }
             return true
         }
@@ -680,6 +1058,7 @@ class LauncherActivity : AppCompatActivity() {
         applySystemUI()
         statusBar.refresh()
         refreshNotificationTicker()
+        if (notificationHub.visibility == View.VISIBLE) notificationHub.refresh(prefs.getNotificationAppWhitelist())
         applyOpacitySettings()
 
         // Reload icon packs if changed

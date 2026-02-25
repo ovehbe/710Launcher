@@ -3,15 +3,18 @@ package com.meowgi.launcher710.ui.appgrid
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.viewpager2.adapter.FragmentStateAdapter
+import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.ShortcutHelper
 import com.meowgi.launcher710.ui.widgets.WidgetHost
 
 class AppPagerAdapter(
     private val activity: FragmentActivity,
     private val repository: AppRepository,
+    private val shortcutHelper: ShortcutHelper,
     private val widgetHost: WidgetHost,
-    private val onAppLongClick: (com.meowgi.launcher710.model.AppInfo, android.view.View) -> Unit,
+    private val onItemLongClick: (LaunchableItem, android.view.View) -> Unit,
     private val onEmptySpaceLongClick: () -> Unit
 ) : FragmentStateAdapter(activity) {
 
@@ -31,7 +34,8 @@ class AppPagerAdapter(
         }
         val frag = AppGridFragment.newInstance(tabType, pageId)
         frag.repository = repository
-        frag.onAppLongClick = onAppLongClick
+        frag.shortcutHelper = shortcutHelper
+        frag.onItemLongClick = onItemLongClick
         frag.onEmptySpaceLongClick = onEmptySpaceLongClick
         frag.widgetHost = widgetHost
         fragments[position] = frag

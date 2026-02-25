@@ -1,6 +1,7 @@
 package com.meowgi.launcher710.ui.notifications
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.Gravity
@@ -32,7 +33,10 @@ class NotificationHub @JvmOverloads constructor(
             LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT
         ).apply { gravity = Gravity.CENTER })
 
-        scrollView = ScrollView(context)
+        scrollView = ScrollView(context).apply {
+            isClickable = true
+            setOnClickListener { /* consume so root doesn't close */ }
+        }
         container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -43,19 +47,21 @@ class NotificationHub @JvmOverloads constructor(
         setOnClickListener { hide() }
     }
 
-    fun show() {
+    fun show(appWhitelist: Set<String> = emptySet()) {
         visibility = VISIBLE
-        refresh()
+        refresh(appWhitelist)
     }
 
     fun hide() {
         visibility = GONE
     }
 
-    fun refresh() {
+    /** @param appWhitelist only show these packages; empty = show all */
+    fun refresh(appWhitelist: Set<String> = emptySet()) {
         container.removeAllViews()
         val service = NotifListenerService.instance
-        val notifs = service?.getNotifications() ?: emptyList()
+        var notifs = service?.getNotifications() ?: emptyList()
+        if (appWhitelist.isNotEmpty()) notifs = notifs.filter { it.packageName in appWhitelist }
         val filtered = notifs.filter { it.notification.extras.getCharSequence("android.title") != null }
 
         if (filtered.isEmpty()) {
@@ -77,9 +83,25 @@ class NotificationHub @JvmOverloads constructor(
 
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
                     setOnClickListener {
-                        try { sbn.notification.contentIntent?.send() } catch (_: Exception) {}
+                        var opened = false
+                        try {
+                            val intent = sbn.notification.contentIntent
+                            if (intent != null) {
+                                intent.send(context, 0, null, null, null)
+                                opened = true
+                            }
+                        } catch (_: Exception) { }
+                        if (!opened) {
+                            try {
+                                val launch = context.packageManager.getLaunchIntentForPackage(sbn.packageName)
+                                if (launch != null) {
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                }
+                            } catch (_: Exception) { }
+                        }
                         hide()
                     }
                 }
@@ -120,7 +142,34 @@ class NotificationHub @JvmOverloads constructor(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
                 ))
             }
+
+            val clearDivider = android.view.View(context).apply {
+                setBackgroundColor(resources.getColor(R.color.bb_divider, null))
+            }
+            container.addView(clearDivider, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            ))
+            val clearRow = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setOnClickListener {
+                    NotifListenerService.instance?.dismissAllNotifications()
+                    refresh(appWhitelist)
+                }
+            }
+            val clearLabel = TextView(context).apply {
+                text = context.getString(R.string.clear_all)
+                textSize = 13f
+                setTextColor(resources.getColor(R.color.bb_text_primary, null))
+                typeface = font?.let { Typeface.create(it, Typeface.BOLD) }
+            }
+            clearRow.addView(clearLabel)
+            container.addView(clearRow)
         }
+    }
+
+    fun applyOpacity(alpha: Int) {
+        setBackgroundColor(android.graphics.Color.argb(alpha, 0, 0, 0))
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

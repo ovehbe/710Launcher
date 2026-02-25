@@ -2,6 +2,8 @@ package com.meowgi.launcher710.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
 
 class LauncherPrefs(context: Context) {
 
@@ -76,6 +78,25 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("listViewBgAlpha", 200)
         set(v) = prefs.edit().putInt("listViewBgAlpha", v).apply()
 
+    /** true = use accent color for list icon bar; false = use listViewCustomColor */
+    var listViewUseAccent: Boolean
+        get() = prefs.getBoolean("listViewUseAccent", true)
+        set(v) = prefs.edit().putBoolean("listViewUseAccent", v).apply()
+
+    var listViewCustomColor: Int
+        get() = prefs.getInt("listViewCustomColor", accentColor)
+        set(v) = prefs.edit().putInt("listViewCustomColor", v).apply()
+
+    /** Opacity (0–255) for the colored icon bar background in list view */
+    var listViewIconBarAlpha: Int
+        get() = prefs.getInt("listViewIconBarAlpha", 255)
+        set(v) = prefs.edit().putInt("listViewIconBarAlpha", v).apply()
+
+    /** Opacity (0–255) for the name bar background in list view */
+    var listViewNameBarAlpha: Int
+        get() = prefs.getInt("listViewNameBarAlpha", prefs.getInt("listViewBgAlpha", 200))
+        set(v) = prefs.edit().putInt("listViewNameBarAlpha", v).apply()
+
     // --- Icon pack ---
     var iconPackPackage: String?
         get() = prefs.getString("iconPackPackage", null)
@@ -115,6 +136,28 @@ class LauncherPrefs(context: Context) {
     var systemStatusBarAlpha: Int
         get() = prefs.getInt("systemStatusBarAlpha", 0)
         set(v) = prefs.edit().putInt("systemStatusBarAlpha", v).apply()
+
+    /** Show system navigation bar; false = hidden (default, e.g. Zinwa Q25). */
+    var navigationBarVisible: Boolean
+        get() = prefs.getBoolean("navigationBarVisible", false)
+        set(v) = prefs.edit().putBoolean("navigationBarVisible", v).apply()
+
+    /** Opacity (0–255) for the action bar (ticker bar / top icons row). */
+    var actionBarAlpha: Int
+        get() = prefs.getInt("actionBarAlpha", 230)
+        set(v) = prefs.edit().putInt("actionBarAlpha", v).apply()
+
+    /** Opacity (0–255) for the notification hub overlay. */
+    var notificationHubAlpha: Int
+        get() = prefs.getInt("notificationHubAlpha", 250)
+        set(v) = prefs.edit().putInt("notificationHubAlpha", v).apply()
+
+    /** Package names to show in hub/ticker; empty = all. */
+    fun getNotificationAppWhitelist(): Set<String> =
+        prefs.getStringSet("notificationAppWhitelist", null) ?: emptySet()
+
+    fun setNotificationAppWhitelist(packages: Set<String>) =
+        prefs.edit().putStringSet("notificationAppWhitelist", packages).apply()
 
     // --- Behavior ---
     var defaultTab: Int
@@ -160,6 +203,28 @@ class LauncherPrefs(context: Context) {
             val obj = try { org.json.JSONObject(prefs.getString("customIcons", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
             if (drawableName != null) obj.put(componentName, drawableName) else obj.remove(componentName)
             prefs.edit().putString("customIcons", obj.toString()).apply()
+        }
+    }
+
+    // --- Custom labels (same pattern as custom icons: per-page or global) ---
+    fun getCustomLabel(componentName: String, pageId: String? = null): String? {
+        if (pageId != null) {
+            val pageMap = prefs.getString("customLabels_$pageId", null) ?: return null
+            return try { org.json.JSONObject(pageMap).optString(componentName, "").takeIf { it.isNotEmpty() } } catch (_: Exception) { null }
+        }
+        val map = prefs.getString("customLabels", null) ?: return null
+        return try { org.json.JSONObject(map).optString(componentName, "").takeIf { it.isNotEmpty() } } catch (_: Exception) { null }
+    }
+
+    fun setCustomLabel(componentName: String, label: String?, pageId: String? = null) {
+        if (pageId != null) {
+            val obj = try { org.json.JSONObject(prefs.getString("customLabels_$pageId", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+            if (label != null) obj.put(componentName, label) else obj.remove(componentName)
+            prefs.edit().putString("customLabels_$pageId", obj.toString()).apply()
+        } else {
+            val obj = try { org.json.JSONObject(prefs.getString("customLabels", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+            if (label != null) obj.put(componentName, label) else obj.remove(componentName)
+            prefs.edit().putString("customLabels", obj.toString()).apply()
         }
     }
 
@@ -213,6 +278,70 @@ class LauncherPrefs(context: Context) {
     fun isPageScrollable(pageId: String): Boolean = prefs.getBoolean("pageScroll_$pageId", false)
     fun setPageScrollable(pageId: String, value: Boolean) = prefs.edit().putBoolean("pageScroll_$pageId", value).apply()
 
+    // --- Per-page app shortcuts (ShortcutInfo pins) ---
+    /** Returns list of "packageName|shortcutId" for the page. */
+    fun getPageShortcuts(pageId: String): List<String> {
+        val data = prefs.getString("pageShortcuts_$pageId", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(data)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun setPageShortcuts(pageId: String, items: List<String>) {
+        val arr = org.json.JSONArray()
+        items.forEach { arr.put(it) }
+        prefs.edit().putString("pageShortcuts_$pageId", arr.toString()).apply()
+    }
+
+    fun addShortcutToPage(pageId: String, packageName: String, shortcutId: String) {
+        val key = "$packageName|$shortcutId"
+        val current = getPageShortcuts(pageId).toMutableList()
+        if (key !in current) {
+            current.add(key)
+            setPageShortcuts(pageId, current)
+        }
+    }
+
+    fun removeShortcutFromPage(pageId: String, packageName: String, shortcutId: String) {
+        val key = "$packageName|$shortcutId"
+        val current = getPageShortcuts(pageId).filter { it != key }
+        setPageShortcuts(pageId, current)
+    }
+
+    // --- Per-page intent shortcuts (from system "Add shortcut" / "All shortcuts" flow) ---
+    /** Returns JSON array of { "name", "intentUri", "iconFile"? } */
+    fun getPageIntentShortcuts(pageId: String): String? =
+        prefs.getString("pageIntentShortcuts_$pageId", null)
+
+    fun setPageIntentShortcuts(pageId: String, json: String) =
+        prefs.edit().putString("pageIntentShortcuts_$pageId", json).apply()
+
+    fun addIntentShortcutToPage(pageId: String, name: String, intentUri: String, iconFilePath: String? = null) {
+        val arr = try {
+            org.json.JSONArray(getPageIntentShortcuts(pageId) ?: "[]")
+        } catch (_: Exception) { org.json.JSONArray() }
+        val obj = org.json.JSONObject().apply {
+            put("name", name)
+            put("intentUri", intentUri)
+            if (iconFilePath != null) put("iconFile", iconFilePath)
+        }
+        arr.put(obj)
+        setPageIntentShortcuts(pageId, arr.toString())
+    }
+
+    fun removeIntentShortcutFromPage(pageId: String, intentUri: String) {
+        val arr = try {
+            org.json.JSONArray(getPageIntentShortcuts(pageId) ?: "[]")
+        } catch (_: Exception) { org.json.JSONArray() }
+        val newArr = org.json.JSONArray()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            if (obj.optString("intentUri") != intentUri) newArr.put(obj)
+        }
+        setPageIntentShortcuts(pageId, newArr.toString())
+    }
+
     // --- Widgets (per-page) ---
     fun getPageWidgetData(pageId: String): String? = prefs.getString("widgetData_$pageId", null)
     fun setPageWidgetData(pageId: String, data: String?) = prefs.edit().putString("widgetData_$pageId", data).apply()
@@ -236,6 +365,60 @@ class LauncherPrefs(context: Context) {
 
     fun resetAll() {
         prefs.edit().clear().apply()
+    }
+
+    /** Export all settings to a JSON string (for backup/restore and import on another device). */
+    fun exportToJson(): String {
+        val arr = JSONArray()
+        for ((k, v) in prefs.all) {
+            val obj = JSONObject()
+            obj.put("k", k)
+            when (v) {
+                is String -> { obj.put("t", "s"); obj.put("v", v) }
+                is Int, is java.lang.Integer -> { obj.put("t", "i"); obj.put("v", (v as Number).toInt()) }
+                is Long, is java.lang.Long -> { obj.put("t", "l"); obj.put("v", (v as Number).toLong()) }
+                is Float, is Double, is java.lang.Float, is java.lang.Double -> { obj.put("t", "f"); obj.put("v", (v as Number).toDouble()) }
+                is Boolean -> { obj.put("t", "b"); obj.put("v", v) }
+                is Set<*> -> {
+                    obj.put("t", "set")
+                    obj.put("v", JSONArray(v.map { it.toString() }))
+                }
+                else -> continue
+            }
+            arr.put(obj)
+        }
+        return JSONObject().put("entries", arr).put("version", 1).toString()
+    }
+
+    /** Import settings from a JSON string (from exportToJson). Clears current prefs first. Returns true on success. */
+    fun importFromJson(json: String): Boolean {
+        return try {
+            val root = JSONObject(json)
+            val entries = root.getJSONArray("entries")
+            val edit = prefs.edit()
+            edit.clear()
+            for (i in 0 until entries.length()) {
+                val o = entries.getJSONObject(i)
+                val k = o.getString("k")
+                when (o.getString("t")) {
+                    "s" -> edit.putString(k, o.getString("v"))
+                    "i" -> edit.putInt(k, o.getInt("v"))
+                    "l" -> edit.putLong(k, o.getLong("v"))
+                    "f" -> edit.putFloat(k, o.getDouble("v").toFloat())
+                    "b" -> edit.putBoolean(k, o.getBoolean("v"))
+                    "set" -> {
+                        val arr = o.getJSONArray("v")
+                        val set = (0 until arr.length()).mapTo(mutableSetOf()) { arr.getString(it) }
+                        edit.putStringSet(k, set)
+                    }
+                    else -> { }
+                }
+            }
+            edit.apply()
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     companion object {

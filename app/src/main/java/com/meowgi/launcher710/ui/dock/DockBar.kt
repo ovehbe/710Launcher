@@ -9,18 +9,23 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.AppInfo
+import com.meowgi.launcher710.model.IntentShortcutInfo
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.ShortcutHelper
 
 class DockBar @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
-    private val prefs: SharedPreferences = context.getSharedPreferences("dock", Context.MODE_PRIVATE)
+    private val dockPrefs: SharedPreferences = context.getSharedPreferences("dock", Context.MODE_PRIVATE)
     private val iconSize = (42 * resources.displayMetrics.density).toInt()
     private val maxSlots = 6
     var repository: AppRepository? = null
+    var shortcutHelper: ShortcutHelper? = null
+    var launcherPrefs: LauncherPrefs? = null
     var onAppLaunch: ((AppInfo) -> Unit)? = null
+    var onIntentShortcutLaunch: ((IntentShortcutInfo) -> Unit)? = null
     var dockIconResolver: ((AppInfo) -> android.graphics.drawable.Drawable)? = null
 
     init {
@@ -32,45 +37,54 @@ class DockBar @JvmOverloads constructor(
     fun loadDock() {
         removeAllViews()
         val repo = repository ?: return
-        val docked = getDockApps(repo)
+        val dockedApps = getDockApps(repo)
+        val prefs = launcherPrefs
+        val dockedShortcuts = if (shortcutHelper != null && prefs != null) shortcutHelper!!.getIntentShortcutsForPage("dock", prefs) else emptyList()
+        val total = dockedApps.size + dockedShortcuts.size
+        if (total == 0) return
 
         val moveThreshold = dp(10).toFloat()
-        for (app in docked) {
+        for (app in dockedApps) {
             val icon = dockIconResolver?.invoke(app) ?: app.icon
-            val iv = ImageView(context).apply {
-                setImageDrawable(icon)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setPadding(dp(6), dp(2), dp(6), dp(2))
-                setOnClickListener { onAppLaunch?.invoke(app) }
-                setOnLongClickListener {
-                    onDockIconLongClick?.invoke(app)
-                    true
-                }
-                var downX = 0f
-                var downY = 0f
-                setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            downX = event.rawX
-                            downY = event.rawY
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            val dx = kotlin.math.abs(event.rawX - downX)
-                            val dy = kotlin.math.abs(event.rawY - downY)
-                            if (dx > moveThreshold || dy > moveThreshold) {
-                                v.cancelLongPress()
-                                v.isPressed = false
-                            }
+            addView(makeDockIconView(icon, { onAppLaunch?.invoke(app) }, { onDockIconLongClick?.invoke(app) }, moveThreshold), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        }
+        for (info in dockedShortcuts) {
+            val icon = repo.getIconForIntentShortcut(info, "dock")
+            addView(makeDockIconView(icon, { onIntentShortcutLaunch?.invoke(info) }, { onIntentShortcutLongClick?.invoke(info) }, moveThreshold), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        }
+    }
+
+    private fun makeDockIconView(
+        icon: android.graphics.drawable.Drawable,
+        onClick: () -> Unit,
+        onLongClick: () -> Unit,
+        moveThreshold: Float
+    ): ImageView {
+        return ImageView(context).apply {
+            setImageDrawable(icon)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            setOnClickListener { onClick() }
+            setOnLongClickListener { onLongClick(); true }
+            var downX = 0f
+            var downY = 0f
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (kotlin.math.abs(event.rawX - downX) > moveThreshold || kotlin.math.abs(event.rawY - downY) > moveThreshold) {
+                            cancelLongPress()
+                            isPressed = false
                         }
                     }
-                    false
                 }
+                false
             }
-            addView(iv, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         }
     }
 
     var onDockIconLongClick: ((AppInfo) -> Unit)? = null
+    var onIntentShortcutLongClick: ((IntentShortcutInfo) -> Unit)? = null
 
     fun getDockAppsList(): List<AppInfo> {
         val repo = repository ?: return emptyList()
@@ -96,8 +110,28 @@ class DockBar @JvmOverloads constructor(
         loadDock()
     }
 
+    fun getDockIntentShortcutsList(): List<IntentShortcutInfo> {
+        val helper = shortcutHelper ?: return emptyList()
+        val prefs = launcherPrefs ?: return emptyList()
+        return helper.getIntentShortcutsForPage("dock", prefs)
+    }
+
+    fun addIntentShortcutToDock(info: IntentShortcutInfo) {
+        val prefs = launcherPrefs ?: return
+        val current = getDockIntentShortcutsList()
+        if (current.size + getDockAppsList().size >= maxSlots) return
+        if (current.any { it.intentUri == info.intentUri }) return
+        prefs.addIntentShortcutToPage("dock", info.label.toString(), info.intentUri, null)
+        loadDock()
+    }
+
+    fun removeIntentShortcutFromDock(info: IntentShortcutInfo) {
+        launcherPrefs?.removeIntentShortcutFromPage("dock", info.intentUri)
+        loadDock()
+    }
+
     private fun getDockApps(repo: AppRepository): List<AppInfo> {
-        val saved = prefs.getString("dock_apps", null)
+        val saved = dockPrefs.getString("dock_apps", null)
         if (saved != null) {
             val components = saved.split("|")
             return components.mapNotNull { cn ->
@@ -133,7 +167,7 @@ class DockBar @JvmOverloads constructor(
 
     fun saveDock(apps: List<AppInfo>) {
         val str = apps.joinToString("|") { "${it.packageName}/${it.activityName}" }
-        prefs.edit().putString("dock_apps", str).apply()
+        dockPrefs.edit().putString("dock_apps", str).apply()
     }
 
     fun applyOpacity() {

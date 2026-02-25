@@ -3,18 +3,41 @@ package com.meowgi.launcher710.ui.settings
 import android.app.WallpaperManager
 import android.content.Intent
 import android.graphics.Color
+import android.provider.Settings
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.view.WindowCompat
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
+import java.text.SimpleDateFormat
+import java.util.*
+
+/** FrameLayout that never exceeds maxHeightPx so a child ScrollView can scroll. */
+private class MaxHeightFrameLayout(
+    context: android.content.Context,
+    private val maxHeightPx: Int
+) : FrameLayout(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val hMode = View.MeasureSpec.getMode(heightMeasureSpec)
+        val hSize = View.MeasureSpec.getSize(heightMeasureSpec)
+        val capped = if (hMode == View.MeasureSpec.UNSPECIFIED || hSize > maxHeightPx) {
+            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.EXACTLY)
+        } else {
+            heightMeasureSpec
+        }
+        super.onMeasure(widthMeasureSpec, capped)
+    }
+}
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -23,8 +46,40 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var container: LinearLayout
     private val font: Typeface? by lazy { ResourcesCompat.getFont(this, R.font.bbalphas) }
 
+    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.openOutputStream(uri)?.use { it.write(prefs.exportToJson().toByteArray(Charsets.UTF_8)) }
+                Toast.makeText(this, "Settings exported", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Export failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                val json = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: return@registerForActivityResult
+                val backup = prefs.exportToJson()
+                val backupName = "launcher_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.json"
+                openFileOutput(backupName, MODE_PRIVATE).use { it.write(backup.toByteArray(Charsets.UTF_8)) }
+                if (prefs.importFromJson(json)) {
+                    Toast.makeText(this, "Settings imported. Launcher will restart.", Toast.LENGTH_LONG).show()
+                    setResult(RESULT_OK)
+                    finish()
+                } else {
+                    Toast.makeText(this, "Import failed (invalid file)", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this, "Import failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         setContentView(R.layout.activity_settings)
 
         prefs = LauncherPrefs(this)
@@ -41,9 +96,11 @@ class SettingsActivity : AppCompatActivity() {
         addToggle("Show BB Status Bar", prefs.statusBarVisible) { prefs.statusBarVisible = it }
         addToggle("Show System Status Bar", prefs.systemStatusBarVisible) { prefs.systemStatusBarVisible = it }
         addSlider("System Status Bar Opacity", prefs.systemStatusBarAlpha) { prefs.systemStatusBarAlpha = it }
+        addToggle("Show Navigation Bar", prefs.navigationBarVisible) { prefs.navigationBarVisible = it }
         addSlider("Main Background Opacity", prefs.mainBackgroundAlpha) { prefs.mainBackgroundAlpha = it }
         addSlider("Status Bar Opacity", prefs.statusBarAlpha) { prefs.statusBarAlpha = it }
         addSlider("Header Opacity", prefs.headerAlpha) { prefs.headerAlpha = it }
+        addSlider("Action bar (ticker) opacity", prefs.actionBarAlpha) { prefs.actionBarAlpha = it }
         addSlider("Tab Bar Opacity", prefs.tabBarAlpha) { prefs.tabBarAlpha = it }
         addSlider("Dock Opacity", prefs.dockAlpha) { prefs.dockAlpha = it }
         addChoice("Dock Color", listOf("Black", "Dark Gray", "Blue", "Navy"), getDockColorIndex()) {
@@ -54,15 +111,19 @@ class SettingsActivity : AppCompatActivity() {
                 else -> 0xFF0A1628.toInt()
             }
         }
-        addChoice("Accent Color", listOf("BB Blue", "Teal", "Red", "Green", "Purple", "Orange", "White"), getAccentColorIndex()) {
-            prefs.accentColor = when (it) {
-                0 -> 0xFF0073BC.toInt() // BB Blue
-                1 -> 0xFF00BFA5.toInt() // Teal
-                2 -> 0xFFFF5252.toInt() // Red
-                3 -> 0xFF4CAF50.toInt() // Green
-                4 -> 0xFF9C27B0.toInt() // Purple
-                5 -> 0xFFFF9800.toInt() // Orange
-                else -> 0xFFFFFFFF.toInt() // White
+        addChoice("Accent Color", listOf("BB Blue", "Teal", "Red", "Green", "Purple", "Orange", "White", "Choose color…"), getAccentColorIndex()) {
+            if (it == 7) {
+                showColorPicker(prefs.accentColor) { prefs.accentColor = it }
+            } else {
+                prefs.accentColor = when (it) {
+                    0 -> 0xFF0073BC.toInt() // BB Blue
+                    1 -> 0xFF00BFA5.toInt() // Teal
+                    2 -> 0xFFFF5252.toInt() // Red
+                    3 -> 0xFF4CAF50.toInt() // Green
+                    4 -> 0xFF9C27B0.toInt() // Purple
+                    5 -> 0xFFFF9800.toInt() // Orange
+                    else -> 0xFFFFFFFF.toInt() // White
+                }
             }
         }
         addChoice("App View Mode", listOf("Grid", "Old School List"), prefs.appViewMode) {
@@ -74,7 +135,12 @@ class SettingsActivity : AppCompatActivity() {
             addChoice("List View Columns", listOf("1", "2", "3"), prefs.listViewColumns - 1) {
                 prefs.listViewColumns = it + 1
             }
-            addSlider("List Bar Opacity", prefs.listViewBgAlpha) { prefs.listViewBgAlpha = it }
+            addChoice("List icon bar color", listOf("Use accent", "Choose color"), if (prefs.listViewUseAccent) 0 else 1) {
+                prefs.listViewUseAccent = (it == 0)
+                if (it == 1) showColorPicker(prefs.listViewCustomColor) { prefs.listViewCustomColor = it }
+            }
+            addSlider("List icon bar opacity", prefs.listViewIconBarAlpha) { prefs.listViewIconBarAlpha = it }
+            addSlider("List name bar opacity", prefs.listViewNameBarAlpha) { prefs.listViewNameBarAlpha = it }
         }
         addChoice("Grid Columns", listOf("3", "4", "5", "6"), prefs.gridColumns - 3) {
             prefs.gridColumns = it + 3
@@ -104,6 +170,28 @@ class SettingsActivity : AppCompatActivity() {
             listOf("Circle", "Rounded Square", "Square", "Squircle"),
             prefs.iconFallbackShape) { prefs.iconFallbackShape = it }
 
+        addSection("Notifications")
+        addSlider("Notification hub opacity", prefs.notificationHubAlpha) { prefs.notificationHubAlpha = it }
+        addButton("Apps in notification hub: ${getNotificationAppsLabel()}") { showNotificationAppsPicker() }
+
+        addSection("Permissions")
+        addButton("Notification access") {
+            try {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Could not open notification settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+        addButton("App permissions & info") {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.data = android.net.Uri.parse("package:$packageName")
+                startActivity(intent)
+            } catch (_: Exception) {
+                Toast.makeText(this, "Could not open app settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         addSection("Pages")
         addButton("Manage Pages") { showPageManager() }
 
@@ -117,6 +205,19 @@ class SettingsActivity : AppCompatActivity() {
             prefs.doubleTapAction = it
         }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
+
+        addSection("Backup & restore")
+        addButton("Export settings") {
+            exportLauncher.launch("bb_launcher_settings_${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.json")
+        }
+        addButton("Import settings") {
+            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                .setTitle("Import settings?")
+                .setMessage("Current settings will be backed up to app storage first, then replaced. Launcher will close after import.")
+                .setPositiveButton("Import") { _, _ -> importLauncher.launch(arrayOf("application/json", "*/*")) }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
 
         addSection("About")
         addInfo("Version", "1.0")
@@ -250,6 +351,71 @@ class SettingsActivity : AppCompatActivity() {
         rebuildDialog()
     }
 
+    private fun getNotificationAppsLabel(): String {
+        val w = prefs.getNotificationAppWhitelist()
+        return if (w.isEmpty()) "All apps" else "${w.size} app(s)"
+    }
+
+    private fun showNotificationAppsPicker() {
+        val whitelist = prefs.getNotificationAppWhitelist()
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        if (pkgList.isEmpty()) {
+            Toast.makeText(this, "No installed apps found.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val maxHeightPx = (resources.displayMetrics.heightPixels * 0.6).toInt().coerceAtLeast(dp(240))
+        val wrapper = MaxHeightFrameLayout(this, maxHeightPx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val scroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isFillViewport = true
+        }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        val hint = TextView(this).apply {
+            text = "When none selected, all apps are shown. Select apps to show only their notifications."
+            setPadding(0, 0, 0, dp(8))
+            setTextColor(Color.GRAY)
+            textSize = 12f
+        }
+        layout.addView(hint)
+        val checks = mutableMapOf<String, CheckBox>()
+        for ((pkg, label) in pkgList) {
+            val cb = CheckBox(this).apply {
+                text = label
+                isChecked = pkg in whitelist
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+            }
+            checks[pkg] = cb
+            layout.addView(cb)
+        }
+        scroll.addView(layout)
+        wrapper.addView(scroll)
+        val dialog = AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Apps in notification hub")
+            .setView(wrapper)
+            .setPositiveButton("OK") { _, _ ->
+                val selected = checks.filter { it.value.isChecked }.keys
+                prefs.setNotificationAppWhitelist(selected)
+            }
+            .setNegativeButton("Clear (show all)") { _, _ -> prefs.setNotificationAppWhitelist(emptySet()) }
+            .setNeutralButton("Cancel", null)
+            .create()
+        dialog.show()
+    }
+
     private fun getDockColorIndex(): Int {
         return when (prefs.dockBackgroundColor) {
             0xFF1A1A1A.toInt() -> 1
@@ -268,8 +434,88 @@ class SettingsActivity : AppCompatActivity() {
             0xFF9C27B0.toInt() -> 4 // Purple
             0xFFFF9800.toInt() -> 5 // Orange
             0xFFFFFFFF.toInt() -> 6 // White
-            else -> 0
+            else -> 7 // Custom
         }
+    }
+
+    /** Shows presets + custom (RGB sliders); calls onColor with 0xFFRRGGBB. */
+    private fun showColorPicker(initialColor: Int, onColor: (Int) -> Unit) {
+        val presets = listOf(
+            "BB Blue" to 0xFF0073BC.toInt(),
+            "Teal" to 0xFF00BFA5.toInt(),
+            "Red" to 0xFFFF5252.toInt(),
+            "Green" to 0xFF4CAF50.toInt(),
+            "Purple" to 0xFF9C27B0.toInt(),
+            "Orange" to 0xFFFF9800.toInt(),
+            "White" to 0xFFFFFFFF.toInt(),
+            "Custom…" to null
+        )
+        val options = presets.map { it.first }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose color")
+            .setItems(options) { _, which ->
+                val color = presets[which].second
+                if (color != null) {
+                    onColor(color)
+                } else {
+                    showCustomColorPicker(initialColor, onColor)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showCustomColorPicker(initialColor: Int, onColor: (Int) -> Unit) {
+        var r = Color.red(initialColor)
+        var g = Color.green(initialColor)
+        var b = Color.blue(initialColor)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+        }
+        fun makeSlider(label: String, value: Int, onChanged: (Int) -> Unit): LinearLayout {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(8), 0, dp(8))
+            }
+            val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            header.addView(makeLabel(label), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val valueText = TextView(this).apply {
+                text = value.toString()
+                setTextColor(prefs.accentColor)
+                textSize = 12f
+            }
+            header.addView(valueText)
+            row.addView(header)
+            val seek = SeekBar(this).apply {
+                max = 255
+                progress = value
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                        valueText.text = p.toString()
+                        if (fromUser) onChanged(p)
+                    }
+                    override fun onStartTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) {}
+                })
+            }
+            row.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return row
+        }
+        content.addView(makeSlider("Red", r) { r = it })
+        content.addView(makeSlider("Green", g) { g = it })
+        content.addView(makeSlider("Blue", b) { b = it })
+        val preview = View(this).apply {
+            setBackgroundColor(Color.rgb(r, g, b))
+            minimumHeight = dp(48)
+        }
+        content.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Custom color")
+            .setView(content)
+            .setPositiveButton("OK") { _, _ -> onColor(Color.rgb(r, g, b)) }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     // --- Section header ---

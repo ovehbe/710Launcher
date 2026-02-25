@@ -15,7 +15,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
-import com.meowgi.launcher710.model.AppInfo
+import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.util.AppRepository
 
@@ -102,9 +102,15 @@ class SearchOverlay @JvmOverloads constructor(
         }
         adapter = AppAdapter(
             context,
-            onClick = { app ->
-                repository?.launchApp(app)
-                dismiss()
+            onClick = { item ->
+                when (item) {
+                    is LaunchableItem.App -> {
+                        repository?.launchApp(item.app)
+                        dismiss()
+                    }
+                    is LaunchableItem.Shortcut -> { /* search only shows apps */ }
+                    is LaunchableItem.IntentShortcut -> { /* search only shows apps */ }
+                }
             },
             onLongClick = { _, _ -> }
         )
@@ -139,7 +145,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun onSearch(query: String) {
         val repo = repository ?: return
         val results = repo.searchApps(query)
-        adapter.submitList(results)
+        adapter.submitList(results.map { LaunchableItem.App(it) })
 
         val isPhone = query.matches(Regex("^[0-9+*#]+$"))
         if (isPhone && query.length > 2) {

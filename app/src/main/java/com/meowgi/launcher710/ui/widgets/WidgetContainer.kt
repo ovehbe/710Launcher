@@ -3,6 +3,7 @@ package com.meowgi.launcher710.ui.widgets
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
+import android.os.Bundle
 import android.util.AttributeSet
 import android.view.View
 import android.widget.FrameLayout
@@ -65,6 +66,17 @@ class WidgetContainer @JvmOverloads constructor(
     private fun addWidgetView(widgetId: Int, hostView: android.appwidget.AppWidgetHostView, info: AppWidgetProviderInfo) {
         val defaultH = dp(info.minHeight.coerceAtLeast(100).coerceAtMost(600))
         val heightPx = getSavedHeight(widgetId, defaultH).coerceAtLeast(dp(48))
+        val density = resources.displayMetrics.density
+        val widthPx = resources.displayMetrics.widthPixels
+        val widthDp = (widthPx / density).toInt()
+        val heightDp = (heightPx / density).toInt()
+        val opts = Bundle().apply {
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, widthDp)
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, heightDp)
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, widthDp)
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, heightDp)
+        }
+        AppWidgetManager.getInstance(context).updateAppWidgetOptions(widgetId, opts)
 
         val wrapper = ResizableWidgetFrame(context, null, widgetId, heightPx, snapDp, prefs) { newH ->
             saveWidgetHeight(widgetId, newH)
@@ -110,11 +122,21 @@ class WidgetContainer @JvmOverloads constructor(
                 val id = arr.getInt(i)
                 val info = awm.getAppWidgetInfo(id) ?: continue
                 val host = widgetHost ?: continue
+                val defaultH = dp(info.minHeight.coerceAtLeast(100).coerceAtMost(600))
+                val heightPx = getSavedHeight(id, defaultH).coerceAtLeast(dp(48))
+                val density = resources.displayMetrics.density
+                val widthDp = (resources.displayMetrics.widthPixels / density).toInt()
+                val heightDp = (heightPx / density).toInt()
+                val opts = Bundle().apply {
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, widthDp)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, heightDp)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, widthDp)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, heightDp)
+                }
+                awm.updateAppWidgetOptions(id, opts)
                 val hostView = try {
                     host.createView(context, id, info).also { it.setAppWidget(id, info) }
                 } catch (_: Exception) { continue }
-                val defaultH = dp(info.minHeight.coerceAtLeast(100).coerceAtMost(600))
-                val heightPx = getSavedHeight(id, defaultH).coerceAtLeast(dp(48))
 
                 val wrapper = ResizableWidgetFrame(context, null, id, heightPx, snapDp, prefs) { newH ->
                     saveWidgetHeight(id, newH)
