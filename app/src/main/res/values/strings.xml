@@ -34,4 +34,6 @@
     <string name="add_shortcut_all">Add shortcut…</string>
     <string name="remove_widget">Remove Widget</string>
     <string name="widget_removed">Widget removed</string>
+
+    <string name="accessibility_key_capture_description">Used only when recording key shortcuts in launcher settings. Captures key presses (e.g. Home) so they can be assigned without triggering their normal action. Only active while the launcher or its settings are in use.</string>
 </resources>

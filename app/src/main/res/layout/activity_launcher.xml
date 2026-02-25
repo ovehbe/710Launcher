@@ -100,6 +100,23 @@
                         android:textSize="11sp"
                         android:fontFamily="@font/bbalphas" />
                 </LinearLayout>
+
+                <EditText
+                    android:id="@+id/searchInputInBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone"
+                    android:hint="@string/search_hint"
+                    android:inputType="textNoSuggestions"
+                    android:imeOptions="actionSearch"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:background="@drawable/search_bar_bg"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/bb_search_text"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/bbalphas" />
             </FrameLayout>
 
             <ImageView
@@ -135,6 +152,12 @@
                 android:visibility="gone"
                 android:background="@color/bb_overlay_dark" />
 
+            <com.meowgi.launcher710.ui.search.SearchOverlay
+                android:id="@+id/searchOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
         </FrameLayout>
 
         <View
@@ -164,12 +187,5 @@
             android:background="@color/bb_dock_bg" />
 
     </LinearLayout>
-
-    <!-- Search overlay (shown on top of everything) -->
-    <com.meowgi.launcher710.ui.search.SearchOverlay
-        android:id="@+id/searchOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone" />
 
 </FrameLayout>

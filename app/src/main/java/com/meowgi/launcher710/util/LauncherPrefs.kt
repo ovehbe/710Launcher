@@ -152,6 +152,11 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("notificationHubAlpha", 250)
         set(v) = prefs.edit().putInt("notificationHubAlpha", v).apply()
 
+    /** Opacity (0–255) for the search overlay. */
+    var searchOverlayAlpha: Int
+        get() = prefs.getInt("searchOverlayAlpha", 230)
+        set(v) = prefs.edit().putInt("searchOverlayAlpha", v).apply()
+
     /** Package names to show in hub/ticker; empty = all. */
     fun getNotificationAppWhitelist(): Set<String> =
         prefs.getStringSet("notificationAppWhitelist", null) ?: emptySet()
@@ -160,6 +165,11 @@ class LauncherPrefs(context: Context) {
         prefs.edit().putStringSet("notificationAppWhitelist", packages).apply()
 
     // --- Behavior ---
+    /** 0 = bottom bar only, 1 = anywhere on screen */
+    var swipeMode: Int
+        get() = prefs.getInt("swipeMode", 0)
+        set(v) = prefs.edit().putInt("swipeMode", v).apply()
+
     var defaultTab: Int
         get() = prefs.getInt("defaultTab", 1)
         set(v) = prefs.edit().putInt("defaultTab", v).apply()
@@ -171,6 +181,44 @@ class LauncherPrefs(context: Context) {
     var searchOnType: Boolean
         get() = prefs.getBoolean("searchOnType", true)
         set(v) = prefs.edit().putBoolean("searchOnType", v).apply()
+
+    /** 0 = built-in, 1 = launch app, 2 = launch with query, 3 = launch shortcut, 4 = disabled */
+    var searchEngineMode: Int
+        get() = prefs.getInt("searchEngineMode", 0)
+        set(v) = prefs.edit().putInt("searchEngineMode", v).apply()
+
+    var searchEnginePackage: String?
+        get() = prefs.getString("searchEnginePackage", null)
+        set(v) = prefs.edit().putString("searchEnginePackage", v).apply()
+
+    var searchEngineIntentUri: String?
+        get() = prefs.getString("searchEngineIntentUri", null)
+        set(v) = prefs.edit().putString("searchEngineIntentUri", v).apply()
+
+    var searchEngineShortcutIntentUri: String?
+        get() = prefs.getString("searchEngineShortcutIntentUri", null)
+        set(v) = prefs.edit().putString("searchEngineShortcutIntentUri", v).apply()
+
+    var searchEngineShortcutName: String?
+        get() = prefs.getString("searchEngineShortcutName", null)
+        set(v) = prefs.edit().putString("searchEngineShortcutName", v).apply()
+
+    // --- Key shortcuts (recorded key codes) ---
+    var keyShortcutsEnabled: Boolean
+        get() = prefs.getBoolean("keyShortcutsEnabled", false)
+        set(v) = prefs.edit().putBoolean("keyShortcutsEnabled", v).apply()
+
+    var keyCodeHome: Int
+        get() = prefs.getInt("keyCodeHome", android.view.KeyEvent.KEYCODE_HOME)
+        set(v) = prefs.edit().putInt("keyCodeHome", v).apply()
+
+    var keyCodeBack: Int
+        get() = prefs.getInt("keyCodeBack", android.view.KeyEvent.KEYCODE_BACK)
+        set(v) = prefs.edit().putInt("keyCodeBack", v).apply()
+
+    var keyCodeRecents: Int
+        get() = prefs.getInt("keyCodeRecents", android.view.KeyEvent.KEYCODE_APP_SWITCH)
+        set(v) = prefs.edit().putInt("keyCodeRecents", v).apply()
 
     // --- Custom icons ---
     fun getCustomIcon(componentName: String, pageId: String? = null): String? {

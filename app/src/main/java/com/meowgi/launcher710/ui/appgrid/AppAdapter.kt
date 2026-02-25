@@ -48,6 +48,8 @@ class AppAdapter(
         notifyDataSetChanged()
     }
 
+    fun getCurrentList(): List<LaunchableItem> = items
+
     override fun getItemViewType(position: Int): Int {
         return if (viewMode == 1) VIEW_TYPE_LIST else VIEW_TYPE_GRID
     }

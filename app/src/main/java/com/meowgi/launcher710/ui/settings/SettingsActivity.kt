@@ -3,9 +3,11 @@ package com.meowgi.launcher710.ui.settings
 import android.app.WallpaperManager
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.provider.Settings
 import android.graphics.Typeface
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -46,6 +48,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var container: LinearLayout
     private val font: Typeface? by lazy { ResourcesCompat.getFont(this, R.font.bbalphas) }
 
+    private var recordingKeyCallback: ((Int) -> Unit)? = null
+    private var recordingDialog: AlertDialog? = null
+
     private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             try {
@@ -55,6 +60,22 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Export failed", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private val searchShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Search"
+        val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.searchEngineShortcutIntentUri = intentUri
+        prefs.searchEngineShortcutName = name
+        rebuildSettings()
     }
 
     private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -89,6 +110,25 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnBack).setOnClickListener { finish() }
 
         buildSettings()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (recordingKeyCallback != null && event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) return false
+            finishRecording(event.keyCode)
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun finishRecording(keyCode: Int) {
+        recordingKeyCallback?.invoke(keyCode)
+        recordingKeyCallback = null
+        recordingDialog?.dismiss()
+        recordingDialog = null
+        KeyCaptureAccessibilityService.KeyCaptureReceiver.setRecording(false, null)
+        Toast.makeText(this, "Recorded: ${KeyEvent.keyCodeToString(keyCode)}", Toast.LENGTH_SHORT).show()
+        rebuildSettings()
     }
 
     private fun buildSettings() {
@@ -172,6 +212,7 @@ class SettingsActivity : AppCompatActivity() {
 
         addSection("Notifications")
         addSlider("Notification hub opacity", prefs.notificationHubAlpha) { prefs.notificationHubAlpha = it }
+        addSlider("Search overlay opacity", prefs.searchOverlayAlpha) { prefs.searchOverlayAlpha = it }
         addButton("Apps in notification hub: ${getNotificationAppsLabel()}") { showNotificationAppsPicker() }
 
         addSection("Permissions")
@@ -180,6 +221,15 @@ class SettingsActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             } catch (_: Exception) {
                 Toast.makeText(this, "Could not open notification settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+        addButton("Key capture (for key recording)") {
+            try {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                startActivity(intent)
+                Toast.makeText(this, "Find \"BB 710 Launcher\" and enable Key capture", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {
+                Toast.makeText(this, "Could not open accessibility settings", Toast.LENGTH_SHORT).show()
             }
         }
         addButton("App permissions & info") {
@@ -196,6 +246,9 @@ class SettingsActivity : AppCompatActivity() {
         addButton("Manage Pages") { showPageManager() }
 
         addSection("Behavior")
+        addChoice("Swipe to switch pages", listOf("Bottom bar only", "Anywhere on screen"), prefs.swipeMode) {
+            prefs.swipeMode = it
+        }
         val behaviorPageOrder = prefs.getPageOrder()
         val pageNames = behaviorPageOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
         addChoice("Default Home Tab", pageNames, prefs.defaultTab.coerceIn(0, pageNames.size - 1)) {
@@ -204,7 +257,43 @@ class SettingsActivity : AppCompatActivity() {
         addChoice("Double-Tap Action", listOf("None", "Lock Screen", "Notifications"), prefs.doubleTapAction) {
             prefs.doubleTapAction = it
         }
+        addSection("Search engine")
+        // Migrate: old "3" was Disabled; now 3=Launch shortcut, 4=Disabled
+        if (prefs.searchEngineMode == 3 && prefs.searchEngineShortcutIntentUri == null) {
+            prefs.searchEngineMode = 4
+        }
+        addChoice("Physical keyboard search", listOf("Built-in search", "Launch app", "Launch app with query", "Launch shortcut", "Disabled"), prefs.searchEngineMode.coerceIn(0, 4)) {
+            prefs.searchEngineMode = it
+            rebuildSettings()
+        }
+        if (prefs.searchEngineMode == 1 || prefs.searchEngineMode == 2) {
+            addButton("Search app: ${getSearchEngineAppLabel()}") { showSearchEngineAppPicker() }
+            if (prefs.searchEngineMode == 2) {
+                addButton("Custom intent URI (optional): ${prefs.searchEngineIntentUri?.take(30)?.let { "$it…" } ?: "None"}") { showSearchEngineIntentUriDialog() }
+            }
+        }
+        if (prefs.searchEngineMode == 3) {
+            addButton("Search shortcut: ${prefs.searchEngineShortcutName ?: "Choose shortcut"}") {
+                try {
+                    searchShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                } catch (_: Exception) {
+                    Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                }
+            }
+            addButton("Clear search shortcut") {
+                prefs.searchEngineShortcutIntentUri = null
+                prefs.searchEngineShortcutName = null
+                rebuildSettings()
+            }
+        }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
+
+        addSection("Key Shortcuts")
+        addToggle("Enable key shortcuts", prefs.keyShortcutsEnabled) { prefs.keyShortcutsEnabled = it }
+        addButton("Record Home key${getKeyCodeLabel(prefs.keyCodeHome)}") { showRecordKeyDialog("Home") { prefs.keyCodeHome = it } }
+        addButton("Record Back key${getKeyCodeLabel(prefs.keyCodeBack)}") { showRecordKeyDialog("Back") { prefs.keyCodeBack = it } }
+        addButton("Record Recents key${getKeyCodeLabel(prefs.keyCodeRecents)}") { showRecordKeyDialog("Recents") { prefs.keyCodeRecents = it } }
+        addKeyShortcutsInfo()
 
         addSection("Backup & restore")
         addButton("Export settings") {
@@ -642,6 +731,109 @@ class SettingsActivity : AppCompatActivity() {
             typeface = font
         }
         container.addView(row)
+        addDivider()
+    }
+
+    private fun getKeyCodeLabel(keyCode: Int): String {
+        if (keyCode == 0) return ""
+        val name = KeyEvent.keyCodeToString(keyCode)
+        return if (name.startsWith("KEYCODE_")) " (${name.drop(8)})" else " ($keyCode)"
+    }
+
+    private fun showRecordKeyDialog(role: String, onRecorded: (Int) -> Unit) {
+        recordingKeyCallback = onRecorded
+        val d = AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Record $role key")
+            .setMessage("Press the physical key you want to use as $role. Enable \"Key capture\" in Permissions if Home/other system keys are not detected.")
+            .setCancelable(true)
+            .create()
+        recordingDialog = d
+        KeyCaptureAccessibilityService.KeyCaptureReceiver.setRecording(true) { keyCode ->
+            runOnUiThread { finishRecording(keyCode) }
+        }
+        d.setOnDismissListener {
+            recordingKeyCallback = null
+            recordingDialog = null
+            KeyCaptureAccessibilityService.KeyCaptureReceiver.setRecording(false, null)
+        }
+        d.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode != KeyEvent.KEYCODE_BACK) {
+                finishRecording(keyCode)
+                true
+            } else false
+        }
+        d.show()
+    }
+
+    private fun getSearchEngineAppLabel(): String {
+        val pkg = prefs.searchEnginePackage ?: return "Choose app"
+        return try {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+        } catch (_: Exception) { pkg }
+    }
+
+    private fun showSearchEngineAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Search app")
+            .setItems(options) { _, which ->
+                prefs.searchEnginePackage = pkgList[which].first
+                rebuildSettings()
+            }
+            .setNegativeButton("Clear") { _, _ ->
+                prefs.searchEnginePackage = null
+                rebuildSettings()
+            }
+            .show()
+    }
+
+    private fun showSearchEngineIntentUriDialog() {
+        val input = EditText(this).apply {
+            setText(prefs.searchEngineIntentUri ?: "")
+            hint = "intent:#Intent;..."
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Custom intent URI")
+            .setMessage("Optional. Use %s for query placeholder if the app supports it.")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                prefs.searchEngineIntentUri = input.text.toString().trim().takeIf { it.isNotEmpty() }
+                rebuildSettings()
+            }
+            .setNegativeButton("Clear") { _, _ ->
+                prefs.searchEngineIntentUri = null
+                rebuildSettings()
+            }
+            .show()
+    }
+
+    private fun addKeyShortcutsInfo() {
+        val text = """
+            Home short: go home or lock screen
+            Home long: launch assistant
+            Back short: default back
+            Back double: quick settings
+            Back long: refresh launcher
+            Recents short: default (not intercepted)
+            Recents long: settings popup
+            Recents double: notification hub
+        """.trimIndent()
+        val tv = TextView(this).apply {
+            setTextColor(Color.GRAY)
+            textSize = 11f
+            setPadding(dp(16), dp(4), dp(16), dp(12))
+            this.text = text
+            typeface = font
+        }
+        container.addView(tv)
         addDivider()
     }
 

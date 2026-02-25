@@ -3,13 +3,11 @@ package com.meowgi.launcher710.ui.search
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.graphics.Color
 import android.net.Uri
-import android.text.Editable
-import android.text.TextWatcher
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
@@ -23,7 +21,6 @@ class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
-    private val searchInput: EditText
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val extendedSearchBtn: TextView
@@ -33,37 +30,17 @@ class SearchOverlay @JvmOverloads constructor(
 
     var repository: AppRepository? = null
     var onDismiss: (() -> Unit)? = null
+    var onLaunchItem: ((LaunchableItem) -> Unit)? = null
+
+    private var filterItems: List<LaunchableItem>? = null
+    private var lastQuery: String = ""
+    private var currentResults: List<LaunchableItem> = emptyList()
+    private var searchContextLabel: String = "Extended"
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(resources.getColor(R.color.bb_overlay_dark, null))
+        setBackgroundColor(0xE6000000.toInt())
         setPadding(dp(12), dp(8), dp(12), dp(8))
-
-        val searchBar = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundResource(R.drawable.search_bar_bg)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-
-        searchInput = EditText(context).apply {
-            hint = context.getString(R.string.search_hint)
-            setTextColor(resources.getColor(R.color.bb_search_text, null))
-            setHintTextColor(0xFF888888.toInt())
-            textSize = 14f
-            typeface = font
-            background = null
-            isSingleLine = true
-            imeOptions = EditorInfo.IME_ACTION_SEARCH
-        }
-        searchBar.addView(searchInput, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-
-        val searchIcon = ImageView(context).apply {
-            setImageResource(android.R.drawable.ic_menu_search)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-        }
-        searchBar.addView(searchIcon, LayoutParams(dp(32), dp(32)))
-        addView(searchBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(36)))
 
         dialRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -85,13 +62,13 @@ class SearchOverlay @JvmOverloads constructor(
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
-            text = context.getString(R.string.extended_search)
+            text = "$searchContextLabel search"
             textSize = 13f
             setTextColor(resources.getColor(R.color.bb_text_secondary, null))
             typeface = font
             gravity = Gravity.CENTER
             setPadding(0, dp(10), 0, dp(6))
-            setOnClickListener { openWebSearch() }
+            setOnClickListener { performExtendedSearch() }
         }
         addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
@@ -103,49 +80,108 @@ class SearchOverlay @JvmOverloads constructor(
         adapter = AppAdapter(
             context,
             onClick = { item ->
-                when (item) {
-                    is LaunchableItem.App -> {
-                        repository?.launchApp(item.app)
-                        dismiss()
+                val handler = onLaunchItem
+                if (handler != null) {
+                    handler(item)
+                    dismiss()
+                } else {
+                    when (item) {
+                        is LaunchableItem.App -> {
+                            repository?.launchApp(item.app)
+                            dismiss()
+                        }
+                        is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                     }
-                    is LaunchableItem.Shortcut -> { /* search only shows apps */ }
-                    is LaunchableItem.IntentShortcut -> { /* search only shows apps */ }
                 }
             },
             onLongClick = { _, _ -> }
         )
         resultsRecycler.adapter = adapter
+        resultsRecycler.isClickable = true
+        resultsRecycler.setOnClickListener { /* consume so root click doesn't dismiss */ }
         addView(resultsRecycler, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-
-        searchInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) { onSearch(s?.toString() ?: "") }
-        })
-
-        searchInput.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) { openWebSearch(); true } else false
-        }
 
         setOnClickListener { dismiss() }
     }
 
+    /** Set label for the extended search button, e.g. "Frequents", "All Apps", "Extended". */
+    fun setSearchContextLabel(label: String) {
+        searchContextLabel = label
+        extendedSearchBtn.text = "$label search"
+    }
+
     fun show() {
+        filterItems = null
+        lastQuery = ""
+        currentResults = emptyList()
         visibility = VISIBLE
-        searchInput.setText("")
-        searchInput.requestFocus()
+    }
+
+    fun showFilter(items: List<LaunchableItem>) {
+        filterItems = items
+        lastQuery = ""
+        currentResults = emptyList()
+        visibility = VISIBLE
+        onSearch("")
     }
 
     fun dismiss() {
         visibility = GONE
-        searchInput.setText("")
         onDismiss?.invoke()
     }
 
+    fun applyQuery(query: String) {
+        lastQuery = query
+        onSearch(query)
+    }
+
+    /** On Enter / Extended search: launch first result if any, otherwise search on web. */
+    fun performExtendedSearch() {
+        val first = currentResults.firstOrNull()
+        if (first != null) {
+            val handler = onLaunchItem
+            if (handler != null) {
+                handler(first)
+            } else when (first) {
+                is LaunchableItem.App -> repository?.launchApp(first.app)
+                else -> {}
+            }
+            dismiss()
+        } else {
+            openWebSearchWithQuery(lastQuery)
+        }
+    }
+
+    fun openWebSearchWithQuery(query: String) {
+        if (query.isNotBlank()) {
+            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                putExtra("query", query)
+            }
+            try {
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                val uri = Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            }
+            dismiss()
+        }
+    }
+
     private fun onSearch(query: String) {
-        val repo = repository ?: return
-        val results = repo.searchApps(query)
-        adapter.submitList(results.map { LaunchableItem.App(it) })
+        val filter = filterItems
+        if (filter != null) {
+            val q = query.trim().lowercase()
+            val filtered = if (q.isEmpty()) filter else filter.filter {
+                it.label.toString().lowercase().contains(q)
+            }
+            currentResults = filtered
+            adapter.submitList(filtered)
+        } else {
+            val repo = repository ?: return
+            val results = repo.searchApps(query).map { LaunchableItem.App(it) }
+            currentResults = results
+            adapter.submitList(results)
+        }
 
         val isPhone = query.matches(Regex("^[0-9+*#]+$"))
         if (isPhone && query.length > 2) {
@@ -161,28 +197,16 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
-    private fun openWebSearch() {
-        val query = searchInput.text.toString()
-        if (query.isNotBlank()) {
-            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                putExtra("query", query)
-            }
-            try {
-                context.startActivity(intent)
-            } catch (_: Exception) {
-                val uri = Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-            }
-            dismiss()
-        }
-    }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
             dismiss()
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    fun applyOpacity(alpha: Int) {
+        setBackgroundColor(Color.argb(alpha, 0, 0, 0))
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

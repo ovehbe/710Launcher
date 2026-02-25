@@ -4,10 +4,18 @@ import android.graphics.Color
 import android.app.Activity
 import android.app.WallpaperManager
 import android.appwidget.AppWidgetManager
+import android.app.SearchManager
 import android.content.*
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.*
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +53,11 @@ class LauncherActivity : AppCompatActivity() {
 
     companion object {
         const val OPEN_HOME_MENU_EXTRA = "open_home_menu"
+        private const val KEY_ROLE_HOME = 1
+        private const val KEY_ROLE_BACK = 2
+        private const val KEY_ROLE_RECENTS = 3
+        private const val LONG_PRESS_MS = 500L
+        private const val DOUBLE_PRESS_MS = 300L
     }
 
     private lateinit var prefs: LauncherPrefs
@@ -70,10 +83,20 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var notificationTickerBar: View
     private lateinit var notificationTickerText: TextView
     private lateinit var notificationCount: TextView
+    private lateinit var searchInputInBar: EditText
 
     private val tabViews = mutableListOf<TextView>()
 
     private var pendingWidgetId = -1
+
+    private val keyHandler = Handler(Looper.getMainLooper())
+    private var keyRolePressCount = 0
+    private var keyRoleLongPressTriggered = false
+    private var keyRoleLongPressRunnable: Runnable? = null
+    private var keyRoleDoublePressRunnable: Runnable? = null
+
+    private var searchApplyRunnable: Runnable? = null
+    private val searchApplyDelayMs = 80L
 
     private val widgetBindLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -184,6 +207,7 @@ class LauncherActivity : AppCompatActivity() {
         notificationTickerBar = findViewById(R.id.notificationTickerBar)
         notificationTickerText = findViewById(R.id.notificationTickerText)
         notificationCount = findViewById(R.id.notificationCount)
+        searchInputInBar = findViewById(R.id.searchInputInBar)
 
         val toggleHub: () -> Unit = {
             if (notificationHub.visibility == View.VISIBLE) {
@@ -205,7 +229,22 @@ class LauncherActivity : AppCompatActivity() {
         }
 
         searchOverlay.repository = repository
-        searchOverlay.onDismiss = { appPager.visibility = View.VISIBLE }
+        searchOverlay.onDismiss = {
+            searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
+            searchApplyRunnable = null
+            searchInputInBar.visibility = View.GONE
+            searchInputInBar.setText("")
+            refreshNotificationTicker()
+            appPager.visibility = View.VISIBLE
+        }
+        searchOverlay.onLaunchItem = { item ->
+            when (item) {
+                is LaunchableItem.App -> repository.launchApp(item.app)
+                is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
+                is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
+                else -> {}
+            }
+        }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -303,6 +342,7 @@ class LauncherActivity : AppCompatActivity() {
         tabBarContainer.background?.alpha = prefs.tabBarAlpha
         dockBar.applyOpacity()
         notificationHub.applyOpacity(prefs.notificationHubAlpha)
+        searchOverlay.applyOpacity(prefs.searchOverlayAlpha)
     }
 
     private fun setupPager() {
@@ -395,7 +435,7 @@ class LauncherActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
-                bottomSwipeTracking = isInBottomBar(ev.rawY)
+                bottomSwipeTracking = (prefs.swipeMode == 1) || isInBottomBar(ev.rawY)
                 bottomSwipeStartX = ev.rawX
                 bottomSwipeStartY = ev.rawY
             }
@@ -425,12 +465,84 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    private fun launchSearchAppWithQuery(pkg: String, query: String) {
+        try {
+            val i = Intent(Intent.ACTION_MAIN).setPackage(pkg)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            i.putExtra(SearchManager.QUERY, query)
+            i.putExtra("query", query)
+            startActivity(i)
+        } catch (_: Exception) {}
+    }
+
+    private fun showSearchPageAware(initialChar: Char? = null) {
+        searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
+        searchApplyRunnable = null
+
+        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else null
+        searchOverlay.setSearchContextLabel(
+            when (pageId) {
+                "frequent" -> "Frequents"
+                "all" -> "All Apps"
+                else -> "Extended"
+            }
+        )
+        if (!::pagerAdapter.isInitialized) {
+            searchOverlay.show()
+        } else {
+            if (pageId == "all" || pageId == "frequent") {
+                val frag = pagerAdapter.getFragment(appPager.currentItem)
+                val items = frag?.getCurrentItems() ?: emptyList()
+                if (items.isNotEmpty()) searchOverlay.showFilter(items) else searchOverlay.show()
+            } else {
+                searchOverlay.show()
+            }
+        }
+        notificationTickerBar.visibility = View.GONE
+        searchInputInBar.visibility = View.VISIBLE
+        if (initialChar != null) {
+            searchInputInBar.setSelection(0)
+            searchInputInBar.setText(initialChar.toString())
+            searchInputInBar.setSelection(searchInputInBar.text.length)
+        } else {
+            searchInputInBar.setText("")
+        }
+        searchInputInBar.requestFocus()
+        searchInputInBar.post {
+            if (searchOverlay.visibility == View.VISIBLE) {
+                searchOverlay.applyQuery(searchInputInBar.text.toString())
+            }
+        }
+    }
+
     private fun setupActionBar() {
         findViewById<View>(R.id.btnSoundProfile).setOnClickListener {
             SoundProfileDialog(this).show()
         }
         findViewById<View>(R.id.btnSearch).setOnClickListener {
-            searchOverlay.show()
+            showSearchPageAware()
+        }
+
+        searchInputInBar.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val text = s?.toString() ?: ""
+                searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
+                searchApplyRunnable = Runnable {
+                    searchApplyRunnable = null
+                    if (searchOverlay.visibility == View.VISIBLE) {
+                        searchOverlay.applyQuery(text)
+                    }
+                }
+                keyHandler.postDelayed(searchApplyRunnable!!, searchApplyDelayMs)
+            }
+        })
+        searchInputInBar.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                searchOverlay.performExtendedSearch()
+                true
+            } else false
         }
 
         findViewById<View>(R.id.contentArea).setOnLongClickListener {
@@ -1000,31 +1112,176 @@ class LauncherActivity : AppCompatActivity() {
         popup.show()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_MENU) {
-            notificationHub.let {
-                if (it.visibility == View.VISIBLE) it.hide() else it.show(prefs.getNotificationAppWhitelist())
+    private fun getKeyRole(keyCode: Int): Int? {
+        if (!prefs.keyShortcutsEnabled) return null
+        return when (keyCode) {
+            prefs.keyCodeHome -> KEY_ROLE_HOME
+            prefs.keyCodeBack -> KEY_ROLE_BACK
+            prefs.keyCodeRecents -> KEY_ROLE_RECENTS
+            else -> null
+        }
+    }
+
+    private fun doBackAction() {
+        when {
+            searchOverlay.visibility == View.VISIBLE -> searchOverlay.dismiss()
+            notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
+            ::pagerAdapter.isInitialized && appPager.currentItem != prefs.defaultTab ->
+                appPager.setCurrentItem(prefs.defaultTab, true)
+            else -> @Suppress("DEPRECATION") super.onBackPressed()
+        }
+    }
+
+    private fun lockScreen() {
+        try {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
+            val admins = dpm?.activeAdmins ?: emptyList<android.content.ComponentName>()
+            if (admins.isNotEmpty()) {
+                dpm?.lockNow()
+                return
             }
+        } catch (_: Exception) {}
+        startActivity(Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_HOME); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+    }
+
+    private fun launchAssistant() {
+        try {
+            startActivity(Intent("android.intent.action.VOICE_ASSIST").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Intent.ACTION_ASSIST).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun openQuickSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+    }
+
+    private fun refreshLauncher() {
+        CoroutineScope(Dispatchers.Main).launch {
+            withContext(Dispatchers.IO) { repository.loadApps() }
+            if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+            dockBar.loadDock()
+            loadPageIconPacks()
+            recreate()
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val role = getKeyRole(keyCode)
+        if (role != null) {
+            keyRoleLongPressTriggered = false
+            keyRoleLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+            keyRoleLongPressRunnable = Runnable {
+                keyRoleLongPressTriggered = true
+                when (role) {
+                    KEY_ROLE_HOME -> launchAssistant()
+                    KEY_ROLE_BACK -> refreshLauncher()
+                    KEY_ROLE_RECENTS -> showHomeContextMenu(tabBarContainer)
+                    else -> {}
+                }
+            }
+            keyHandler.postDelayed(keyRoleLongPressRunnable!!, LONG_PRESS_MS)
             return true
         }
-        if (searchOverlay.visibility != View.VISIBLE && prefs.searchOnType) {
-            if (event != null && event.isPrintingKey) {
-                searchOverlay.show()
-                return super.onKeyDown(keyCode, event)
+        if (searchOverlay.visibility != View.VISIBLE && prefs.searchOnType && event != null && event.isPrintingKey) {
+            when (prefs.searchEngineMode) {
+                0 -> {
+                    showSearchPageAware(initialChar = event.unicodeChar.toChar())
+                    return true
+                }
+                1 -> {
+                    val pkg = prefs.searchEnginePackage
+                    if (pkg != null) {
+                        try {
+                            startActivity(packageManager.getLaunchIntentForPackage(pkg)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) {}
+                        return true
+                    }
+                }
+                2 -> {
+                    val pkg = prefs.searchEnginePackage
+                    val query = event.unicodeChar.toChar().toString()
+                    val uriRaw = prefs.searchEngineIntentUri
+                    if (uriRaw != null && uriRaw.isNotEmpty()) {
+                        try {
+                            val uri = uriRaw.replace("%s", Uri.encode(query))
+                            val intent = Intent.parseUri(uri, 0)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (!uri.contains("query", ignoreCase = true)) {
+                                intent.putExtra(SearchManager.QUERY, query)
+                                intent.putExtra("query", query)
+                            }
+                            startActivity(intent)
+                        } catch (_: Exception) {
+                            if (pkg != null) launchSearchAppWithQuery(pkg, query)
+                        }
+                        return true
+                    }
+                    if (pkg != null) {
+                        launchSearchAppWithQuery(pkg, query)
+                        return true
+                    }
+                }
+                3 -> {
+                    val uri = prefs.searchEngineShortcutIntentUri
+                    if (uri != null) {
+                        try {
+                            shortcutHelper.launchIntentShortcut(uri)
+                        } catch (_: Exception) {}
+                        return true
+                    }
+                }
+                4 -> { /* disabled */ }
+                else -> {}
             }
         }
         return super.onKeyDown(keyCode, event)
     }
 
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        val role = getKeyRole(keyCode)
+        if (role != null) {
+            keyRoleLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+            keyRoleLongPressRunnable = null
+            if (keyRoleLongPressTriggered) {
+                keyRolePressCount = 0
+                keyRoleDoublePressRunnable?.let { keyHandler.removeCallbacks(it) }
+                keyRoleDoublePressRunnable = null
+                return true
+            }
+            keyRolePressCount++
+            keyRoleDoublePressRunnable?.let { keyHandler.removeCallbacks(it) }
+            val capturedRole = role
+            keyRoleDoublePressRunnable = Runnable {
+                val count = keyRolePressCount
+                keyRolePressCount = 0
+                keyRoleDoublePressRunnable = null
+                when (capturedRole) {
+                    KEY_ROLE_HOME -> {
+                        if (::pagerAdapter.isInitialized && appPager.currentItem == prefs.defaultTab) lockScreen()
+                        else if (::pagerAdapter.isInitialized) appPager.setCurrentItem(prefs.defaultTab, true)
+                    }
+                    KEY_ROLE_BACK -> if (count >= 2) openQuickSettings() else doBackAction()
+                    KEY_ROLE_RECENTS -> if (count >= 2) {
+                        if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                    }
+                    else -> {}
+                }
+            }
+            keyHandler.postDelayed(keyRoleDoublePressRunnable!!, DOUBLE_PRESS_MS)
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        when {
-            searchOverlay.visibility == View.VISIBLE -> searchOverlay.dismiss()
-            notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
-            appPager.currentItem != prefs.defaultTab ->
-                appPager.currentItem = prefs.defaultTab
-            else -> super.onBackPressed()
-        }
+        doBackAction()
     }
 
     override fun onStart() {

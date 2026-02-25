@@ -212,6 +212,9 @@ class AppGridFragment : Fragment() {
         refreshList()
     }
 
+    fun getCurrentItems(): List<LaunchableItem> =
+        if (::adapter.isInitialized) adapter.getCurrentList() else emptyList()
+
     fun refreshList() {
         if (!::adapter.isInitialized) return
         val repo = repository ?: return
