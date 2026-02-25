@@ -15,13 +15,49 @@ import com.meowgi.launcher710.util.IconPackManager
 
 class IconPickerDialog(
     private val activity: Activity,
-    private val iconPackManager: IconPackManager,
-    private val onIconSelected: (String) -> Unit,
+    private val onIconSelected: (String, String?) -> Unit, // drawableName, packPackage
     private val onReset: () -> Unit
 ) {
 
-    fun show() {
-        if (!iconPackManager.isLoaded()) {
+    fun showPackPicker() {
+        val tempManager = IconPackManager(activity)
+        val packs = tempManager.getAvailableIconPacks()
+        if (packs.isEmpty()) {
+            AlertDialog.Builder(activity, R.style.BBDialogTheme)
+                .setTitle("Change Icon")
+                .setMessage("No icon packs installed. Install an icon pack first.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val names = mutableListOf("Default (System)")
+        val packages = mutableListOf<String?>(null)
+        for ((pkg, label) in packs) {
+            names.add(label)
+            packages.add(pkg)
+        }
+
+        AlertDialog.Builder(activity, R.style.BBDialogTheme)
+            .setTitle("Choose Icon Pack")
+            .setItems(names.toTypedArray()) { _, which ->
+                val selectedPkg = packages[which]
+                if (selectedPkg != null) {
+                    show(selectedPkg)
+                } else {
+                    AlertDialog.Builder(activity, R.style.BBDialogTheme)
+                        .setTitle("Change Icon")
+                        .setMessage("Cannot change icon without an icon pack.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    fun show(packPackage: String?) {
+        if (packPackage == null) {
             AlertDialog.Builder(activity, R.style.BBDialogTheme)
                 .setTitle("Change Icon")
                 .setMessage("Load an icon pack first in Settings.")
@@ -30,11 +66,21 @@ class IconPickerDialog(
             return
         }
 
-        val names = iconPackManager.getAllIconNames()
+        val tempManager = IconPackManager(activity)
+        if (!tempManager.loadIconPack(packPackage)) {
+            AlertDialog.Builder(activity, R.style.BBDialogTheme)
+                .setTitle("Change Icon")
+                .setMessage("Failed to load icon pack.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val names = tempManager.getAllIconNames()
         if (names.isEmpty()) {
             AlertDialog.Builder(activity, R.style.BBDialogTheme)
                 .setTitle("Change Icon")
-                .setMessage("No icons found in the current icon pack.")
+                .setMessage("No icons found in the selected icon pack.")
                 .setPositiveButton("OK", null)
                 .show()
             return
@@ -54,13 +100,13 @@ class IconPickerDialog(
         val margin = dp(4)
 
         for (name in names) {
-            val icon = iconPackManager.getIconByName(name) ?: continue
+            val icon = tempManager.getIconByName(name) ?: continue
             val iv = ImageView(activity).apply {
                 setImageDrawable(icon)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 setPadding(dp(4), dp(4), dp(4), dp(4))
                 setOnClickListener {
-                    onIconSelected(name)
+                    onIconSelected(name, packPackage)
                     dialog?.dismiss()
                 }
             }

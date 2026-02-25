@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.AttributeSet
 import android.view.Gravity
+import android.view.MotionEvent
 import android.widget.ImageView
 import android.widget.LinearLayout
 import com.meowgi.launcher710.R
@@ -20,6 +21,7 @@ class DockBar @JvmOverloads constructor(
     private val maxSlots = 6
     var repository: AppRepository? = null
     var onAppLaunch: ((AppInfo) -> Unit)? = null
+    var dockIconResolver: ((AppInfo) -> android.graphics.drawable.Drawable)? = null
 
     init {
         orientation = HORIZONTAL
@@ -32,15 +34,36 @@ class DockBar @JvmOverloads constructor(
         val repo = repository ?: return
         val docked = getDockApps(repo)
 
+        val moveThreshold = dp(10).toFloat()
         for (app in docked) {
+            val icon = dockIconResolver?.invoke(app) ?: app.icon
             val iv = ImageView(context).apply {
-                setImageDrawable(app.icon)
+                setImageDrawable(icon)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 setPadding(dp(6), dp(2), dp(6), dp(2))
                 setOnClickListener { onAppLaunch?.invoke(app) }
                 setOnLongClickListener {
                     onDockIconLongClick?.invoke(app)
                     true
+                }
+                var downX = 0f
+                var downY = 0f
+                setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = event.rawX
+                            downY = event.rawY
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val dx = kotlin.math.abs(event.rawX - downX)
+                            val dy = kotlin.math.abs(event.rawY - downY)
+                            if (dx > moveThreshold || dy > moveThreshold) {
+                                v.cancelLongPress()
+                                v.isPressed = false
+                            }
+                        }
+                    }
+                    false
                 }
             }
             addView(iv, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))

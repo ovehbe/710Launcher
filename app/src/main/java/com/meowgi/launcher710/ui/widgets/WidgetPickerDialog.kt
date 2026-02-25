@@ -12,6 +12,7 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.util.LauncherPrefs
 
 class WidgetPickerDialog(
     private val activity: Activity,
@@ -22,6 +23,7 @@ class WidgetPickerDialog(
         val awm = AppWidgetManager.getInstance(activity)
         val widgets = awm.installedProviders
         val font = ResourcesCompat.getFont(activity, R.font.bbalphas)
+        val prefs = LauncherPrefs(activity)
 
         val grouped = widgets.groupBy { it.provider.packageName }
             .toSortedMap(compareBy { getAppName(activity, it) })
@@ -37,7 +39,7 @@ class WidgetPickerDialog(
 
             val header = TextView(activity).apply {
                 text = appName
-                setTextColor(activity.getColor(R.color.bb_tab_active))
+                setTextColor(prefs.accentColor)
                 textSize = 13f
                 typeface = font?.let { Typeface.create(it, Typeface.BOLD) }
                 setPadding(dp(4), dp(10), dp(4), dp(4))

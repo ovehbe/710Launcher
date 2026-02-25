@@ -12,6 +12,9 @@ class AppRepository(private val context: Context) {
     private val pm = context.packageManager
     private val dao = AppDatabase.get(context).appStatsDao()
     var iconPackManager: IconPackManager? = null
+    var allPageIconPackManager: IconPackManager? = null
+    var dockIconPackManager: IconPackManager? = null
+    val pageIconPackManagers = mutableMapOf<String, IconPackManager>()
     private val prefs = LauncherPrefs(context)
 
     var apps: List<AppInfo> = emptyList()
@@ -55,20 +58,27 @@ class AppRepository(private val context: Context) {
                 val cn = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name).flattenToString()
                 val stat = stats[cn]
                 val component = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name)
+                val rawIconDrawable = ri.loadIcon(pm) // Store the raw system icon
                 val customDrawableName = prefs.getCustomIcon(cn)
                 val customIcon = if (customDrawableName != null) iconPackManager?.getIconByName(customDrawableName) else null
                 val themedIcon = customIcon ?: iconPackManager?.getIconForApp(component)
-                val rawIcon = themedIcon ?: ri.loadIcon(pm)
-                val finalIcon = if (customIcon == null && themedIcon == null && iconPackManager?.isLoaded() == true) {
+                val finalIcon = if (customIcon != null) {
+                    customIcon
+                } else if (themedIcon != null) {
+                    themedIcon
+                } else if (iconPackManager?.isLoaded() == true) {
                     val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
-                    iconPackManager!!.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx)
-                } else rawIcon
+                    iconPackManager!!.applyFallbackShape(rawIconDrawable, prefs.iconFallbackShape, sizePx)
+                } else {
+                    rawIconDrawable
+                }
 
                 AppInfo(
                     label = ri.loadLabel(pm).toString(),
                     packageName = ri.activityInfo.packageName,
                     activityName = ri.activityInfo.name,
                     icon = finalIcon,
+                    rawIcon = rawIconDrawable,
                     launchCount = stat?.launchCount ?: 0,
                     isFavorite = stat?.isFavorite ?: false
                 )
@@ -83,6 +93,11 @@ class AppRepository(private val context: Context) {
         .sortedByDescending { it.launchCount }
 
     fun getFavoriteApps() = apps.filter { it.isFavorite }
+
+    fun getAppsForPage(pageId: String): List<AppInfo> {
+        val members = prefs.getPageApps(pageId)
+        return apps.filter { members.contains(it.componentName.flattenToString()) }
+    }
 
     fun searchApps(query: String): List<AppInfo> {
         if (query.isBlank()) return emptyList()
@@ -121,4 +136,59 @@ class AppRepository(private val context: Context) {
         context.startActivity(intent)
         CoroutineScope(Dispatchers.IO).launch { recordLaunch(app) }
     }
+
+    private fun resolveCustomIconFromAnyPack(drawableName: String): android.graphics.drawable.Drawable? {
+        val managers = mutableListOf<IconPackManager>()
+        iconPackManager?.let { managers.add(it) }
+        allPageIconPackManager?.let { managers.add(it) }
+        dockIconPackManager?.let { managers.add(it) }
+        managers.addAll(pageIconPackManagers.values)
+        for (mgr in managers) {
+            if (mgr.isLoaded()) {
+                val icon = mgr.getIconByName(drawableName)
+                if (icon != null) return icon
+            }
+        }
+        return null
+    }
+
+    private fun getPackManagerForPage(pageId: String): IconPackManager? {
+        val pageMgr = pageIconPackManagers[pageId]
+        if (pageMgr?.isLoaded() == true) return pageMgr
+        // Legacy fallback for "all" and "dock"
+        if (pageId == "all" && allPageIconPackManager?.isLoaded() == true) return allPageIconPackManager
+        if (pageId == "dock" && dockIconPackManager?.isLoaded() == true) return dockIconPackManager
+        // Fall back to global
+        if (iconPackManager?.isLoaded() == true) return iconPackManager
+        return null
+    }
+
+    fun getIconForPage(app: AppInfo, pageId: String): android.graphics.drawable.Drawable {
+        val component = app.componentName
+        val cn = component.flattenToString()
+        val rawIcon = app.rawIcon ?: app.icon
+
+        val customDrawableName = prefs.getCustomIcon(cn, pageId)
+        if (customDrawableName != null) {
+            val customIcon = resolveCustomIconFromAnyPack(customDrawableName)
+            if (customIcon != null) return customIcon
+        }
+
+        val packManager = getPackManagerForPage(pageId)
+
+        val themedIcon = packManager?.getIconForApp(component)
+        if (themedIcon != null) return themedIcon
+
+        if (packManager?.isLoaded() == true) {
+            val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
+            return packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx)
+        }
+
+        return rawIcon
+    }
+
+    fun getIconForDock(app: AppInfo) = getIconForPage(app, "dock")
+
+    fun getIconForContext(app: AppInfo, isAllPage: Boolean) =
+        getIconForPage(app, if (isAllPage) "all" else "__global__")
 }

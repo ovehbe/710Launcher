@@ -8,6 +8,7 @@ data class AppInfo(
     val packageName: String,
     val activityName: String,
     val icon: Drawable,
+    val rawIcon: Drawable? = null, // Original icon without any pack applied
     var launchCount: Int = 0,
     var isFavorite: Boolean = false,
     var isDocked: Boolean = false

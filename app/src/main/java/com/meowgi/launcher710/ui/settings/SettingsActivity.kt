@@ -40,6 +40,7 @@ class SettingsActivity : AppCompatActivity() {
         addSection("Appearance")
         addToggle("Show BB Status Bar", prefs.statusBarVisible) { prefs.statusBarVisible = it }
         addToggle("Show System Status Bar", prefs.systemStatusBarVisible) { prefs.systemStatusBarVisible = it }
+        addSlider("System Status Bar Opacity", prefs.systemStatusBarAlpha) { prefs.systemStatusBarAlpha = it }
         addSlider("Main Background Opacity", prefs.mainBackgroundAlpha) { prefs.mainBackgroundAlpha = it }
         addSlider("Status Bar Opacity", prefs.statusBarAlpha) { prefs.statusBarAlpha = it }
         addSlider("Header Opacity", prefs.headerAlpha) { prefs.headerAlpha = it }
@@ -53,6 +54,28 @@ class SettingsActivity : AppCompatActivity() {
                 else -> 0xFF0A1628.toInt()
             }
         }
+        addChoice("Accent Color", listOf("BB Blue", "Teal", "Red", "Green", "Purple", "Orange", "White"), getAccentColorIndex()) {
+            prefs.accentColor = when (it) {
+                0 -> 0xFF0073BC.toInt() // BB Blue
+                1 -> 0xFF00BFA5.toInt() // Teal
+                2 -> 0xFFFF5252.toInt() // Red
+                3 -> 0xFF4CAF50.toInt() // Green
+                4 -> 0xFF9C27B0.toInt() // Purple
+                5 -> 0xFFFF9800.toInt() // Orange
+                else -> 0xFFFFFFFF.toInt() // White
+            }
+        }
+        addChoice("App View Mode", listOf("Grid", "Old School List"), prefs.appViewMode) {
+            prefs.appViewMode = it
+            rebuildSettings()
+        }
+        if (prefs.appViewMode == 1) {
+            addButton("List View Applies To: ${getListViewAppliesLabel()}") { showListViewPagesPicker() }
+            addChoice("List View Columns", listOf("1", "2", "3"), prefs.listViewColumns - 1) {
+                prefs.listViewColumns = it + 1
+            }
+            addSlider("List Bar Opacity", prefs.listViewBgAlpha) { prefs.listViewBgAlpha = it }
+        }
         addChoice("Grid Columns", listOf("3", "4", "5", "6"), prefs.gridColumns - 3) {
             prefs.gridColumns = it + 3
         }
@@ -65,7 +88,18 @@ class SettingsActivity : AppCompatActivity() {
         addButton("Live Wallpaper") { pickLiveWallpaper() }
 
         addSection("Icons")
-        addButton("Icon Pack: ${getIconPackName()}") { showIconPackPicker() }
+        addButton("Global Icon Pack: ${getIconPackName()}") { showIconPackPicker() }
+        // Per-page icon pack pickers
+        val pageOrder = prefs.getPageOrder()
+        for (pid in pageOrder) {
+            val name = when (pid) {
+                "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+                else -> pid.removePrefix("custom_")
+            }
+            val packName = getPageIconPackName(pid)
+            addButton("$name Icon Pack: $packName") { showPageIconPackPicker(pid, name) }
+        }
+        addButton("Dock Icon Pack: ${getPageIconPackName("dock")}") { showPageIconPackPicker("dock", "Dock") }
         addChoice("Fallback Icon Shape",
             listOf("Circle", "Rounded Square", "Square", "Squircle"),
             prefs.iconFallbackShape) { prefs.iconFallbackShape = it }
@@ -74,8 +108,8 @@ class SettingsActivity : AppCompatActivity() {
         addButton("Manage Pages") { showPageManager() }
 
         addSection("Behavior")
-        val pageOrder = prefs.getPageOrder()
-        val pageNames = pageOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
+        val behaviorPageOrder = prefs.getPageOrder()
+        val pageNames = behaviorPageOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
         addChoice("Default Home Tab", pageNames, prefs.defaultTab.coerceIn(0, pageNames.size - 1)) {
             prefs.defaultTab = it
         }
@@ -148,7 +182,7 @@ class SettingsActivity : AppCompatActivity() {
                 if (index > 0) {
                     val upBtn = TextView(this).apply {
                         text = "▲"; textSize = 16f; setPadding(dp(8), 0, dp(8), 0)
-                        setTextColor(getColor(R.color.bb_tab_active))
+                        setTextColor(prefs.accentColor)
                         setOnClickListener {
                             pageOrder[index] = pageOrder[index - 1].also { pageOrder[index - 1] = pageOrder[index] }
                             prefs.setPageOrder(pageOrder)
@@ -160,7 +194,7 @@ class SettingsActivity : AppCompatActivity() {
                 if (index < pageOrder.size - 1) {
                     val downBtn = TextView(this).apply {
                         text = "▼"; textSize = 16f; setPadding(dp(8), 0, dp(8), 0)
-                        setTextColor(getColor(R.color.bb_tab_active))
+                        setTextColor(prefs.accentColor)
                         setOnClickListener {
                             pageOrder[index] = pageOrder[index + 1].also { pageOrder[index + 1] = pageOrder[index] }
                             prefs.setPageOrder(pageOrder)
@@ -225,11 +259,24 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun getAccentColorIndex(): Int {
+        return when (prefs.accentColor) {
+            0xFF0073BC.toInt() -> 0 // BB Blue
+            0xFF00BFA5.toInt() -> 1 // Teal
+            0xFFFF5252.toInt() -> 2 // Red
+            0xFF4CAF50.toInt() -> 3 // Green
+            0xFF9C27B0.toInt() -> 4 // Purple
+            0xFFFF9800.toInt() -> 5 // Orange
+            0xFFFFFFFF.toInt() -> 6 // White
+            else -> 0
+        }
+    }
+
     // --- Section header ---
     private fun addSection(title: String) {
         val tv = TextView(this).apply {
             text = title
-            setTextColor(getColor(R.color.bb_tab_active))
+            setTextColor(prefs.accentColor)
             textSize = 12f
             typeface = font?.let { Typeface.create(it, Typeface.BOLD) }
             setPadding(dp(16), dp(16), dp(16), dp(6))
@@ -252,7 +299,7 @@ class SettingsActivity : AppCompatActivity() {
         val label = makeLabel(title)
         val valueText = TextView(this).apply {
             text = "${(current * 100) / 255}%"
-            setTextColor(getColor(R.color.bb_tab_active))
+            setTextColor(prefs.accentColor)
             textSize = 12f
             typeface = font
         }
@@ -404,7 +451,107 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun getPageIconPackName(pageId: String): String {
+        val pkg = prefs.getPageIconPackPackage(pageId) ?: return "Default (Use Global)"
+        return try {
+            packageManager.getApplicationLabel(
+                packageManager.getApplicationInfo(pkg, 0)
+            ).toString()
+        } catch (_: Exception) { "Default (Use Global)" }
+    }
+
+    private fun showPageIconPackPicker(pageId: String, displayName: String) {
+        val packs = iconPackManager.getAvailableIconPacks()
+        val names = mutableListOf("Default (Use Global)")
+        val packages = mutableListOf<String?>(null)
+        for ((pkg, label) in packs) {
+            names.add(label)
+            packages.add(pkg)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("$displayName Icon Pack")
+            .setItems(names.toTypedArray()) { _, which ->
+                val selectedPkg = packages[which]
+                prefs.setPageIconPackPackage(pageId, selectedPkg)
+                rebuildIconPackLabel()
+            }
+            .show()
+    }
+
+    private fun getListViewAppliesLabel(): String {
+        val pages = prefs.getListViewPages()
+        if (pages.isEmpty() || pages.contains("__all__")) return "Everywhere"
+        val pageOrder = prefs.getPageOrder()
+        val names = pages.mapNotNull { pid ->
+            if (pageOrder.contains(pid)) {
+                when (pid) {
+                    "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+                    else -> pid.removePrefix("custom_")
+                }
+            } else null
+        }
+        return if (names.isEmpty()) "Everywhere" else names.joinToString(", ")
+    }
+
+    private fun showListViewPagesPicker() {
+        val pageOrder = prefs.getPageOrder()
+        val currentPages = prefs.getListViewPages().toMutableSet()
+        val isEverywhere = currentPages.isEmpty() || currentPages.contains("__all__")
+
+        val options = mutableListOf("Everywhere")
+        val pageIds = mutableListOf("__all__")
+        for (pid in pageOrder) {
+            pageIds.add(pid)
+            options.add(when (pid) {
+                "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+                else -> pid.removePrefix("custom_")
+            })
+        }
+
+        val checked = BooleanArray(options.size) { i ->
+            if (i == 0) isEverywhere
+            else !isEverywhere && currentPages.contains(pageIds[i])
+        }
+
+        var dialog: AlertDialog? = null
+        dialog = AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("List View Applies To")
+            .setMultiChoiceItems(options.toTypedArray(), checked) { _, which, isChecked ->
+                if (which == 0 && isChecked) {
+                    for (j in 1 until checked.size) checked[j] = false
+                    dialog?.listView?.let { lv ->
+                        for (j in 1 until checked.size) lv.setItemChecked(j, false)
+                    }
+                } else if (which > 0 && isChecked) {
+                    checked[0] = false
+                    dialog?.listView?.setItemChecked(0, false)
+                }
+                checked[which] = isChecked
+            }
+            .setPositiveButton("OK") { _, _ ->
+                val result = mutableSetOf<String>()
+                if (checked[0]) {
+                    result.add("__all__")
+                } else {
+                    for (i in 1 until checked.size) {
+                        if (checked[i]) result.add(pageIds[i])
+                    }
+                }
+                if (result.isEmpty()) result.add("__all__")
+                prefs.setListViewPages(result)
+                rebuildSettings()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun rebuildIconPackLabel() {
+        container.removeAllViews()
+        buildSettings()
+    }
+
+    private fun rebuildSettings() {
         container.removeAllViews()
         buildSettings()
     }

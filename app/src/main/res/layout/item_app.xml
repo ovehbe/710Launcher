@@ -8,8 +8,8 @@
 
     <ImageView
         android:id="@+id/appIcon"
-        android:layout_width="@dimen/icon_grid_size"
-        android:layout_height="@dimen/icon_grid_size"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:scaleType="fitCenter" />
 
     <TextView

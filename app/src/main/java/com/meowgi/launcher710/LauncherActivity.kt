@@ -11,7 +11,9 @@ import android.view.*
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -44,6 +46,8 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var prefs: LauncherPrefs
     private lateinit var repository: AppRepository
     private lateinit var iconPackManager: IconPackManager
+    private lateinit var allPageIconPackManager: IconPackManager
+    private lateinit var dockIconPackManager: IconPackManager
     private lateinit var pagerAdapter: AppPagerAdapter
     private lateinit var widgetHost: WidgetHost
 
@@ -56,6 +60,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var tabBarContainer: android.widget.LinearLayout
     private lateinit var actionBar: View
     private lateinit var rootFrame: View
+    private lateinit var mainLayout: android.widget.LinearLayout
 
     private lateinit var notificationTickerBar: View
     private lateinit var notificationTickerText: TextView
@@ -114,13 +119,26 @@ class LauncherActivity : AppCompatActivity() {
         val savedPack = prefs.iconPackPackage
         if (savedPack != null) iconPackManager.loadIconPack(savedPack)
 
+        allPageIconPackManager = IconPackManager(this)
+        val savedAllPagePack = prefs.allPageIconPackPackage
+        if (savedAllPagePack != null) allPageIconPackManager.loadIconPack(savedAllPagePack)
+
+        dockIconPackManager = IconPackManager(this)
+        val savedDockPack = prefs.dockIconPackPackage
+        if (savedDockPack != null) dockIconPackManager.loadIconPack(savedDockPack)
+
         repository = AppRepository(this)
         repository.iconPackManager = iconPackManager
+        repository.allPageIconPackManager = allPageIconPackManager
+        repository.dockIconPackManager = dockIconPackManager
         repository.register()
+
+        loadPageIconPacks()
 
         widgetHost = WidgetHost(this)
 
         rootFrame = findViewById(R.id.rootFrame)
+        mainLayout = findViewById(R.id.mainLayout)
         statusBar = findViewById(R.id.statusBar)
         headerView = findViewById(R.id.headerView)
         appPager = findViewById(R.id.appPager)
@@ -135,12 +153,20 @@ class LauncherActivity : AppCompatActivity() {
 
         notificationTickerBar.setOnClickListener { notificationHub.show() }
 
+        ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { view, insets ->
+            val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val topPad = if (prefs.systemStatusBarVisible) systemBarInsets.top else 0
+            view.setPadding(view.paddingLeft, topPad, view.paddingRight, view.paddingBottom)
+            insets
+        }
+
         searchOverlay.repository = repository
         searchOverlay.onDismiss = { appPager.visibility = View.VISIBLE }
 
         dockBar.repository = repository
         dockBar.onAppLaunch = { app -> repository.launchApp(app) }
         dockBar.onDockIconLongClick = { app -> showDockIconContextMenu(app) }
+        dockBar.dockIconResolver = { app -> repository.getIconForDock(app) }
 
         repository.onAppsChanged = {
             pagerAdapter.refreshAll()
@@ -168,17 +194,45 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun applySystemUI() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (prefs.systemStatusBarVisible) {
             controller.show(WindowInsetsCompat.Type.statusBars())
+            window.statusBarColor = Color.argb(prefs.systemStatusBarAlpha, 0, 0, 0)
         } else {
             controller.hide(WindowInsetsCompat.Type.statusBars())
         }
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.isAppearanceLightStatusBars = false
+        // Re-request insets so the padding listener re-evaluates
+        if (::mainLayout.isInitialized) {
+            ViewCompat.requestApplyInsets(mainLayout)
+        }
+    }
+
+    private fun loadPageIconPacks() {
+        repository.pageIconPackManagers.clear()
+        for (pageId in prefs.getPageOrder()) {
+            val pkg = prefs.getPageIconPackPackage(pageId) ?: continue
+            val mgr = IconPackManager(this)
+            if (mgr.loadIconPack(pkg)) {
+                repository.pageIconPackManagers[pageId] = mgr
+            }
+        }
+        // Also load dock page pack if set via per-page system
+        val dockPkg = prefs.getPageIconPackPackage("dock")
+        if (dockPkg != null) {
+            val mgr = IconPackManager(this)
+            if (mgr.loadIconPack(dockPkg)) {
+                repository.pageIconPackManagers["dock"] = mgr
+            }
+        }
     }
 
     private fun refreshWallpaper() {
@@ -239,9 +293,26 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun updateTabHighlight(selected: Int) {
+        val accent = prefs.accentColor
+        val lighterAccent = Color.argb(
+            Color.alpha(accent),
+            kotlin.math.min(255, (Color.red(accent) * 1.15).toInt()),
+            kotlin.math.min(255, (Color.green(accent) * 1.15).toInt()),
+            kotlin.math.min(255, (Color.blue(accent) * 1.15).toInt())
+        )
+        val darkerAccent = Color.argb(
+            Color.alpha(accent),
+            (Color.red(accent) * 0.78).toInt(),
+            (Color.green(accent) * 0.78).toInt(),
+            (Color.blue(accent) * 0.78).toInt()
+        )
         for ((i, tab) in tabViews.withIndex()) {
             if (i == selected) {
-                tab.setBackgroundResource(R.drawable.tab_active_bg)
+                val gd = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(lighterAccent, darkerAccent)
+                )
+                tab.background = gd
                 tab.setTextColor(getColor(R.color.bb_text_primary))
             } else {
                 tab.setBackgroundColor(0)
@@ -271,7 +342,7 @@ class LauncherActivity : AppCompatActivity() {
                 if (bottomSwipeTracking) {
                     val dx = ev.rawX - bottomSwipeStartX
                     val dy = ev.rawY - bottomSwipeStartY
-                    if (kotlin.math.abs(dx) > dp(40) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                    if (kotlin.math.abs(dx) > dp(70) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 2f) {
                         if (dx < 0 && appPager.currentItem < pagerAdapter.itemCount - 1) {
                             appPager.setCurrentItem(appPager.currentItem + 1, true)
                             bottomSwipeTracking = false
@@ -395,14 +466,39 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
+    private fun getPageDisplayName(pageId: String): String {
+        return when (pageId) {
+            "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+            else -> pageId.removePrefix("custom_")
+        }
+    }
+
     private fun showAppContextMenu(app: AppInfo, anchor: View) {
         val popup = PopupMenu(this, anchor)
+        val cn = app.componentName.flattenToString()
         val inDock = dockBar.getDockAppsList().any { it.packageName == app.packageName && it.activityName == app.activityName }
+
+        // Build add/remove entries for Favorites and all custom pages
+        val pageOrder = prefs.getPageOrder()
+        val assignablePages = pageOrder.filter { it != "frequent" && it != "all" }
+
         popup.menu.apply {
+            // Favorites toggle
             if (app.isFavorite) {
-                add(getString(R.string.remove_from_favorites))
+                add("Remove from Favorites")
             } else {
-                add(getString(R.string.add_to_favorites))
+                add("Add to Favorites")
+            }
+            // Custom page toggles
+            for (pid in assignablePages) {
+                if (pid == "favorites") continue // already handled above
+                val name = getPageDisplayName(pid)
+                val isOnPage = prefs.isAppOnPage(cn, pid)
+                if (isOnPage) {
+                    add("Remove from $name")
+                } else {
+                    add("Add to $name")
+                }
             }
             if (inDock) {
                 add(getString(R.string.unpin_from_dock))
@@ -413,38 +509,62 @@ class LauncherActivity : AppCompatActivity() {
             add(getString(R.string.app_info))
         }
         popup.setOnMenuItemClickListener { item ->
-            when (item.title) {
-                getString(R.string.add_to_favorites),
-                getString(R.string.remove_from_favorites) -> {
+            val title = item.title?.toString() ?: return@setOnMenuItemClickListener false
+            when {
+                title == "Add to Favorites" || title == "Remove from Favorites" -> {
                     CoroutineScope(Dispatchers.IO).launch {
                         repository.toggleFavorite(app)
                         withContext(Dispatchers.Main) { pagerAdapter.refreshAll() }
                     }
                     true
                 }
-                getString(R.string.pin_to_dock) -> {
+                title.startsWith("Add to ") || title.startsWith("Remove from ") -> {
+                    // Find which custom page this refers to
+                    val pageName = if (title.startsWith("Add to ")) title.removePrefix("Add to ")
+                                   else title.removePrefix("Remove from ")
+                    val pid = assignablePages.find { getPageDisplayName(it) == pageName }
+                    if (pid != null) {
+                        prefs.toggleAppOnPage(cn, pid)
+                        pagerAdapter.refreshAll()
+                    }
+                    true
+                }
+                title == getString(R.string.pin_to_dock) -> {
                     dockBar.addToDock(app)
                     true
                 }
-                getString(R.string.unpin_from_dock) -> {
+                title == getString(R.string.unpin_from_dock) -> {
                     dockBar.removeFromDock(app)
                     true
                 }
-                "Change Icon" -> {
-                    val cn = app.componentName.flattenToString()
-                    IconPickerDialog(this, iconPackManager,
-                        onIconSelected = { drawableName ->
-                            prefs.setCustomIcon(cn, drawableName)
-                            reloadAppsAndRefresh()
-                        },
-                        onReset = {
-                            prefs.setCustomIcon(cn, null)
-                            reloadAppsAndRefresh()
+                title == "Change Icon" -> {
+                    val currentPageId = if (::pagerAdapter.isInitialized) {
+                        pagerAdapter.getPageId(appPager.currentItem)
+                    } else {
+                        "favorites"
+                    }
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change icon for...")
+                        .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
+                            val isPageOnly = which == 0
+                            val pageId = if (isPageOnly) currentPageId else null
+                            val pickerDialog = IconPickerDialog(this,
+                                onIconSelected = { drawableName, _ ->
+                                    prefs.setCustomIcon(cn, drawableName, pageId)
+                                    reloadAppsAndRefresh()
+                                },
+                                onReset = {
+                                    prefs.setCustomIcon(cn, null, pageId)
+                                    reloadAppsAndRefresh()
+                                }
+                            )
+                            pickerDialog.showPackPicker()
                         }
-                    ).show()
+                        .setNegativeButton("Cancel", null)
+                        .show()
                     true
                 }
-                getString(R.string.app_info) -> {
+                title == getString(R.string.app_info) -> {
                     startActivity(Intent(
                         android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
                     ).apply { data = Uri.parse("package:${app.packageName}") })
@@ -467,11 +587,37 @@ class LauncherActivity : AppCompatActivity() {
     private fun showDockIconContextMenu(app: AppInfo) {
         val popup = PopupMenu(this, dockBar)
         popup.menu.add(getString(R.string.unpin_from_dock))
-        popup.setOnMenuItemClickListener {
-            if (it.title == getString(R.string.unpin_from_dock)) {
-                dockBar.removeFromDock(app)
-                true
-            } else false
+        popup.menu.add("Change Icon")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title) {
+                getString(R.string.unpin_from_dock) -> {
+                    dockBar.removeFromDock(app)
+                    true
+                }
+                "Change Icon" -> {
+                    val cn = app.componentName.flattenToString()
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Change icon for...")
+                        .setItems(arrayOf("Dock only", "Everywhere (global)")) { _, which ->
+                            val pageId = if (which == 0) "dock" else null
+                            val pickerDialog = IconPickerDialog(this,
+                                onIconSelected = { drawableName, _ ->
+                                    prefs.setCustomIcon(cn, drawableName, pageId)
+                                    reloadAppsAndRefresh()
+                                },
+                                onReset = {
+                                    prefs.setCustomIcon(cn, null, pageId)
+                                    reloadAppsAndRefresh()
+                                }
+                            )
+                            pickerDialog.showPackPicker()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+                else -> false
+            }
         }
         popup.show()
     }
@@ -536,10 +682,31 @@ class LauncherActivity : AppCompatActivity() {
         refreshNotificationTicker()
         applyOpacitySettings()
 
+        // Reload icon packs if changed
         val savedPack = prefs.iconPackPackage
-        if (savedPack != iconPackManager.currentPackage) {
+        val savedAllPagePack = prefs.allPageIconPackPackage
+        val savedDockPack = prefs.dockIconPackPackage
+        val packChanged = savedPack != iconPackManager.currentPackage
+        val allPagePackChanged = savedAllPagePack != allPageIconPackManager.currentPackage
+        val dockPackChanged = savedDockPack != dockIconPackManager.currentPackage
+
+        if (packChanged) {
             if (savedPack != null) iconPackManager.loadIconPack(savedPack)
             else iconPackManager.clearIconPack()
+        }
+        if (allPagePackChanged) {
+            if (savedAllPagePack != null) allPageIconPackManager.loadIconPack(savedAllPagePack)
+            else allPageIconPackManager.clearIconPack()
+        }
+        if (dockPackChanged) {
+            if (savedDockPack != null) dockIconPackManager.loadIconPack(savedDockPack)
+            else dockIconPackManager.clearIconPack()
+        }
+
+        // Always reload per-page packs (cheap check)
+        loadPageIconPacks()
+
+        if (packChanged || allPagePackChanged || dockPackChanged) {
             CoroutineScope(Dispatchers.Main).launch {
                 withContext(Dispatchers.IO) { repository.loadApps() }
                 if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
@@ -547,6 +714,7 @@ class LauncherActivity : AppCompatActivity() {
             }
         } else {
             if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+            dockBar.loadDock()
         }
     }
 

@@ -60,8 +60,29 @@ class AppGridFragment : Fragment() {
         val prefs = LauncherPrefs(requireContext())
         val scrollable = prefs.isPageScrollable(pageId)
 
+        val listPages = prefs.getListViewPages()
+        val effectiveViewMode = if (listPages.isEmpty()) {
+            // Legacy fallback: check old appViewModeAllOnly boolean
+            if (prefs.appViewModeAllOnly) {
+                if (tab == TAB_ALL) prefs.appViewMode else 0
+            } else {
+                prefs.appViewMode
+            }
+        } else if (listPages.contains("__all__")) {
+            prefs.appViewMode // Everywhere
+        } else {
+            if (listPages.contains(pageId)) prefs.appViewMode else 0
+        }
+
+        // Determine span count based on view mode
+        val spanCount = if (effectiveViewMode == 1) {
+            prefs.listViewColumns // List mode uses list columns
+        } else {
+            prefs.gridColumns // Grid mode uses grid columns
+        }
+
         recycler = RecyclerView(requireContext()).apply {
-            layoutManager = GridLayoutManager(context, prefs.gridColumns)
+            layoutManager = GridLayoutManager(context, spanCount)
             setBackgroundColor(0)
             clipToPadding = false
             setPadding(0, dp(4), 0, dp(4))
@@ -71,7 +92,13 @@ class AppGridFragment : Fragment() {
         adapter = AppAdapter(
             requireContext(),
             onClick = { app -> repository?.launchApp(app) },
-            onLongClick = { app, view -> onAppLongClick?.invoke(app, view) }
+            onLongClick = { app, view -> onAppLongClick?.invoke(app, view) },
+            viewMode = effectiveViewMode,
+            iconResolver = if (repository != null) {
+                { app -> repository!!.getIconForPage(app, pageId) }
+            } else {
+                null
+            }
         )
         recycler.adapter = adapter
         setupEmptySpaceLongClick()
@@ -143,8 +170,21 @@ class AppGridFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (!::adapter.isInitialized || !::recycler.isInitialized) return
-        (recycler.layoutManager as? GridLayoutManager)?.spanCount =
-            LauncherPrefs(requireContext()).gridColumns
+        val prefs = LauncherPrefs(requireContext())
+        val listPages = prefs.getListViewPages()
+        val effectiveViewMode = if (listPages.isEmpty()) {
+            if (prefs.appViewModeAllOnly) {
+                if (tab == TAB_ALL) prefs.appViewMode else 0
+            } else {
+                prefs.appViewMode
+            }
+        } else if (listPages.contains("__all__")) {
+            prefs.appViewMode
+        } else {
+            if (listPages.contains(pageId)) prefs.appViewMode else 0
+        }
+        val spanCount = if (effectiveViewMode == 1) prefs.listViewColumns else prefs.gridColumns
+        (recycler.layoutManager as? GridLayoutManager)?.spanCount = spanCount
         refreshList()
     }
 
@@ -155,7 +195,7 @@ class AppGridFragment : Fragment() {
             TAB_FREQUENT -> repo.getFrequentApps()
             TAB_ALL -> repo.getAllApps()
             TAB_FAVORITES -> repo.getFavoriteApps()
-            TAB_CUSTOM -> repo.getFavoriteApps()
+            TAB_CUSTOM -> repo.getAppsForPage(pageId)
             else -> emptyList()
         }
         adapter.submitList(list)

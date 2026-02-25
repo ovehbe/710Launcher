@@ -34,6 +34,10 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("dockBackgroundColor", 0xFF000000.toInt())
         set(v) = prefs.edit().putInt("dockBackgroundColor", v).apply()
 
+    var accentColor: Int
+        get() = prefs.getInt("accentColor", 0xFF0073BC.toInt())
+        set(v) = prefs.edit().putInt("accentColor", v).apply()
+
     // --- Grid ---
     var gridColumns: Int
         get() = prefs.getInt("gridColumns", 6)
@@ -46,10 +50,52 @@ class LauncherPrefs(context: Context) {
     val iconSizeDp: Int
         get() = when (iconSizeIndex) { 0 -> 38; 2 -> 54; else -> 46 }
 
+    // --- App View Mode ---
+    var appViewMode: Int
+        get() = prefs.getInt("appViewMode", 0) // 0 = grid, 1 = list
+        set(v) = prefs.edit().putInt("appViewMode", v).apply()
+
+    var appViewModeAllOnly: Boolean
+        get() = prefs.getBoolean("appViewModeAllOnly", false)
+        set(v) = prefs.edit().putBoolean("appViewModeAllOnly", v).apply()
+
+    fun getListViewPages(): Set<String> {
+        val data = prefs.getStringSet("listViewPages", null) ?: return emptySet()
+        return data
+    }
+
+    fun setListViewPages(pages: Set<String>) {
+        prefs.edit().putStringSet("listViewPages", pages).apply()
+    }
+
+    var listViewColumns: Int
+        get() = prefs.getInt("listViewColumns", 2)
+        set(v) = prefs.edit().putInt("listViewColumns", v).apply()
+
+    var listViewBgAlpha: Int
+        get() = prefs.getInt("listViewBgAlpha", 200)
+        set(v) = prefs.edit().putInt("listViewBgAlpha", v).apply()
+
     // --- Icon pack ---
     var iconPackPackage: String?
         get() = prefs.getString("iconPackPackage", null)
         set(v) = prefs.edit().putString("iconPackPackage", v).apply()
+
+    var allPageIconPackPackage: String?
+        get() = prefs.getString("allPageIconPackPackage", null)
+        set(v) = prefs.edit().putString("allPageIconPackPackage", v).apply()
+
+    var dockIconPackPackage: String?
+        get() = prefs.getString("dockIconPackPackage", null)
+        set(v) = prefs.edit().putString("dockIconPackPackage", v).apply()
+
+    fun getPageIconPackPackage(pageId: String): String? {
+        return prefs.getString("iconPack_$pageId", null)
+    }
+
+    fun setPageIconPackPackage(pageId: String, pkg: String?) {
+        prefs.edit().putString("iconPack_$pageId", pkg).apply()
+    }
 
     var iconFallbackShape: Int
         get() = prefs.getInt("iconFallbackShape", SHAPE_ROUNDED_SQUARE)
@@ -66,6 +112,10 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("systemStatusBarVisible", true)
         set(v) = prefs.edit().putBoolean("systemStatusBarVisible", v).apply()
 
+    var systemStatusBarAlpha: Int
+        get() = prefs.getInt("systemStatusBarAlpha", 0)
+        set(v) = prefs.edit().putInt("systemStatusBarAlpha", v).apply()
+
     // --- Behavior ---
     var defaultTab: Int
         get() = prefs.getInt("defaultTab", 1)
@@ -80,7 +130,18 @@ class LauncherPrefs(context: Context) {
         set(v) = prefs.edit().putBoolean("searchOnType", v).apply()
 
     // --- Custom icons ---
-    fun getCustomIcon(componentName: String): String? {
+    fun getCustomIcon(componentName: String, pageId: String? = null): String? {
+        // First check per-page custom icon
+        if (pageId != null) {
+            val pageMap = prefs.getString("customIcons_$pageId", null)
+            if (pageMap != null) {
+                try {
+                    val obj = org.json.JSONObject(pageMap)
+                    if (obj.has(componentName)) return obj.getString(componentName)
+                } catch (_: Exception) { }
+            }
+        }
+        // Fall back to global custom icon
         val map = prefs.getString("customIcons", null) ?: return null
         return try {
             val obj = org.json.JSONObject(map)
@@ -88,10 +149,18 @@ class LauncherPrefs(context: Context) {
         } catch (_: Exception) { null }
     }
 
-    fun setCustomIcon(componentName: String, drawableName: String?) {
-        val obj = try { org.json.JSONObject(prefs.getString("customIcons", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
-        if (drawableName != null) obj.put(componentName, drawableName) else obj.remove(componentName)
-        prefs.edit().putString("customIcons", obj.toString()).apply()
+    fun setCustomIcon(componentName: String, drawableName: String?, pageId: String? = null) {
+        if (pageId != null) {
+            // Store per-page custom icon
+            val obj = try { org.json.JSONObject(prefs.getString("customIcons_$pageId", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+            if (drawableName != null) obj.put(componentName, drawableName) else obj.remove(componentName)
+            prefs.edit().putString("customIcons_$pageId", obj.toString()).apply()
+        } else {
+            // Store global custom icon
+            val obj = try { org.json.JSONObject(prefs.getString("customIcons", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+            if (drawableName != null) obj.put(componentName, drawableName) else obj.remove(componentName)
+            prefs.edit().putString("customIcons", obj.toString()).apply()
+        }
     }
 
     // --- Pages ---
@@ -109,6 +178,36 @@ class LauncherPrefs(context: Context) {
         val arr = org.json.JSONArray()
         order.forEach { arr.put(it) }
         prefs.edit().putString("pageOrder", arr.toString()).apply()
+    }
+
+    // --- Per-page app membership (for Favorites and custom pages) ---
+    fun getPageApps(pageId: String): Set<String> {
+        return prefs.getStringSet("pageApps_$pageId", null) ?: emptySet()
+    }
+
+    fun setPageApps(pageId: String, apps: Set<String>) {
+        prefs.edit().putStringSet("pageApps_$pageId", apps).apply()
+    }
+
+    fun isAppOnPage(componentName: String, pageId: String): Boolean {
+        if (pageId == "favorites") {
+            // Legacy: check the Room DB isFavorite flag too (handled in AppRepository)
+            return getPageApps(pageId).contains(componentName)
+        }
+        return getPageApps(pageId).contains(componentName)
+    }
+
+    fun toggleAppOnPage(componentName: String, pageId: String): Boolean {
+        val current = getPageApps(pageId).toMutableSet()
+        val added = if (current.contains(componentName)) {
+            current.remove(componentName)
+            false
+        } else {
+            current.add(componentName)
+            true
+        }
+        setPageApps(pageId, current)
+        return added
     }
 
     fun isPageScrollable(pageId: String): Boolean = prefs.getBoolean("pageScroll_$pageId", false)

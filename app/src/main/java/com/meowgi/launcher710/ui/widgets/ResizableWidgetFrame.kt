@@ -32,7 +32,7 @@ class ResizableWidgetFrame @JvmOverloads constructor(
     private val maxHeightPx = dp(600)
     private val handleSize = dp(24)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = context.resources.getColor(R.color.bb_tab_active, null)
+        color = prefs?.accentColor ?: context.resources.getColor(R.color.bb_tab_active, null)
         style = Paint.Style.STROKE
         strokeWidth = dp(2).toFloat()
     }
@@ -84,7 +84,7 @@ class ResizableWidgetFrame @JvmOverloads constructor(
                 width - borderPaint.strokeWidth, height - borderPaint.strokeWidth)
             canvas.drawRect(r, borderPaint)
             val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = context.resources.getColor(R.color.bb_tab_active, null)
+                color = prefs?.accentColor ?: context.resources.getColor(R.color.bb_tab_active, null)
                 style = Paint.Style.FILL
             }
             val hw = dp(20).toFloat()
