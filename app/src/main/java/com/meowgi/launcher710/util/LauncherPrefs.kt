@@ -29,7 +29,7 @@ class LauncherPrefs(context: Context) {
         set(v) = prefs.edit().putInt("tabBarAlpha", v).apply()
 
     var dockAlpha: Int
-        get() = prefs.getInt("dockAlpha", 230)
+        get() = prefs.getInt("dockAlpha", 166) // 65%
         set(v) = prefs.edit().putInt("dockAlpha", v).apply()
 
     var dockBackgroundColor: Int

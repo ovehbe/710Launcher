@@ -120,6 +120,9 @@ class DockBar @JvmOverloads constructor(
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(6), dp(2), dp(6), dp(2))
             tag = viewIndex
+            isFocusable = true
+            isClickable = true
+            setOnClickListener { onClick() }
             var longPressScheduled = false
             var longPressFired = false
             var dragging = false
@@ -182,7 +185,7 @@ class DockBar @JvmOverloads constructor(
                             longClickConsumed = true
                             onLongClick()
                         } else if (!longPressFired && !swipeUpDetected && !dragging && !movedBeyondTapSlop) {
-                            onClick()
+                            performClick()
                         }
                         longPressFired = false
                         dragging = false
