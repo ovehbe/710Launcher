@@ -21,6 +21,8 @@ class AppRepository(private val context: Context) {
 
     var apps: List<AppInfo> = emptyList()
         private set
+    /** Cached for search/sort by frequency and last opened. */
+    private var statsMap: Map<String, AppStats> = emptyMap()
     var onAppsChanged: (() -> Unit)? = null
 
     private val receiver = object : BroadcastReceiver() {
@@ -53,6 +55,7 @@ class AppRepository(private val context: Context) {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = pm.queryIntentActivities(intent, 0)
         val stats = dao.getAll().associateBy { it.componentName }
+        statsMap = stats
 
         apps = resolveInfos
             .filter { it.activityInfo.packageName != context.packageName }
@@ -82,13 +85,43 @@ class AppRepository(private val context: Context) {
                     icon = finalIcon,
                     rawIcon = rawIconDrawable,
                     launchCount = stat?.launchCount ?: 0,
-                    isFavorite = stat?.isFavorite ?: false
+                    isFavorite = stat?.isFavorite ?: false,
+                    firstInstallTime = try {
+                        @Suppress("DEPRECATION")
+                        pm.getPackageInfo(ri.activityInfo.packageName, 0).firstInstallTime
+                    } catch (_: Exception) { 0L }
                 )
             }
             .sortedBy { it.label.lowercase() }
     }
 
-    fun getAllApps() = apps
+    private fun sortApps(apps: List<AppInfo>, mode: Int): List<AppInfo> {
+        return when (mode) {
+            1 -> apps.sortedWith(
+                compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
+                    .thenBy { it.label.lowercase() }
+            )
+            2 -> apps.sortedWith(
+                compareByDescending<AppInfo> { it.firstInstallTime }
+                    .thenBy { it.label.lowercase() }
+            )
+            3 -> apps.sortedWith(
+                compareByDescending<AppInfo> { it.launchCount }
+                    .thenBy { it.label.lowercase() }
+            )
+            else -> apps.sortedBy { it.label.lowercase() }
+        }
+    }
+
+    private fun sortAppliesToPage(pageId: String): Boolean {
+        val pages = prefs.getSortApplyPages()
+        return pages.isEmpty() || pages.contains("__all__") || pages.contains(pageId)
+    }
+
+    fun getAllApps(): List<AppInfo> {
+        if (!sortAppliesToPage("all")) return apps
+        return sortApps(apps, prefs.appSortMode)
+    }
 
     fun getFrequentApps() = apps
         .filter { it.launchCount > 0 }
@@ -96,28 +129,42 @@ class AppRepository(private val context: Context) {
 
     fun getFavoriteApps(): List<AppInfo> {
         val order = prefs.getFavoriteOrder()
-        if (order.isEmpty()) return apps.filter { it.isFavorite }
+        val favoriteApps = apps.filter { it.isFavorite }
+        if (order.isEmpty()) {
+            return if (sortAppliesToPage("favorites")) sortApps(favoriteApps, prefs.appSortMode) else favoriteApps
+        }
         val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn && it.isFavorite } }
         val rest = apps.filter { it.isFavorite && it.componentName.flattenToString() !in order }
-        return ordered + rest
+        val sortedRest = if (sortAppliesToPage("favorites")) sortApps(rest, prefs.appSortMode) else rest
+        return ordered + sortedRest
     }
 
     fun getAppsForPage(pageId: String): List<AppInfo> {
         val members = prefs.getPageApps(pageId)
+        val pageApps = apps.filter { members.contains(it.componentName.flattenToString()) }
         val order = if (pageId == "favorites") prefs.getFavoriteOrder() else prefs.getPageAppOrder(pageId)
         if (order.isNotEmpty()) {
             val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn } }
                 .filter { members.contains(it.componentName.flattenToString()) }
             val rest = apps.filter { members.contains(it.componentName.flattenToString()) && it.componentName.flattenToString() !in order }
-            return ordered + rest
+            val sortedRest = if (sortAppliesToPage(pageId)) sortApps(rest, prefs.appSortMode) else rest
+            return ordered + sortedRest
         }
-        return apps.filter { members.contains(it.componentName.flattenToString()) }
+        return if (sortAppliesToPage(pageId)) sortApps(pageApps, prefs.appSortMode) else pageApps
     }
 
     fun searchApps(query: String): List<AppInfo> {
         if (query.isBlank()) return emptyList()
-        val q = query.lowercase()
-        return apps.filter { it.label.lowercase().contains(q) }
+        val q = query.lowercase().replace(Regex("[^a-z0-9]"), "")
+        if (q.isEmpty()) return emptyList()
+        return apps.filter {
+            val normalized = it.label.lowercase().replace(Regex("[^a-z0-9]"), "")
+            normalized.contains(q)
+        }.sortedWith(
+            compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
+                .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
+                .thenBy { it.label.lowercase() }
+        )
     }
 
     suspend fun recordLaunch(app: AppInfo) {

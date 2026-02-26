@@ -199,6 +199,21 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("defaultTab", 1)
         set(v) = prefs.edit().putInt("defaultTab", v).apply()
 
+    /** 0 = alphabetical, 1 = last opened, 2 = last installed, 3 = most used */
+    var appSortMode: Int
+        get() = prefs.getInt("appSortMode", 0)
+        set(v) = prefs.edit().putInt("appSortMode", v).apply()
+
+    /** Empty or "__all__" = apply sort everywhere; else set of page IDs. */
+    fun getSortApplyPages(): Set<String> {
+        val data = prefs.getStringSet("sortApplyPages", null) ?: return emptySet()
+        return data
+    }
+
+    fun setSortApplyPages(pages: Set<String>) {
+        prefs.edit().putStringSet("sortApplyPages", pages).apply()
+    }
+
     var doubleTapAction: Int
         get() = prefs.getInt("doubleTapAction", 0)
         set(v) = prefs.edit().putInt("doubleTapAction", v).apply()

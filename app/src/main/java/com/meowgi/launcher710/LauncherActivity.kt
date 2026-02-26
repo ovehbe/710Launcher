@@ -313,6 +313,14 @@ class LauncherActivity : AppCompatActivity() {
                 else -> {}
             }
         }
+        searchOverlay.onItemLongClick = { item, view ->
+            when (item) {
+                is LaunchableItem.App -> showAppContextMenu(item.app, view)
+                is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
+                is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                else -> {}
+            }
+        }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -776,6 +784,7 @@ class LauncherActivity : AppCompatActivity() {
         popup.menu.add("Remove from page")
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
+        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -828,7 +837,11 @@ class LauncherActivity : AppCompatActivity() {
                             pickerDialog.showPackPicker()
                         }
                         .setNegativeButton("Cancel", null)
-                        .show()
+                                .show()
+                    true
+                }
+                "Uninstall" -> {
+                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${shortcut.packageName}")))
                     true
                 }
                 else -> false
@@ -846,6 +859,7 @@ class LauncherActivity : AppCompatActivity() {
         else popup.menu.add(getString(R.string.pin_to_dock))
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
+        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -904,9 +918,19 @@ class LauncherActivity : AppCompatActivity() {
                                 }
                             )
                             pickerDialog.showPackPicker()
+                                }
+                                .setNegativeButton("Cancel", null)
+                                .show()
+                    true
+                }
+                "Uninstall" -> {
+                    try {
+                        val intent = Intent.parseUri(info.intentUri, 0)
+                        val pkg = intent.`package` ?: intent.component?.packageName
+                        if (pkg != null) {
+                            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))
                         }
-                        .setNegativeButton("Cancel", null)
-                        .show()
+                    } catch (_: Exception) {}
                     true
                 }
                 else -> false
@@ -1168,6 +1192,7 @@ class LauncherActivity : AppCompatActivity() {
             add("Change Name")
             add("Change Icon")
             add(getString(R.string.app_info))
+            add("Uninstall")
         }
         popup.setOnMenuItemClickListener { item ->
             val title = item.title?.toString() ?: return@setOnMenuItemClickListener false
@@ -1256,6 +1281,10 @@ class LauncherActivity : AppCompatActivity() {
                     startActivity(Intent(
                         android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
                     ).apply { data = Uri.parse("package:${app.packageName}") })
+                    true
+                }
+                title == "Uninstall" -> {
+                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}")))
                     true
                 }
                 else -> false

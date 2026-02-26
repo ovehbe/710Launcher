@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
 import android.widget.*
 import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
@@ -32,6 +33,7 @@ class SearchOverlay @JvmOverloads constructor(
     var iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null
     var onDismiss: (() -> Unit)? = null
     var onLaunchItem: ((LaunchableItem) -> Unit)? = null
+    var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
 
     private var filterItems: List<LaunchableItem>? = null
     private var lastQuery: String = ""
@@ -95,7 +97,7 @@ class SearchOverlay @JvmOverloads constructor(
                     }
                 }
             },
-            onLongClick = { _, _ -> },
+            onLongClick = { item, view -> onItemLongClick?.invoke(item, view) },
             iconResolver = { item -> iconResolver?.invoke(item) ?: item.icon }
         )
         resultsRecycler.adapter = adapter
@@ -172,9 +174,11 @@ class SearchOverlay @JvmOverloads constructor(
     private fun onSearch(query: String) {
         val filter = filterItems
         if (filter != null) {
-            val q = query.trim().lowercase()
+            val raw = query.trim().lowercase()
+            val q = raw.replace(Regex("[^a-z0-9]"), "")
             val filtered = if (q.isEmpty()) filter else filter.filter {
-                it.label.toString().lowercase().contains(q)
+                val normalized = it.label.toString().lowercase().replace(Regex("[^a-z0-9]"), "")
+                normalized.contains(q)
             }
             currentResults = filtered
             adapter.submitList(filtered)

@@ -8,11 +8,13 @@ optimized for square displays (e.g. Zinwa Q25 720×720).
 - **Custom status bar**: Battery (with level color), clock, carrier, network type, WiFi, optional Bluetooth / alarm / DND
 - **BB7 header**: Date and clock with BB Alphas font
 - **Tabbed app grid**: Frequent, Favorites, All + custom pages with swipe navigation
-- **Universal search**: Real-time filtering, optional search icon pack
+- **App sorting**: Sort by alphabetical, last opened, last installed, or most used; apply to all pages or selected pages (Settings → Sorting)
+- **Universal search**: Fuzzy matching (e.g. "playstore" → Play Store, "tui" → T-UI), results by frequency; long-press on results for context menu
+- **Context menus**: Long-press any app (grid, search, All) for add to Favorites/pages, pin to dock, change name/icon, App Info, Uninstall; same for shortcuts
 - **Sound profiles**: Loud, Normal, Medium, Silent, Vibrate, All Alerts Off (sound dialog with distinct icons)
-- **Notification hub**: Ticker (typing animation, center-out), hub with blocky layout; filter system/sticky/silent
+- **Notification hub**: Ticker (typing animation, center-out), hub with blocky layout; filter system/sticky/silent; centered Clear All button
 - **Icon pack support**: Per-page and dock icon packs (Nova/Apex compatible)
-- **Dock**: Pinned apps + intent shortcuts; per-icon swipe-up action with bounce animation
+- **Dock**: Pinned apps + intent shortcuts; per-icon swipe-up action with bounce animation; long-press opens menu (no accidental launch); horizontal swipe does not trigger tap
 - **Double-tap**: Lock screen or open notification hub (configurable)
 - **Restart**: Restart Launcher from Settings or intent `com.meowgi.launcher710.RESTART_LAUNCHER`
 

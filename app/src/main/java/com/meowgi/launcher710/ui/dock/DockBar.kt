@@ -120,12 +120,12 @@ class DockBar @JvmOverloads constructor(
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(6), dp(2), dp(6), dp(2))
             tag = viewIndex
-            setOnClickListener { onClick() }
             var longPressScheduled = false
             var longPressFired = false
             var dragging = false
             var longClickConsumed = false
             var swipeUpDetected = false
+            var movedBeyondTapSlop = false
             var downX = 0f
             var downY = 0f
             var lastDropIndex = viewIndex
@@ -142,6 +142,7 @@ class DockBar @JvmOverloads constructor(
                         dragging = false
                         longClickConsumed = false
                         swipeUpDetected = false
+                        movedBeyondTapSlop = false
                         lastDropIndex = viewIndex
                         if (!longPressScheduled) {
                             longPressScheduled = true
@@ -150,9 +151,10 @@ class DockBar @JvmOverloads constructor(
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = kotlin.math.abs(event.rawX - downX)
-                        val dy = downY - event.rawY
-                        if (dy > swipeUpThresholdPx && dy > dx) swipeUpDetected = true
-                        if (longPressScheduled && (dx > dragThresholdPx || kotlin.math.abs(event.rawY - downY) > dragThresholdPx)) {
+                        val dy = kotlin.math.abs(event.rawY - downY)
+                        if (dx > dragThresholdPx || dy > dragThresholdPx) movedBeyondTapSlop = true
+                        if (downY - event.rawY > swipeUpThresholdPx && (downY - event.rawY) > dx) swipeUpDetected = true
+                        if (longPressScheduled && movedBeyondTapSlop) {
                             mainHandler.removeCallbacks(longPressRunnable)
                             longPressScheduled = false
                         }
@@ -179,12 +181,14 @@ class DockBar @JvmOverloads constructor(
                         } else if (longPressFired && !dragging && !longClickConsumed) {
                             longClickConsumed = true
                             onLongClick()
+                        } else if (!longPressFired && !swipeUpDetected && !dragging && !movedBeyondTapSlop) {
+                            onClick()
                         }
                         longPressFired = false
                         dragging = false
                     }
                 }
-                false
+                true
             }
         }
     }

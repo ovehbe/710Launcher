@@ -286,6 +286,11 @@ class SettingsActivity : AppCompatActivity() {
         addChoice("Double-Tap Action", listOf("None", "Lock Screen", "Notifications"), prefs.doubleTapAction) {
             prefs.doubleTapAction = it
         }
+        addSection("Sorting")
+        addChoice("Sort apps by", listOf("Alphabetical", "Last Opened", "Last Installed", "Most Used"), prefs.appSortMode.coerceIn(0, 3)) {
+            prefs.appSortMode = it
+        }
+        addButton("Sort applies to: ${getSortAppliesLabel()}") { showSortPagesPicker() }
         addSection("Search engine")
         // Migrate: old 3=shortcut no uri -> 5 (disabled) so they don't see "Launch shortcut" with nothing set
         if (prefs.searchEngineMode == 3 && prefs.searchEngineShortcutIntentUri == null) {
@@ -1162,6 +1167,73 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 if (result.isEmpty()) result.add("__all__")
                 prefs.setListViewPages(result)
+                rebuildSettings()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun getSortAppliesLabel(): String {
+        val pages = prefs.getSortApplyPages()
+        if (pages.isEmpty() || pages.contains("__all__")) return "Everywhere"
+        val pageOrder = prefs.getPageOrder()
+        val names = pages.mapNotNull { pid ->
+            if (pageOrder.contains(pid)) {
+                when (pid) {
+                    "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+                    else -> pid.removePrefix("custom_")
+                }
+            } else null
+        }
+        return if (names.isEmpty()) "Everywhere" else names.joinToString(", ")
+    }
+
+    private fun showSortPagesPicker() {
+        val pageOrder = prefs.getPageOrder()
+        val currentPages = prefs.getSortApplyPages().toMutableSet()
+        val isEverywhere = currentPages.isEmpty() || currentPages.contains("__all__")
+
+        val options = mutableListOf("Everywhere")
+        val pageIds = mutableListOf("__all__")
+        for (pid in pageOrder) {
+            pageIds.add(pid)
+            options.add(when (pid) {
+                "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"
+                else -> pid.removePrefix("custom_")
+            })
+        }
+
+        val checked = BooleanArray(options.size) { i ->
+            if (i == 0) isEverywhere
+            else !isEverywhere && currentPages.contains(pageIds[i])
+        }
+
+        var dialog: AlertDialog? = null
+        dialog = AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Sort Applies To")
+            .setMultiChoiceItems(options.toTypedArray(), checked) { _, which, isChecked ->
+                if (which == 0 && isChecked) {
+                    for (j in 1 until checked.size) checked[j] = false
+                    dialog?.listView?.let { lv ->
+                        for (j in 1 until checked.size) lv.setItemChecked(j, false)
+                    }
+                } else if (which > 0 && isChecked) {
+                    checked[0] = false
+                    dialog?.listView?.setItemChecked(0, false)
+                }
+                checked[which] = isChecked
+            }
+            .setPositiveButton("OK") { _, _ ->
+                val result = mutableSetOf<String>()
+                if (checked[0]) {
+                    result.add("__all__")
+                } else {
+                    for (i in 1 until checked.size) {
+                        if (checked[i]) result.add(pageIds[i])
+                    }
+                }
+                if (result.isEmpty()) result.add("__all__")
+                prefs.setSortApplyPages(result)
                 rebuildSettings()
             }
             .setNegativeButton("Cancel", null)

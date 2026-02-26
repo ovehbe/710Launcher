@@ -11,7 +11,8 @@ data class AppInfo(
     val rawIcon: Drawable? = null, // Original icon without any pack applied
     var launchCount: Int = 0,
     var isFavorite: Boolean = false,
-    var isDocked: Boolean = false
+    var isDocked: Boolean = false,
+    val firstInstallTime: Long = 0L // For "last installed" sort
 ) {
     val componentName: ComponentName
         get() = ComponentName(packageName, activityName)

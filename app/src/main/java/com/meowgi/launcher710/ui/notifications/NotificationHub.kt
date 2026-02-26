@@ -187,11 +187,11 @@ class NotificationHub @JvmOverloads constructor(
 
             val clearBtn = TextView(context).apply {
                 text = context.getString(R.string.clear_all)
-                textSize = 11f
+                textSize = 13f
                 setTextColor(dimColor)
                 typeface = font
                 gravity = Gravity.CENTER
-                setPadding(dp(8), dp(4), dp(8), dp(4))
+                setPadding(dp(12), dp(6), dp(12), dp(6))
                 setOnClickListener {
                     NotifListenerService.instance?.dismissAllNotifications()
                     refresh(appWhitelist)
@@ -200,7 +200,10 @@ class NotificationHub @JvmOverloads constructor(
             container.addView(clearBtn, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(6); marginStart = dp(4) })
+            ).apply {
+                topMargin = dp(6)
+                gravity = Gravity.CENTER_HORIZONTAL
+            })
         }
     }
 

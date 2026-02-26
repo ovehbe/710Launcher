@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,15 +15,15 @@ android {
         applicationId = "com.meowgi.launcher710"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.3.0"
+        versionCode = 4
+        versionName = "1.4.0"
     }
 
     signingConfigs {
         val keystoreFile = rootProject.file("app/release.keystore")
         val propsFile = rootProject.file("keystore.properties")
         if (keystoreFile.exists() && propsFile.exists()) {
-            val props = java.util.Properties().apply { propsFile.reader().use(::load) }
+            val props = Properties().apply { load(FileInputStream(propsFile)) }
             create("release") {
                 storeFile = keystoreFile
                 storePassword = props["storePassword"] as String?
