@@ -8,3 +8,12 @@
 /captures
 .externalNativeBuild
 .cxx
+
+# Signing (do not commit)
+*.keystore
+*.jks
+/app/release.keystore
+keystore.properties
+
+# Backups
+*.bak

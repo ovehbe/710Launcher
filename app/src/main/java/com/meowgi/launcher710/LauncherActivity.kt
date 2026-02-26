@@ -1,21 +1,28 @@
 package com.meowgi.launcher710
 
+import android.accessibilityservice.AccessibilityService
 import android.graphics.Color
 import android.app.Activity
+import android.app.NotificationManager
 import android.app.WallpaperManager
 import android.appwidget.AppWidgetManager
 import android.app.SearchManager
 import android.content.*
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.*
 import android.view.inputmethod.EditorInfo
+import android.view.GestureDetector
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +43,7 @@ import com.meowgi.launcher710.ui.notifications.NotificationHub
 import com.meowgi.launcher710.ui.search.SearchOverlay
 import com.meowgi.launcher710.ui.dock.DockBar
 import com.meowgi.launcher710.ui.header.HeaderView
+import com.meowgi.launcher710.ui.settings.KeyCaptureAccessibilityService
 import com.meowgi.launcher710.ui.settings.SettingsActivity
 import com.meowgi.launcher710.ui.statusbar.BBStatusBar
 import com.meowgi.launcher710.ui.widgets.WidgetHost
@@ -47,6 +55,7 @@ import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.ShortcutHelper
+import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.*
 
 class LauncherActivity : AppCompatActivity() {
@@ -84,6 +93,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var notificationTickerText: TextView
     private lateinit var notificationCount: TextView
     private lateinit var searchInputInBar: EditText
+    private lateinit var btnSoundProfile: ImageView
 
     private val tabViews = mutableListOf<TextView>()
 
@@ -97,6 +107,16 @@ class LauncherActivity : AppCompatActivity() {
 
     private var searchApplyRunnable: Runnable? = null
     private val searchApplyDelayMs = 80L
+
+    private var tickerTypingRunnable: Runnable? = null
+    private var tickerDismissRunnable: Runnable? = null
+    private val tickerTypingDelayMs = 45L
+    private val tickerDisplayDurationMs = 5000L
+
+    private var injectCaptureActive = false
+    private val injectCaptureBuffer = StringBuilder()
+    private var injectCaptureRunnable: Runnable? = null
+    private var injectCaptureStartTime = 0L
 
     private val widgetBindLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -156,10 +176,51 @@ class LauncherActivity : AppCompatActivity() {
         pagerAdapter.refreshAll()
     }
 
+    private var pendingDockSwipeSlotIndex = -1
+    private val dockSwipeShortcutLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (pendingDockSwipeSlotIndex < 0) return@registerForActivityResult
+        val slotIndex = pendingDockSwipeSlotIndex
+        pendingDockSwipeSlotIndex = -1
+        if (result.resultCode != Activity.RESULT_OK || result.data == null) return@registerForActivityResult
+        val shortcutIntent = result.data!!.getParcelableExtra<Intent>(Intent.EXTRA_SHORTCUT_INTENT)
+        if (shortcutIntent != null) {
+            prefs.setDockSwipeAction(slotIndex, shortcutIntent.toUri(Intent.URI_INTENT_SCHEME))
+            dockBar.loadDock()
+        }
+    }
+
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             refreshWallpaper()
         }
+    }
+
+    private val ringerModeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            updateSoundProfileIcon()
+        }
+    }
+
+    private fun updateSoundProfileIcon() {
+        if (!::btnSoundProfile.isInitialized) return
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+
+        val isDnd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            val filter = nm?.currentInterruptionFilter ?: NotificationManager.INTERRUPTION_FILTER_ALL
+            filter != NotificationManager.INTERRUPTION_FILTER_ALL
+        } else false
+
+        val iconRes = when {
+            isDnd && am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_alerts_off
+            isDnd -> R.drawable.ic_sound_dnd
+            am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent
+            am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate
+            else -> R.drawable.ic_sound_normal
+        }
+        btnSoundProfile.setImageResource(iconRes)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -208,6 +269,7 @@ class LauncherActivity : AppCompatActivity() {
         notificationTickerText = findViewById(R.id.notificationTickerText)
         notificationCount = findViewById(R.id.notificationCount)
         searchInputInBar = findViewById(R.id.searchInputInBar)
+        btnSoundProfile = findViewById(R.id.btnSoundProfile)
 
         val toggleHub: () -> Unit = {
             if (notificationHub.visibility == View.VISIBLE) {
@@ -229,6 +291,12 @@ class LauncherActivity : AppCompatActivity() {
         }
 
         searchOverlay.repository = repository
+        searchOverlay.iconResolver = { item ->
+            when (item) {
+                is LaunchableItem.App -> repository.getIconForPage(item.app, "search")
+                else -> item.icon
+            }
+        }
         searchOverlay.onDismiss = {
             searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
             searchApplyRunnable = null
@@ -251,8 +319,9 @@ class LauncherActivity : AppCompatActivity() {
         dockBar.shortcutHelper = shortcutHelper
         dockBar.onAppLaunch = { app -> repository.launchApp(app) }
         dockBar.onIntentShortcutLaunch = { shortcutHelper.launchIntentShortcut(it.intentUri) }
-        dockBar.onDockIconLongClick = { app -> showDockIconContextMenu(app) }
-        dockBar.onIntentShortcutLongClick = { showDockIntentShortcutContextMenu(it) }
+        dockBar.onDockIconLongClick = { app, slotIndex -> showDockIconContextMenu(app, slotIndex) }
+        dockBar.onIntentShortcutLongClick = { info, slotIndex -> showDockIntentShortcutContextMenu(info, slotIndex) }
+        dockBar.onDockSwipeUp = { slotIndex -> launchDockSwipeAction(slotIndex) }
         dockBar.dockIconResolver = { app -> repository.getIconForDock(app) }
 
         repository.onAppsChanged = {
@@ -268,9 +337,15 @@ class LauncherActivity : AppCompatActivity() {
         }
         applyOpacitySettings()
         applySystemUI()
+        updateSoundProfileIcon()
         androidx.core.content.ContextCompat.registerReceiver(
             this, wallpaperChangedReceiver,
             IntentFilter(Intent.ACTION_WALLPAPER_CHANGED),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, ringerModeReceiver,
+            IntentFilter("android.media.RINGER_MODE_CHANGED"),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
@@ -317,12 +392,19 @@ class LauncherActivity : AppCompatActivity() {
                 repository.pageIconPackManagers[pageId] = mgr
             }
         }
-        // Also load dock page pack if set via per-page system
+        // Also load dock and search page packs if set via per-page system
         val dockPkg = prefs.getPageIconPackPackage("dock")
         if (dockPkg != null) {
             val mgr = IconPackManager(this)
             if (mgr.loadIconPack(dockPkg)) {
                 repository.pageIconPackManagers["dock"] = mgr
+            }
+        }
+        val searchPkg = prefs.getPageIconPackPackage("search")
+        if (searchPkg != null) {
+            val mgr = IconPackManager(this)
+            if (mgr.loadIconPack(searchPkg)) {
+                repository.pageIconPackManagers["search"] = mgr
             }
         }
     }
@@ -475,6 +557,35 @@ class LauncherActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    /** Injects a key event via root shell "input keyevent". Requires root. Runs on background thread. */
+    private fun injectKeyViaRoot(keyCode: Int) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent $keyCode")).waitFor()
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** Injects text via root shell "input text". Requires root. Escapes space as %s and shell single-quotes. */
+    private fun injectTextViaRoot(text: String) {
+        if (text.isEmpty()) return
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val forInput = text.replace(" ", "%s").replace("'", "'\\''")
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input text '$forInput'")).waitFor()
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun flushInjectCapture() {
+        injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
+        injectCaptureRunnable = null
+        injectCaptureActive = false
+        val s = injectCaptureBuffer.toString()
+        injectCaptureBuffer.setLength(0)
+        if (s.isNotEmpty()) injectTextViaRoot(s)
+    }
+
     private fun showSearchPageAware(initialChar: Char? = null) {
         searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
         searchApplyRunnable = null
@@ -517,7 +628,9 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun setupActionBar() {
         findViewById<View>(R.id.btnSoundProfile).setOnClickListener {
-            SoundProfileDialog(this).show()
+            val dlg = SoundProfileDialog(this)
+            dlg.onDismissed = { updateSoundProfileIcon() }
+            dlg.show()
         }
         findViewById<View>(R.id.btnSearch).setOnClickListener {
             showSearchPageAware()
@@ -545,16 +658,36 @@ class LauncherActivity : AppCompatActivity() {
             } else false
         }
 
-        findViewById<View>(R.id.contentArea).setOnLongClickListener {
+        val contentArea = findViewById<View>(R.id.contentArea)
+        contentArea.setOnLongClickListener {
             showHomeContextMenu(tabBarContainer)
             true
         }
+        val doubleTapGesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                when (prefs.doubleTapAction) {
+                    1 -> lockScreen()
+                    2 -> {
+                        if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                    }
+                    else -> { /* 0 = None */ }
+                }
+                return true
+            }
+        })
+        contentArea.setOnTouchListener { _, ev -> doubleTapGesture.onTouchEvent(ev) }
     }
 
     private fun showHomeContextMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
-        popup.menu.add(getString(R.string.add_widget))
         val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val supportsWidgets = pageId == "favorites" || pageId.startsWith("custom_")
+        popup.menu.add(getString(R.string.add_widget))
+        if (supportsWidgets) {
+            val below = prefs.isPageWidgetsBelowApps(pageId)
+            popup.menu.add(if (below) "Widget position: Below apps" else "Widget position: Above apps")
+        }
         val canAddShortcut = pageId == "favorites" || pageId.startsWith("custom_")
         if (canAddShortcut) {
             popup.menu.add(getString(R.string.add_app_shortcut))
@@ -563,16 +696,24 @@ class LauncherActivity : AppCompatActivity() {
         popup.menu.add("Choose Wallpaper")
         popup.menu.add(getString(R.string.settings_title))
         popup.setOnMenuItemClickListener { item ->
-            when (item.title) {
-                getString(R.string.add_widget) -> {
+            val title = item.title?.toString() ?: return@setOnMenuItemClickListener false
+            when {
+                title == getString(R.string.add_widget) -> {
                     showWidgetPicker()
                     true
                 }
-                getString(R.string.add_app_shortcut) -> {
+                title.startsWith("Widget position: ") -> {
+                    val pageIdForWidget = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    val currentlyBelow = prefs.isPageWidgetsBelowApps(pageIdForWidget)
+                    prefs.setPageWidgetsBelowApps(pageIdForWidget, !currentlyBelow)
+                    pagerAdapter.refreshAll()
+                    true
+                }
+                title == getString(R.string.add_app_shortcut) -> {
                     showAppShortcutPicker()
                     true
                 }
-                getString(R.string.add_shortcut_all) -> {
+                title == getString(R.string.add_shortcut_all) -> {
                     try {
                         createShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
                     } catch (_: Exception) {
@@ -580,14 +721,14 @@ class LauncherActivity : AppCompatActivity() {
                     }
                     true
                 }
-                "Choose Wallpaper" -> {
+                title == "Choose Wallpaper" -> {
                     try {
                         startActivity(Intent.createChooser(
                             Intent(Intent.ACTION_SET_WALLPAPER), "Choose Wallpaper"))
                     } catch (_: Exception) {}
                     true
                 }
-                getString(R.string.settings_title) -> {
+                title == getString(R.string.settings_title) -> {
                     settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
                     true
                 }
@@ -774,15 +915,26 @@ class LauncherActivity : AppCompatActivity() {
         popup.show()
     }
 
-    private fun showDockIntentShortcutContextMenu(info: IntentShortcutInfo) {
+    private fun showDockIntentShortcutContextMenu(info: IntentShortcutInfo, slotIndex: Int) {
         val popup = PopupMenu(this, dockBar)
         popup.menu.add(getString(R.string.unpin_from_dock))
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
+        popup.menu.add("Set swipe-up action")
+        if (prefs.getDockSwipeAction(slotIndex) != null) popup.menu.add("Clear swipe-up action")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 getString(R.string.unpin_from_dock) -> {
                     dockBar.removeIntentShortcutFromDock(info)
+                    true
+                }
+                "Set swipe-up action" -> {
+                    showDockSwipeActionPicker(slotIndex)
+                    true
+                }
+                "Clear swipe-up action" -> {
+                    prefs.setDockSwipeAction(slotIndex, null)
+                    dockBar.loadDock()
                     true
                 }
                 "Change Name" -> {
@@ -884,20 +1036,94 @@ class LauncherActivity : AppCompatActivity() {
         refreshNotificationTicker()
     }
 
+    /** Build user-friendly ticker text: "Message from X" for messaging apps, etc. */
+    private fun getTickerDisplayText(sbn: StatusBarNotification): String {
+        val extras = sbn.notification.extras
+        val title = extras.getCharSequence("android.title")?.toString()?.trim() ?: ""
+        val text = extras.getCharSequence("android.text")?.toString()?.trim() ?: ""
+        val subText = extras.getCharSequence("android.subText")?.toString()?.trim() ?: ""
+        val pkg = sbn.packageName.lowercase()
+
+        val isMessaging = pkg.contains("whatsapp") || pkg.contains("messenger") || pkg.contains("telegram") ||
+            pkg.contains("signal") || pkg.contains("viber") || pkg.contains("discord") || pkg.contains("skype") ||
+            pkg == "com.google.android.apps.messaging" || pkg == "com.android.mms" || pkg.contains("sms") ||
+            pkg.contains("thoughtcrime.securesms") || pkg.contains("facebook.orca")
+
+        return when {
+            isMessaging && title.isNotEmpty() -> "Message from $title"
+            isMessaging && title.isEmpty() && text.isNotEmpty() -> "New message"
+            isMessaging && title.isEmpty() -> "New message"
+            title.isNotEmpty() && text.isNotEmpty() && !isMessaging -> "$title: ${text.take(40)}${if (text.length > 40) "…" else ""}"
+            subText.isNotEmpty() && title.isEmpty() -> subText
+            title.isNotEmpty() -> title
+            text.isNotEmpty() -> text
+            else -> "Notification"
+        }
+    }
+
     private fun refreshNotificationTicker() {
+        tickerTypingRunnable?.let { keyHandler.removeCallbacks(it) }
+        tickerDismissRunnable?.let { keyHandler.removeCallbacks(it) }
+        tickerTypingRunnable = null
+        tickerDismissRunnable = null
+
         val service = NotifListenerService.instance
         var notifs = service?.getNotifications()?.filter {
-            it.notification.extras.getCharSequence("android.title") != null
+            it.packageName != "android" &&
+            it.notification.flags and android.app.Notification.FLAG_ONGOING_EVENT == 0 &&
+            it.notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE == 0 &&
+            (it.notification.extras.getCharSequence("android.title") != null ||
+             it.notification.extras.getCharSequence("android.text") != null)
         } ?: emptyList()
         val whitelist = prefs.getNotificationAppWhitelist()
         if (whitelist.isNotEmpty()) notifs = notifs.filter { it.packageName in whitelist }
         if (notifs.isEmpty()) {
             notificationTickerBar.visibility = View.GONE
-        } else {
-            notificationTickerBar.visibility = View.VISIBLE
-            notificationTickerText.text = notifs.firstOrNull()?.notification?.extras?.getCharSequence("android.title")?.toString() ?: ""
-            notificationCount.text = notifs.size.toString()
+            return
         }
+
+        notificationTickerBar.visibility = View.VISIBLE
+        notificationCount.text = notifs.size.toString()
+        val first = notifs.firstOrNull() ?: return
+        val fullText = getTickerDisplayText(first)
+        notificationTickerText.text = ""
+        notificationTickerText.visibility = View.VISIBLE
+        notificationCount.visibility = View.GONE
+
+        if (fullText.isEmpty()) {
+            notificationTickerText.visibility = View.GONE
+            notificationCount.visibility = View.VISIBLE
+            return
+        }
+
+        val L = fullText.length
+        val midLeft = (L - 1) / 2
+        val midRight = L / 2
+        val maxSpread = minOf(midLeft, L - 1 - midRight).coerceAtLeast(0)
+        var spread = 0
+
+        tickerTypingRunnable = object : Runnable {
+            override fun run() {
+                if (spread <= maxSpread) {
+                    val left = (midLeft - spread).coerceAtLeast(0)
+                    val right = (midRight + spread).coerceAtMost(L - 1)
+                    notificationTickerText.text = fullText.substring(left, right + 1)
+                    spread++
+                    tickerTypingRunnable = this
+                    keyHandler.postDelayed(this, tickerTypingDelayMs)
+                } else {
+                    tickerTypingRunnable = null
+                    tickerDismissRunnable = Runnable {
+                        notificationTickerText.visibility = View.GONE
+                        notificationTickerText.text = ""
+                        tickerDismissRunnable = null
+                        notificationCount.visibility = View.VISIBLE
+                    }
+                    keyHandler.postDelayed(tickerDismissRunnable!!, tickerDisplayDurationMs)
+                }
+            }
+        }
+        keyHandler.postDelayed(tickerTypingRunnable!!, tickerTypingDelayMs)
     }
 
     private fun getPageDisplayName(pageId: String): String {
@@ -1046,15 +1272,83 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
-    private fun showDockIconContextMenu(app: AppInfo) {
+    private fun launchDockSwipeAction(slotIndex: Int) {
+        val value = prefs.getDockSwipeAction(slotIndex) ?: return
+        try {
+            if (value.startsWith("intent:") || value.contains("#")) {
+                val intent = Intent.parseUri(value, 0)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } else {
+                val component = ComponentName.unflattenFromString(value) ?: return
+                startActivity(Intent(Intent.ACTION_MAIN).apply {
+                    setComponent(component)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun showDockSwipeActionPicker(slotIndex: Int) {
+        val options = mutableListOf("Choose app…", "Choose shortcut…")
+        if (prefs.getDockSwipeAction(slotIndex) != null) options.add("Clear swipe-up action")
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Swipe-up action for this slot")
+            .setItems(options.toTypedArray()) { _, which ->
+                when (which) {
+                    0 -> {
+                        val apps = repository.getAllApps().sortedBy { it.label.lowercase() }
+                        val labels = apps.map { it.label }.toTypedArray()
+                        AlertDialog.Builder(this, R.style.BBDialogTheme)
+                            .setTitle("Choose app")
+                            .setItems(labels) { _, idx ->
+                                val app = apps[idx]
+                                prefs.setDockSwipeAction(slotIndex, app.componentName.flattenToString())
+                                dockBar.loadDock()
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    }
+                    1 -> {
+                        pendingDockSwipeSlotIndex = slotIndex
+                        try {
+                            dockSwipeShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            pendingDockSwipeSlotIndex = -1
+                            android.widget.Toast.makeText(this, "No shortcut handler found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    2 -> {
+                        prefs.setDockSwipeAction(slotIndex, null)
+                        dockBar.loadDock()
+                    }
+                    else -> {}
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showDockIconContextMenu(app: AppInfo, slotIndex: Int) {
         val popup = PopupMenu(this, dockBar)
         popup.menu.add(getString(R.string.unpin_from_dock))
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
+        popup.menu.add("Set swipe-up action")
+        if (prefs.getDockSwipeAction(slotIndex) != null) popup.menu.add("Clear swipe-up action")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 getString(R.string.unpin_from_dock) -> {
                     dockBar.removeFromDock(app)
+                    true
+                }
+                "Set swipe-up action" -> {
+                    showDockSwipeActionPicker(slotIndex)
+                    true
+                }
+                "Clear swipe-up action" -> {
+                    prefs.setDockSwipeAction(slotIndex, null)
+                    dockBar.loadDock()
                     true
                 }
                 "Change Name" -> {
@@ -1128,11 +1422,15 @@ class LauncherActivity : AppCompatActivity() {
             notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
             ::pagerAdapter.isInitialized && appPager.currentItem != prefs.defaultTab ->
                 appPager.setCurrentItem(prefs.defaultTab, true)
-            else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
 
     private fun lockScreen() {
+        val a11y = KeyCaptureAccessibilityService.instance
+        if (a11y != null) {
+            val ok = a11y.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+            if (ok) return
+        }
         try {
             val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
             val admins = dpm?.activeAdmins ?: emptyList<android.content.ComponentName>()
@@ -1188,6 +1486,17 @@ class LauncherActivity : AppCompatActivity() {
             return true
         }
         if (searchOverlay.visibility != View.VISIBLE && prefs.searchOnType && event != null && event.isPrintingKey) {
+            if (injectCaptureActive && event.unicodeChar.toInt() > 0) {
+                injectCaptureBuffer.append(event.unicodeChar.toChar())
+                injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
+                injectCaptureRunnable = Runnable { flushInjectCapture() }
+                val elapsed = SystemClock.uptimeMillis() - injectCaptureStartTime
+                val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
+                val windowMs = prefs.searchEngineLaunchInjectAlternativeWindowMs.toLong()
+                val remaining = (delayMs - elapsed).coerceAtLeast(0)
+                keyHandler.postDelayed(injectCaptureRunnable!!, maxOf(remaining, windowMs))
+                return true
+            }
             when (prefs.searchEngineMode) {
                 0 -> {
                     showSearchPageAware(initialChar = event.unicodeChar.toChar())
@@ -1235,7 +1544,37 @@ class LauncherActivity : AppCompatActivity() {
                         return true
                     }
                 }
-                4 -> { /* disabled */ }
+                4 -> {
+                    val uri = prefs.searchEngineLaunchInjectIntentUri
+                    if (uri != null) {
+                        val keyToInject = event.keyCode
+                        val firstChar = event.unicodeChar.toInt()
+                        try {
+                            shortcutHelper.launchIntentShortcut(uri)
+                        } catch (_: Exception) {}
+                        val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
+                        if (prefs.searchEngineLaunchInjectUseRoot && prefs.searchEngineLaunchInjectAlternativeListener && firstChar > 0) {
+                            injectCaptureActive = true
+                            injectCaptureStartTime = SystemClock.uptimeMillis()
+                            injectCaptureBuffer.setLength(0)
+                            injectCaptureBuffer.append(firstChar.toChar())
+                            injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
+                            injectCaptureRunnable = Runnable { flushInjectCapture() }
+                            keyHandler.postDelayed(injectCaptureRunnable!!, delayMs)
+                        } else if (prefs.searchEngineLaunchInjectUseRoot) {
+                            keyHandler.postDelayed({ injectKeyViaRoot(keyToInject) }, delayMs)
+                        } else if (prefs.searchEngineLaunchInjectWaitForFocus) {
+                            KeyCaptureAccessibilityService.setPendingKeyInject(keyToInject)
+                            keyHandler.postDelayed({ KeyCaptureAccessibilityService.clearPendingKeyInject() }, 15_000L)
+                        } else {
+                            keyHandler.postDelayed({
+                                KeyCaptureAccessibilityService.instance?.injectKey(keyToInject)
+                            }, delayMs)
+                        }
+                        return true
+                    }
+                }
+                5 -> { /* disabled */ }
                 else -> {}
             }
         }
@@ -1311,6 +1650,7 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateSoundProfileIcon()
         refreshWallpaper()
         applySystemUI()
         statusBar.refresh()
@@ -1359,5 +1699,6 @@ class LauncherActivity : AppCompatActivity() {
         repository.unregister()
         NotifListenerService.onNotificationsChanged = null
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
     }
 }

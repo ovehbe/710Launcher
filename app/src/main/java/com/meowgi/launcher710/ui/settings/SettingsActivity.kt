@@ -43,6 +43,11 @@ private class MaxHeightFrameLayout(
 
 class SettingsActivity : AppCompatActivity() {
 
+    companion object {
+        /** Set to true to show Key Shortcuts section and key mapping UI again. */
+        private const val KEY_MAP_SETTINGS_VISIBLE = false
+    }
+
     private lateinit var prefs: LauncherPrefs
     private lateinit var iconPackManager: IconPackManager
     private lateinit var container: LinearLayout
@@ -75,6 +80,22 @@ class SettingsActivity : AppCompatActivity() {
         val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
         prefs.searchEngineShortcutIntentUri = intentUri
         prefs.searchEngineShortcutName = name
+        rebuildSettings()
+    }
+
+    private val launchInjectShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Search"
+        val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.searchEngineLaunchInjectIntentUri = intentUri
+        prefs.searchEngineLaunchInjectName = name
         rebuildSettings()
     }
 
@@ -136,6 +157,13 @@ class SettingsActivity : AppCompatActivity() {
         addToggle("Show BB Status Bar", prefs.statusBarVisible) { prefs.statusBarVisible = it }
         addToggle("Show System Status Bar", prefs.systemStatusBarVisible) { prefs.systemStatusBarVisible = it }
         addSlider("System Status Bar Opacity", prefs.systemStatusBarAlpha) { prefs.systemStatusBarAlpha = it }
+        addSection("Status Bar indicators")
+        addToggle("Show clock", prefs.statusBarShowClock) { prefs.statusBarShowClock = it }
+        addToggle("Show battery", prefs.statusBarShowBattery) { prefs.statusBarShowBattery = it }
+        addToggle("Show network", prefs.statusBarShowNetwork) { prefs.statusBarShowNetwork = it }
+        addToggle("Show Bluetooth", prefs.statusBarShowBluetooth) { prefs.statusBarShowBluetooth = it }
+        addToggle("Show alarm", prefs.statusBarShowAlarm) { prefs.statusBarShowAlarm = it }
+        addToggle("Show Do Not Disturb", prefs.statusBarShowDND) { prefs.statusBarShowDND = it }
         addToggle("Show Navigation Bar", prefs.navigationBarVisible) { prefs.navigationBarVisible = it }
         addSlider("Main Background Opacity", prefs.mainBackgroundAlpha) { prefs.mainBackgroundAlpha = it }
         addSlider("Status Bar Opacity", prefs.statusBarAlpha) { prefs.statusBarAlpha = it }
@@ -206,6 +234,7 @@ class SettingsActivity : AppCompatActivity() {
             addButton("$name Icon Pack: $packName") { showPageIconPackPicker(pid, name) }
         }
         addButton("Dock Icon Pack: ${getPageIconPackName("dock")}") { showPageIconPackPicker("dock", "Dock") }
+        addButton("Search Icon Pack: ${getPageIconPackName("search")}") { showPageIconPackPicker("search", "Search") }
         addChoice("Fallback Icon Shape",
             listOf("Circle", "Rounded Square", "Square", "Squircle"),
             prefs.iconFallbackShape) { prefs.iconFallbackShape = it }
@@ -258,11 +287,11 @@ class SettingsActivity : AppCompatActivity() {
             prefs.doubleTapAction = it
         }
         addSection("Search engine")
-        // Migrate: old "3" was Disabled; now 3=Launch shortcut, 4=Disabled
+        // Migrate: old 3=shortcut no uri -> 5 (disabled) so they don't see "Launch shortcut" with nothing set
         if (prefs.searchEngineMode == 3 && prefs.searchEngineShortcutIntentUri == null) {
-            prefs.searchEngineMode = 4
+            prefs.searchEngineMode = 5
         }
-        addChoice("Physical keyboard search", listOf("Built-in search", "Launch app", "Launch app with query", "Launch shortcut", "Disabled"), prefs.searchEngineMode.coerceIn(0, 4)) {
+        addChoice("Physical keyboard search", listOf("Built-in search", "Launch app", "Launch app with query", "Launch shortcut", "Launch app/shortcut and inject key", "Disabled"), prefs.searchEngineMode.coerceIn(0, 5)) {
             prefs.searchEngineMode = it
             rebuildSettings()
         }
@@ -286,14 +315,42 @@ class SettingsActivity : AppCompatActivity() {
                 rebuildSettings()
             }
         }
+        if (prefs.searchEngineMode == 4) {
+            addButton("App/shortcut: ${prefs.searchEngineLaunchInjectName ?: "Choose app or shortcut"}") {
+                showLaunchInjectAppOrShortcutMenu()
+            }
+            addButton("Clear app/shortcut") {
+                prefs.searchEngineLaunchInjectIntentUri = null
+                prefs.searchEngineLaunchInjectName = null
+                rebuildSettings()
+            }
+            addToggle("Wait for input focus (recommended)", prefs.searchEngineLaunchInjectWaitForFocus) {
+                prefs.searchEngineLaunchInjectWaitForFocus = it
+            }
+            addToggle("Use root injection (requires root)", prefs.searchEngineLaunchInjectUseRoot) {
+                prefs.searchEngineLaunchInjectUseRoot = it
+                rebuildSettings()
+            }
+            if (prefs.searchEngineLaunchInjectUseRoot) {
+                addToggle("Alternative listener (capture short burst, inject as text)", prefs.searchEngineLaunchInjectAlternativeListener) {
+                    prefs.searchEngineLaunchInjectAlternativeListener = it
+                    rebuildSettings()
+                }
+                addInjectAlternativeWindowInput()
+            }
+            addInjectDelayInput()
+        }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
 
-        addSection("Key Shortcuts")
-        addToggle("Enable key shortcuts", prefs.keyShortcutsEnabled) { prefs.keyShortcutsEnabled = it }
-        addButton("Record Home key${getKeyCodeLabel(prefs.keyCodeHome)}") { showRecordKeyDialog("Home") { prefs.keyCodeHome = it } }
-        addButton("Record Back key${getKeyCodeLabel(prefs.keyCodeBack)}") { showRecordKeyDialog("Back") { prefs.keyCodeBack = it } }
-        addButton("Record Recents key${getKeyCodeLabel(prefs.keyCodeRecents)}") { showRecordKeyDialog("Recents") { prefs.keyCodeRecents = it } }
-        addKeyShortcutsInfo()
+        // Key map settings hidden for now; enable key shortcuts stays off by default
+        if (KEY_MAP_SETTINGS_VISIBLE) {
+            addSection("Key Shortcuts")
+            addToggle("Enable key shortcuts", prefs.keyShortcutsEnabled) { prefs.keyShortcutsEnabled = it }
+            addButton("Record Home key${getKeyCodeLabel(prefs.keyCodeHome)}") { showRecordKeyDialog("Home") { prefs.keyCodeHome = it } }
+            addButton("Record Back key${getKeyCodeLabel(prefs.keyCodeBack)}") { showRecordKeyDialog("Back") { prefs.keyCodeBack = it } }
+            addButton("Record Recents key${getKeyCodeLabel(prefs.keyCodeRecents)}") { showRecordKeyDialog("Recents") { prefs.keyCodeRecents = it } }
+            addKeyShortcutsInfo()
+        }
 
         addSection("Backup & restore")
         addButton("Export settings") {
@@ -320,6 +377,11 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
+        }
+        addButton("Restart Launcher") {
+            val intent = android.content.Intent(this, com.meowgi.launcher710.RestartLauncherActivity::class.java)
+            startActivity(intent)
+            finish()
         }
     }
 
@@ -661,6 +723,128 @@ class SettingsActivity : AppCompatActivity() {
 
         container.addView(row)
         addDivider()
+    }
+
+    private fun addInjectDelayInput() {
+        val minMs = 0
+        val maxMs = 5000
+        val current = prefs.searchEngineLaunchInjectDelayMs.coerceIn(minMs, maxMs)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val label = makeLabel("Inject key delay (ms)")
+        val input = EditText(this).apply {
+            setText(current.toString())
+            hint = "0–5000"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            minimumWidth = dp(80)
+        }
+        val saveBtn = TextView(this).apply {
+            text = "Save"
+            setTextColor(prefs.accentColor)
+            textSize = 14f
+            typeface = font
+            setPadding(dp(16), dp(8), dp(8), dp(8))
+            setOnClickListener {
+                applyDelayFromInput(input, minMs, maxMs)
+                input.clearFocus()
+            }
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(input)
+        row.addView(saveBtn)
+        container.addView(row)
+        addDivider()
+    }
+
+    private fun applyDelayFromInput(edit: EditText, minMs: Int, maxMs: Int) {
+        val v = edit.text.toString().toIntOrNull()?.coerceIn(minMs, maxMs) ?: 0
+        prefs.searchEngineLaunchInjectDelayMs = v
+        edit.setText(v.toString())
+    }
+
+    private fun addInjectAlternativeWindowInput() {
+        val minMs = 0
+        val maxMs = 500
+        val current = prefs.searchEngineLaunchInjectAlternativeWindowMs.coerceIn(minMs, maxMs)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val label = makeLabel("Burst window (ms)")
+        val input = EditText(this).apply {
+            setText(current.toString())
+            hint = "120 (0–500)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            minimumWidth = dp(80)
+        }
+        val saveBtn = TextView(this).apply {
+            text = "Save"
+            setTextColor(prefs.accentColor)
+            textSize = 14f
+            typeface = font
+            setPadding(dp(16), dp(8), dp(8), dp(8))
+            setOnClickListener {
+                val v = input.text.toString().toIntOrNull()?.coerceIn(minMs, maxMs) ?: 120
+                prefs.searchEngineLaunchInjectAlternativeWindowMs = v
+                input.setText(v.toString())
+                input.clearFocus()
+            }
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(input)
+        row.addView(saveBtn)
+        container.addView(row)
+        addDivider()
+    }
+
+    private fun showLaunchInjectAppOrShortcutMenu() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("App or shortcut?")
+            .setItems(arrayOf("App", "Shortcut")) { _, which ->
+                when (which) {
+                    0 -> showLaunchInjectAppPicker()
+                    1 -> {
+                        try {
+                            launchInjectShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showLaunchInjectAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose app")
+            .setItems(options) { _, which ->
+                val pkg = pkgList[which].first
+                val name = pkgList[which].second
+                val intent = packageManager.getLaunchIntentForPackage(pkg)
+                if (intent != null) {
+                    prefs.searchEngineLaunchInjectIntentUri = intent.toUri(Intent.URI_INTENT_SCHEME)
+                    prefs.searchEngineLaunchInjectName = name
+                    rebuildSettings()
+                } else {
+                    Toast.makeText(this, "Could not get launch intent", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
     }
 
     // --- Choice picker ---

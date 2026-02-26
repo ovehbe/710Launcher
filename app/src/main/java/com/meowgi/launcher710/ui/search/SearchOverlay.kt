@@ -29,6 +29,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
     var repository: AppRepository? = null
+    var iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null
     var onDismiss: (() -> Unit)? = null
     var onLaunchItem: ((LaunchableItem) -> Unit)? = null
 
@@ -94,7 +95,8 @@ class SearchOverlay @JvmOverloads constructor(
                     }
                 }
             },
-            onLongClick = { _, _ -> }
+            onLongClick = { _, _ -> },
+            iconResolver = { item -> iconResolver?.invoke(item) ?: item.icon }
         )
         resultsRecycler.adapter = adapter
         resultsRecycler.isClickable = true

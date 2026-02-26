@@ -110,6 +110,12 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("dockIconPackPackage", null)
         set(v) = prefs.edit().putString("dockIconPackPackage", v).apply()
 
+    fun getDockSwipeAction(slotIndex: Int): String? =
+        prefs.getString("dockSwipeAction_$slotIndex", null)
+
+    fun setDockSwipeAction(slotIndex: Int, value: String?) =
+        prefs.edit().putString("dockSwipeAction_$slotIndex", value).apply()
+
     fun getPageIconPackPackage(pageId: String): String? {
         return prefs.getString("iconPack_$pageId", null)
     }
@@ -127,6 +133,25 @@ class LauncherPrefs(context: Context) {
     var statusBarVisible: Boolean
         get() = prefs.getBoolean("statusBarVisible", true)
         set(v) = prefs.edit().putBoolean("statusBarVisible", v).apply()
+
+    var statusBarShowClock: Boolean
+        get() = prefs.getBoolean("statusBarShowClock", true)
+        set(v) = prefs.edit().putBoolean("statusBarShowClock", v).apply()
+    var statusBarShowBattery: Boolean
+        get() = prefs.getBoolean("statusBarShowBattery", true)
+        set(v) = prefs.edit().putBoolean("statusBarShowBattery", v).apply()
+    var statusBarShowNetwork: Boolean
+        get() = prefs.getBoolean("statusBarShowNetwork", true)
+        set(v) = prefs.edit().putBoolean("statusBarShowNetwork", v).apply()
+    var statusBarShowBluetooth: Boolean
+        get() = prefs.getBoolean("statusBarShowBluetooth", false)
+        set(v) = prefs.edit().putBoolean("statusBarShowBluetooth", v).apply()
+    var statusBarShowAlarm: Boolean
+        get() = prefs.getBoolean("statusBarShowAlarm", false)
+        set(v) = prefs.edit().putBoolean("statusBarShowAlarm", v).apply()
+    var statusBarShowDND: Boolean
+        get() = prefs.getBoolean("statusBarShowDND", false)
+        set(v) = prefs.edit().putBoolean("statusBarShowDND", v).apply()
 
     /** Native Android system status bar visibility. */
     var systemStatusBarVisible: Boolean
@@ -182,7 +207,7 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("searchOnType", true)
         set(v) = prefs.edit().putBoolean("searchOnType", v).apply()
 
-    /** 0 = built-in, 1 = launch app, 2 = launch with query, 3 = launch shortcut, 4 = disabled */
+    /** 0 = built-in, 1 = launch app, 2 = launch with query, 3 = launch shortcut, 4 = launch and inject key, 5 = disabled */
     var searchEngineMode: Int
         get() = prefs.getInt("searchEngineMode", 0)
         set(v) = prefs.edit().putInt("searchEngineMode", v).apply()
@@ -202,6 +227,39 @@ class LauncherPrefs(context: Context) {
     var searchEngineShortcutName: String?
         get() = prefs.getString("searchEngineShortcutName", null)
         set(v) = prefs.edit().putString("searchEngineShortcutName", v).apply()
+
+    var searchEngineLaunchInjectIntentUri: String?
+        get() = prefs.getString("searchEngineLaunchInjectIntentUri", null)
+        set(v) = prefs.edit().putString("searchEngineLaunchInjectIntentUri", v).apply()
+
+    var searchEngineLaunchInjectName: String?
+        get() = prefs.getString("searchEngineLaunchInjectName", null)
+        set(v) = prefs.edit().putString("searchEngineLaunchInjectName", v).apply()
+
+    /** Delay in ms before injecting the key (default 50). Used only when wait-for-focus is off. Max 5000. */
+    var searchEngineLaunchInjectDelayMs: Int
+        get() = prefs.getInt("searchEngineLaunchInjectDelayMs", 50).coerceIn(0, 5000)
+        set(v) = prefs.edit().putInt("searchEngineLaunchInjectDelayMs", v.coerceIn(0, 5000)).apply()
+
+    /** When true, inject key when the launched app has an input focused (recommended). When false, use fixed delay. */
+    var searchEngineLaunchInjectWaitForFocus: Boolean
+        get() = prefs.getBoolean("searchEngineLaunchInjectWaitForFocus", true)
+        set(v) = prefs.edit().putBoolean("searchEngineLaunchInjectWaitForFocus", v).apply()
+
+    /** When true, use root shell "input keyevent" to inject (requires root). Ignores accessibility inject. */
+    var searchEngineLaunchInjectUseRoot: Boolean
+        get() = prefs.getBoolean("searchEngineLaunchInjectUseRoot", false)
+        set(v) = prefs.edit().putBoolean("searchEngineLaunchInjectUseRoot", v).apply()
+
+    /** When true (and root injection on), capture keys in a short window and inject as text. Off by default. */
+    var searchEngineLaunchInjectAlternativeListener: Boolean
+        get() = prefs.getBoolean("searchEngineLaunchInjectAlternativeListener", false)
+        set(v) = prefs.edit().putBoolean("searchEngineLaunchInjectAlternativeListener", v).apply()
+
+    /** Burst window (ms) for alternative listener: after this much idle time, inject captured text. 0–500, default 120. */
+    var searchEngineLaunchInjectAlternativeWindowMs: Int
+        get() = prefs.getInt("searchEngineLaunchInjectAlternativeWindowMs", 120).coerceIn(0, 500)
+        set(v) = prefs.edit().putInt("searchEngineLaunchInjectAlternativeWindowMs", v.coerceIn(0, 500)).apply()
 
     // --- Key shortcuts (recorded key codes) ---
     var keyShortcutsEnabled: Boolean
@@ -323,8 +381,42 @@ class LauncherPrefs(context: Context) {
         return added
     }
 
+    /** Ordered list of favorite app component names (for drag-to-reorder on Favorites tab). */
+    fun getFavoriteOrder(): List<String> {
+        val data = prefs.getString("favoriteOrder", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(data)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun setFavoriteOrder(componentNames: List<String>) {
+        val arr = org.json.JSONArray()
+        componentNames.forEach { arr.put(it) }
+        prefs.edit().putString("favoriteOrder", arr.toString()).apply()
+    }
+
+    /** Ordered list of app component names for custom pages (drag-to-reorder). */
+    fun getPageAppOrder(pageId: String): List<String> {
+        val data = prefs.getString("pageAppOrder_$pageId", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(data)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun setPageAppOrder(pageId: String, componentNames: List<String>) {
+        val arr = org.json.JSONArray()
+        componentNames.forEach { arr.put(it) }
+        prefs.edit().putString("pageAppOrder_$pageId", arr.toString()).apply()
+    }
+
     fun isPageScrollable(pageId: String): Boolean = prefs.getBoolean("pageScroll_$pageId", false)
     fun setPageScrollable(pageId: String, value: Boolean) = prefs.edit().putBoolean("pageScroll_$pageId", value).apply()
+
+    /** true = widgets appear below app grid; false = above (default) */
+    fun isPageWidgetsBelowApps(pageId: String): Boolean = prefs.getBoolean("widgetsBelowApps_$pageId", false)
+    fun setPageWidgetsBelowApps(pageId: String, value: Boolean) = prefs.edit().putBoolean("widgetsBelowApps_$pageId", value).apply()
 
     // --- Per-page app shortcuts (ShortcutInfo pins) ---
     /** Returns list of "packageName|shortcutId" for the page. */
@@ -395,6 +487,9 @@ class LauncherPrefs(context: Context) {
     fun setPageWidgetData(pageId: String, data: String?) = prefs.edit().putString("widgetData_$pageId", data).apply()
     fun getPageWidgetHeights(pageId: String): String? = prefs.getString("widgetHeights_$pageId", null)
     fun setPageWidgetHeights(pageId: String, data: String?) = prefs.edit().putString("widgetHeights_$pageId", data).apply()
+    /** JSON object: {"widgetId":{"w":widthPx,"h":heightPx}}. Used for resize; falls back to widgetHeights for h if missing. */
+    fun getPageWidgetSizes(pageId: String): String? = prefs.getString("widgetSizes_$pageId", null)
+    fun setPageWidgetSizes(pageId: String, data: String?) = prefs.edit().putString("widgetSizes_$pageId", data).apply()
 
     @Deprecated("Use per-page widget data")
     var widgetData: String?

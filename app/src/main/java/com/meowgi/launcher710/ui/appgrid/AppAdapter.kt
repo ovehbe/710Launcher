@@ -16,7 +16,7 @@ class AppAdapter(
     private val context: android.content.Context,
     private var items: List<LaunchableItem> = emptyList(),
     private val onClick: (LaunchableItem) -> Unit,
-    private val onLongClick: (LaunchableItem, View) -> Unit,
+    private val onLongClick: ((LaunchableItem, View) -> Unit)?,
     private val viewMode: Int = 0, // 0 = grid, 1 = list
     private val iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null,
     private val labelResolver: ((LaunchableItem) -> CharSequence)? = null
@@ -50,6 +50,15 @@ class AppAdapter(
 
     fun getCurrentList(): List<LaunchableItem> = items
 
+    fun moveItem(from: Int, to: Int) {
+        if (from == to || from !in items.indices || to !in items.indices) return
+        val list = items.toMutableList()
+        val item = list.removeAt(from)
+        list.add(to, item)
+        items = list
+        notifyItemMoved(from, to)
+    }
+
     override fun getItemViewType(position: Int): Int {
         return if (viewMode == 1) VIEW_TYPE_LIST else VIEW_TYPE_GRID
     }
@@ -82,7 +91,12 @@ class AppAdapter(
                 } ?: android.view.ViewGroup.LayoutParams(iconSizePx, iconSizePx)
                 holder.label.text = label
                 holder.itemView.setOnClickListener { onClick(item) }
-                holder.itemView.setOnLongClickListener { onLongClick(item, it); true }
+                val longClick = onLongClick
+                if (longClick != null) {
+                    holder.itemView.setOnLongClickListener { longClick(item, it); true }
+                } else {
+                    holder.itemView.setOnLongClickListener(null)
+                }
             }
             is ListVH -> {
                 holder.icon.setImageDrawable(icon)
@@ -92,7 +106,12 @@ class AppAdapter(
                 val nameBarColor = Color.argb(prefs.listViewNameBarAlpha, 0, 0, 0)
                 holder.nameBar.setBackgroundColor(nameBarColor)
                 holder.itemView.setOnClickListener { onClick(item) }
-                holder.itemView.setOnLongClickListener { onLongClick(item, it); true }
+                val longClickList = onLongClick
+                if (longClickList != null) {
+                    holder.itemView.setOnLongClickListener { longClickList(item, it); true }
+                } else {
+                    holder.itemView.setOnLongClickListener(null)
+                }
             }
         }
     }

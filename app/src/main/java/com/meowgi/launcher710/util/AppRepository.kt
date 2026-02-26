@@ -94,10 +94,23 @@ class AppRepository(private val context: Context) {
         .filter { it.launchCount > 0 }
         .sortedByDescending { it.launchCount }
 
-    fun getFavoriteApps() = apps.filter { it.isFavorite }
+    fun getFavoriteApps(): List<AppInfo> {
+        val order = prefs.getFavoriteOrder()
+        if (order.isEmpty()) return apps.filter { it.isFavorite }
+        val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn && it.isFavorite } }
+        val rest = apps.filter { it.isFavorite && it.componentName.flattenToString() !in order }
+        return ordered + rest
+    }
 
     fun getAppsForPage(pageId: String): List<AppInfo> {
         val members = prefs.getPageApps(pageId)
+        val order = if (pageId == "favorites") prefs.getFavoriteOrder() else prefs.getPageAppOrder(pageId)
+        if (order.isNotEmpty()) {
+            val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn } }
+                .filter { members.contains(it.componentName.flattenToString()) }
+            val rest = apps.filter { members.contains(it.componentName.flattenToString()) && it.componentName.flattenToString() !in order }
+            return ordered + rest
+        }
         return apps.filter { members.contains(it.componentName.flattenToString()) }
     }
 

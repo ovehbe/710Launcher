@@ -7,6 +7,7 @@ import android.widget.LinearLayout
 import androidx.core.view.GestureDetectorCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.AppInfo
@@ -102,7 +103,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
                 }
             },
-            onLongClick = { item, view -> onItemLongClick?.invoke(item, view) },
+            onLongClick = if (tab == TAB_FAVORITES) null else { item, view -> onItemLongClick?.invoke(item, view) },
             viewMode = effectiveViewMode,
             iconResolver = if (repository != null) {
                 { item ->
@@ -126,6 +127,7 @@ class AppGridFragment : Fragment() {
         )
         recycler.adapter = adapter
         setupEmptySpaceLongClick()
+        if (tab == TAB_FAVORITES || tab == TAB_CUSTOM) setupDragToReorder(recycler)
 
         if (supportsWidgets) {
             val innerLayout = LinearLayout(requireContext()).apply {
@@ -139,14 +141,20 @@ class AppGridFragment : Fragment() {
             }
             val host = widgetHost
             if (host != null) widgetContainer?.setup(host, pageId)
-            innerLayout.addView(widgetContainer)
+            val widgetsBelow = prefs.isPageWidgetsBelowApps(pageId)
+            if (widgetsBelow) {
+                innerLayout.addView(recycler)
+                innerLayout.addView(widgetContainer)
+            } else {
+                innerLayout.addView(widgetContainer)
+                innerLayout.addView(recycler)
+            }
 
             if (scrollable) {
                 recycler.layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
-                innerLayout.addView(recycler)
                 val scrollView = androidx.core.widget.NestedScrollView(requireContext()).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -163,7 +171,6 @@ class AppGridFragment : Fragment() {
                 recycler.layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
                 )
-                innerLayout.addView(recycler)
                 return innerLayout
             }
         }
@@ -252,6 +259,46 @@ class AppGridFragment : Fragment() {
                 return false
             }
         })
+    }
+
+    private fun setupDragToReorder(recycler: RecyclerView) {
+        var dragStartPosition = -1
+        var didMove = false
+        var contextMenuShownForThisDrag = false
+        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
+            ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.START or ItemTouchHelper.END,
+            0
+        ) {
+            override fun onMove(rv: RecyclerView, vh: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean {
+                didMove = true
+                adapter.moveItem(vh.bindingAdapterPosition, target.bindingAdapterPosition)
+                return true
+            }
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
+            override fun onSelectedChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
+                super.onSelectedChanged(viewHolder, actionState)
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && viewHolder != null) {
+                    dragStartPosition = viewHolder.bindingAdapterPosition
+                    didMove = false
+                    contextMenuShownForThisDrag = false
+                }
+            }
+            override fun clearView(rv: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+                super.clearView(rv, viewHolder)
+                val list = adapter.getCurrentList()
+                val componentNames = list.mapNotNull { (it as? LaunchableItem.App)?.app?.componentName?.flattenToString() }
+                if (componentNames.isNotEmpty()) {
+                    val prefs = LauncherPrefs(requireContext())
+                    if (tab == TAB_FAVORITES) prefs.setFavoriteOrder(componentNames)
+                    else if (tab == TAB_CUSTOM) prefs.setPageAppOrder(pageId, componentNames)
+                }
+                if (!didMove && !contextMenuShownForThisDrag && dragStartPosition >= 0 && dragStartPosition < list.size) {
+                    contextMenuShownForThisDrag = true
+                    onItemLongClick?.invoke(list[dragStartPosition], viewHolder.itemView)
+                }
+                dragStartPosition = -1
+            }
+        }).attachToRecyclerView(recycler)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

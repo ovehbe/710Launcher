@@ -50,6 +50,17 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".RestartLauncherActivity"
+            android:exported="true"
+            android:label="Restart Launcher"
+            android:theme="@style/Theme.BBOS7"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="com.meowgi.launcher710.RESTART_LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".ui.settings.SettingsActivity"
             android:exported="false"
             android:theme="@style/Theme.BBOS7"

@@ -45,19 +45,24 @@
 
             <ImageView
                 android:id="@+id/btnSoundProfile"
-                android:layout_width="@dimen/icon_action_size"
-                android:layout_height="@dimen/icon_action_size"
-                android:src="@android:drawable/ic_lock_silent_mode_off"
+                android:layout_width="44dp"
+                android:layout_height="match_parent"
+                android:src="@drawable/ic_sound_normal"
                 android:contentDescription="Sound Profile"
-                android:padding="2dp" />
+                android:scaleType="fitCenter"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:alpha="0.7" />
 
             <FrameLayout
                 android:id="@+id/actionBarCenter"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
                 android:clickable="true"
                 android:focusable="true">
 
@@ -77,11 +82,12 @@
 
                     <TextView
                         android:id="@+id/notificationTickerText"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:maxWidth="160dp"
                         android:textColor="@color/bb_text_secondary"
                         android:textSize="12sp"
                         android:fontFamily="@font/bbalphas" />
@@ -90,7 +96,7 @@
                         android:id="@+id/notificationCount"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="4dp"
+                        android:layout_marginStart="6dp"
                         android:background="@drawable/tab_active_bg"
                         android:paddingStart="6dp"
                         android:paddingEnd="6dp"
@@ -121,11 +127,15 @@
 
             <ImageView
                 android:id="@+id/btnSearch"
-                android:layout_width="@dimen/icon_action_size"
-                android:layout_height="@dimen/icon_action_size"
+                android:layout_width="44dp"
+                android:layout_height="match_parent"
                 android:src="@android:drawable/ic_menu_search"
                 android:contentDescription="Search"
-                android:padding="2dp" />
+                android:scaleType="fitCenter"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
         </LinearLayout>
 
         <View

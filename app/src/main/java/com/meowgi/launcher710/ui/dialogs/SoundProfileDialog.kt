@@ -1,13 +1,16 @@
 package com.meowgi.launcher710.ui.dialogs
 
 import android.app.Dialog
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.core.content.res.ResourcesCompat
@@ -16,18 +19,10 @@ import com.meowgi.launcher710.R
 class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogTheme) {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
-    data class Profile(val name: String, val ringerMode: Int, val volumePct: Float)
-
-    private val profiles = listOf(
-        Profile("All Alerts Off", AudioManager.RINGER_MODE_SILENT, 0f),
-        Profile("Normal", AudioManager.RINGER_MODE_NORMAL, 0.7f),
-        Profile("Loud", AudioManager.RINGER_MODE_NORMAL, 1.0f),
-        Profile("Medium", AudioManager.RINGER_MODE_NORMAL, 0.5f),
-        Profile("Silent", AudioManager.RINGER_MODE_SILENT, 0f),
-        Profile("Vibrate Only", AudioManager.RINGER_MODE_VIBRATE, 0f)
-    )
+    var onDismissed: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,34 +32,44 @@ class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogThe
             setPadding(dp(16), dp(12), dp(16), dp(12))
         }
 
-        val title = TextView(context).apply {
-            text = context.getString(R.string.profile_title)
-            textSize = 16f
-            setTextColor(context.getColor(R.color.bb_text_primary))
-            typeface = font?.let { Typeface.create(it, Typeface.BOLD) }
-            setPadding(0, 0, 0, dp(8))
-        }
-        layout.addView(title)
-
         val currentMode = audioManager.ringerMode
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
         val curVol = audioManager.getStreamVolume(AudioManager.STREAM_RING)
         val curPct = if (maxVol > 0) curVol.toFloat() / maxVol else 0f
+        val isDnd = isDndActive()
 
-        for (profile in profiles) {
-            val isSelected = isProfileActive(profile, currentMode, curPct)
-            val row = makeProfileRow(profile, isSelected)
-            layout.addView(row)
-        }
+        // Figure out which single volume row to highlight
+        val activeVolume = if (currentMode == AudioManager.RINGER_MODE_NORMAL) {
+            listOf(1.0f to "Loud", 0.7f to "Normal", 0.5f to "Medium")
+                .minByOrNull { kotlin.math.abs(it.first - curPct) }?.second
+        } else null
 
-        val divider = android.view.View(context).apply {
-            setBackgroundColor(context.getColor(R.color.bb_divider))
-        }
-        layout.addView(divider, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(8)
-        })
+        // --- Volume section ---
+        layout.addView(makeRow("Loud", activeVolume == "Loud",
+            R.drawable.ic_sound_normal) { applyVolume(1.0f) })
+        layout.addView(makeRow("Normal", activeVolume == "Normal",
+            R.drawable.ic_sound_normal) { applyVolume(0.7f) })
+        layout.addView(makeRow("Medium", activeVolume == "Medium",
+            R.drawable.ic_sound_normal) { applyVolume(0.5f) })
+
+        layout.addView(makeDivider())
+
+        // --- Silent / Vibrate ---
+        layout.addView(makeRow("Silent",
+            currentMode == AudioManager.RINGER_MODE_SILENT && !isDnd,
+            R.drawable.ic_sound_silent) { applySilent() })
+        layout.addView(makeRow("Vibrate Only",
+            currentMode == AudioManager.RINGER_MODE_VIBRATE,
+            R.drawable.ic_sound_vibrate) { applyVibrate() })
+
+        layout.addView(makeDivider())
+
+        // --- All Alerts Off / Do Not Disturb ---
+        layout.addView(makeRow("All Alerts Off",
+            currentMode == AudioManager.RINGER_MODE_SILENT && isDnd,
+            R.drawable.ic_sound_alerts_off) { applyAlertsOff() })
+
+        layout.addView(makeDivider())
 
         val changeBtn = TextView(context).apply {
             text = context.getString(R.string.profile_change_sounds)
@@ -89,15 +94,21 @@ class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogThe
         window?.setLayout(dp(280), ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    private fun isProfileActive(profile: Profile, mode: Int, volPct: Float): Boolean {
-        if (profile.ringerMode != mode) return false
-        if (mode == AudioManager.RINGER_MODE_NORMAL) {
-            return kotlin.math.abs(profile.volumePct - volPct) < 0.2f
-        }
-        return true
+    override fun dismiss() {
+        super.dismiss()
+        onDismissed?.invoke()
     }
 
-    private fun makeProfileRow(profile: Profile, isSelected: Boolean): LinearLayout {
+    private fun isDndActive(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return try {
+            val filter = notificationManager?.currentInterruptionFilter
+                ?: NotificationManager.INTERRUPTION_FILTER_ALL
+            filter != NotificationManager.INTERRUPTION_FILTER_ALL
+        } catch (_: Exception) { false }
+    }
+
+    private fun makeRow(label: String, isSelected: Boolean, iconRes: Int, onClick: () -> Unit): LinearLayout {
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -105,25 +116,19 @@ class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogThe
             if (isSelected) setBackgroundResource(R.drawable.profile_item_selected)
 
             val icon = ImageView(context).apply {
-                val res = when {
-                    profile.ringerMode == AudioManager.RINGER_MODE_VIBRATE ->
-                        android.R.drawable.ic_lock_silent_mode
-                    profile.ringerMode == AudioManager.RINGER_MODE_SILENT ->
-                        android.R.drawable.ic_lock_silent_mode
-                    else -> android.R.drawable.ic_lock_silent_mode_off
-                }
-                setImageResource(res)
+                setImageResource(iconRes)
+                scaleType = ImageView.ScaleType.FIT_CENTER
                 setPadding(dp(2), dp(2), dp(8), dp(2))
             }
             addView(icon, LinearLayout.LayoutParams(dp(32), dp(28)))
 
-            val label = TextView(context).apply {
-                text = profile.name
+            val tv = TextView(context).apply {
+                text = label
                 textSize = 14f
                 setTextColor(context.getColor(R.color.bb_text_primary))
                 typeface = font
             }
-            addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
             if (isSelected) {
                 val check = TextView(context).apply {
@@ -134,23 +139,106 @@ class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogThe
                 addView(check)
             }
 
-            setOnClickListener { applyProfile(profile) }
+            setOnClickListener { onClick() }
         }
     }
 
-    private fun applyProfile(profile: Profile) {
+    private fun makeDivider(): View {
+        val d = View(context).apply {
+            setBackgroundColor(context.getColor(R.color.bb_divider))
+        }
+        d.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+        ).apply {
+            topMargin = dp(6)
+            bottomMargin = dp(6)
+        }
+        return d
+    }
+
+    /** Set ringer to normal at given volume. Turns off DND if active. */
+    private fun applyVolume(pct: Float) {
         try {
-            audioManager.ringerMode = profile.ringerMode
-            if (profile.ringerMode == AudioManager.RINGER_MODE_NORMAL) {
-                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
-                audioManager.setStreamVolume(
-                    AudioManager.STREAM_RING,
-                    (max * profile.volumePct).toInt().coerceAtLeast(1),
-                    0
-                )
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+            audioManager.setStreamVolume(
+                AudioManager.STREAM_RING, (max * pct).toInt().coerceAtLeast(1), 0
+            )
+        } catch (_: Exception) {}
+        dismiss()
+    }
+
+    /** Set ringer to silent. Does NOT touch DND. */
+    private fun applySilent() {
+        try {
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        } catch (_: Exception) {}
+        dismiss()
+    }
+
+    /** Set ringer to vibrate. Does NOT touch DND. */
+    private fun applyVibrate() {
+        try {
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+        } catch (_: Exception) {}
+        dismiss()
+    }
+
+    /** Silence everything: silent ringer + DND on. */
+    private fun applyAlertsOff() {
+        try {
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        } catch (_: Exception) {}
+        enableDnd()
+        dismiss()
+    }
+
+    /** Toggle DND without changing ringer mode. */
+    private fun toggleDnd() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { dismiss(); return }
+        val nm = notificationManager ?: run { dismiss(); return }
+        if (!nm.isNotificationPolicyAccessGranted) {
+            try {
+                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                })
+            } catch (_: Exception) {}
+            dismiss()
+            return
+        }
+        try {
+            if (isDndActive()) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+            } else {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
             }
         } catch (_: Exception) {}
         dismiss()
+    }
+
+    private fun enableDnd() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val nm = notificationManager ?: return
+        if (!nm.isNotificationPolicyAccessGranted) {
+            try {
+                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                })
+            } catch (_: Exception) {}
+            return
+        }
+        try { nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE) } catch (_: Exception) {}
+    }
+
+    private fun disableDndIfActive() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (!isDndActive()) return
+        val nm = notificationManager ?: return
+        if (!nm.isNotificationPolicyAccessGranted) return
+        try { nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL) } catch (_: Exception) {}
     }
 
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
