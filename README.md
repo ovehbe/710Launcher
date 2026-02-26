@@ -56,7 +56,7 @@ APK: `app/build/outputs/apk/release/app-release.apk`
 
 - Min SDK: 26 (Android 8.0)
 - Target SDK: 34
-- Tested on Zinwa Q25 (720×720, Android 14)
+- Tested on: Zinwa Q25, Duoqin F22 Pro, Samsung Galaxy A51
 
 ## Permissions
 
