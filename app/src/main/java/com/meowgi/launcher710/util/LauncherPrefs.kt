@@ -46,7 +46,7 @@ class LauncherPrefs(context: Context) {
         set(v) = prefs.edit().putInt("gridColumns", v).apply()
 
     var iconSizeIndex: Int
-        get() = prefs.getInt("iconSizeIndex", 1)
+        get() = prefs.getInt("iconSizeIndex", 2) // 0 = small, 1 = medium, 2 = large
         set(v) = prefs.edit().putInt("iconSizeIndex", v).apply()
 
     val iconSizeDp: Int
@@ -54,7 +54,7 @@ class LauncherPrefs(context: Context) {
 
     // --- App View Mode ---
     var appViewMode: Int
-        get() = prefs.getInt("appViewMode", 0) // 0 = grid, 1 = list
+        get() = prefs.getInt("appViewMode", 1) // 0 = grid, 1 = list (old school)
         set(v) = prefs.edit().putInt("appViewMode", v).apply()
 
     var appViewModeAllOnly: Boolean
@@ -62,7 +62,7 @@ class LauncherPrefs(context: Context) {
         set(v) = prefs.edit().putBoolean("appViewModeAllOnly", v).apply()
 
     fun getListViewPages(): Set<String> {
-        val data = prefs.getStringSet("listViewPages", null) ?: return emptySet()
+        val data = prefs.getStringSet("listViewPages", null) ?: return setOf("frequent", "all")
         return data
     }
 
@@ -71,7 +71,7 @@ class LauncherPrefs(context: Context) {
     }
 
     var listViewColumns: Int
-        get() = prefs.getInt("listViewColumns", 2)
+        get() = prefs.getInt("listViewColumns", 3)
         set(v) = prefs.edit().putInt("listViewColumns", v).apply()
 
     var listViewBgAlpha: Int
@@ -80,21 +80,21 @@ class LauncherPrefs(context: Context) {
 
     /** true = use accent color for list icon bar; false = use listViewCustomColor */
     var listViewUseAccent: Boolean
-        get() = prefs.getBoolean("listViewUseAccent", true)
+        get() = prefs.getBoolean("listViewUseAccent", false)
         set(v) = prefs.edit().putBoolean("listViewUseAccent", v).apply()
 
     var listViewCustomColor: Int
-        get() = prefs.getInt("listViewCustomColor", accentColor)
+        get() = prefs.getInt("listViewCustomColor", 0xFF000000.toInt())
         set(v) = prefs.edit().putInt("listViewCustomColor", v).apply()
 
     /** Opacity (0–255) for the colored icon bar background in list view */
     var listViewIconBarAlpha: Int
-        get() = prefs.getInt("listViewIconBarAlpha", 255)
+        get() = prefs.getInt("listViewIconBarAlpha", 77) // 30%
         set(v) = prefs.edit().putInt("listViewIconBarAlpha", v).apply()
 
     /** Opacity (0–255) for the name bar background in list view */
     var listViewNameBarAlpha: Int
-        get() = prefs.getInt("listViewNameBarAlpha", prefs.getInt("listViewBgAlpha", 200))
+        get() = prefs.getInt("listViewNameBarAlpha", prefs.getInt("listViewBgAlpha", 199)) // 78% default
         set(v) = prefs.edit().putInt("listViewNameBarAlpha", v).apply()
 
     // --- Icon pack ---
@@ -131,7 +131,7 @@ class LauncherPrefs(context: Context) {
     // --- UI ---
     /** In-app BB-style status bar visibility. */
     var statusBarVisible: Boolean
-        get() = prefs.getBoolean("statusBarVisible", true)
+        get() = prefs.getBoolean("statusBarVisible", false)
         set(v) = prefs.edit().putBoolean("statusBarVisible", v).apply()
 
     var statusBarShowClock: Boolean
@@ -169,17 +169,17 @@ class LauncherPrefs(context: Context) {
 
     /** Opacity (0–255) for the action bar (ticker bar / top icons row). */
     var actionBarAlpha: Int
-        get() = prefs.getInt("actionBarAlpha", 230)
+        get() = prefs.getInt("actionBarAlpha", 69) // 27%
         set(v) = prefs.edit().putInt("actionBarAlpha", v).apply()
 
     /** Opacity (0–255) for the notification hub overlay. */
     var notificationHubAlpha: Int
-        get() = prefs.getInt("notificationHubAlpha", 250)
+        get() = prefs.getInt("notificationHubAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("notificationHubAlpha", v).apply()
 
     /** Opacity (0–255) for the search overlay. */
     var searchOverlayAlpha: Int
-        get() = prefs.getInt("searchOverlayAlpha", 230)
+        get() = prefs.getInt("searchOverlayAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("searchOverlayAlpha", v).apply()
 
     /** Package names to show in hub/ticker; empty = all. */
@@ -525,10 +525,114 @@ class LauncherPrefs(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    /** Export all settings to a JSON string (for backup/restore and import on another device). */
+    /** Set of keys that have fixed names (not dynamic like pageApps_*). Export explicitly includes these so defaults are captured. */
+    private val fixedExportKeys: Set<String> = setOf(
+        "mainBackgroundAlpha", "statusBarAlpha", "headerAlpha", "tabBarAlpha", "dockAlpha", "dockBackgroundColor", "accentColor",
+        "gridColumns", "iconSizeIndex", "appViewMode", "appViewModeAllOnly", "listViewPages", "listViewColumns", "listViewBgAlpha",
+        "listViewUseAccent", "listViewCustomColor", "listViewIconBarAlpha", "listViewNameBarAlpha",
+        "iconPackPackage", "allPageIconPackPackage", "dockIconPackPackage", "iconFallbackShape",
+        "statusBarVisible", "statusBarShowClock", "statusBarShowBattery", "statusBarShowNetwork", "statusBarShowBluetooth",
+        "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
+        "actionBarAlpha", "notificationHubAlpha", "searchOverlayAlpha", "notificationAppWhitelist",
+        "swipeMode", "defaultTab", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
+        "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
+        "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
+        "searchEngineLaunchInjectWaitForFocus", "searchEngineLaunchInjectUseRoot", "searchEngineLaunchInjectAlternativeListener",
+        "searchEngineLaunchInjectAlternativeWindowMs", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
+        "customIcons", "customLabels", "customPages", "pageOrder", "favoriteOrder", "verticalScrollEnabled",
+        "widgetData", "widgetHeights"
+    )
+
+    private fun putEntry(arr: JSONArray, k: String, t: String, v: Any?) {
+        if (v == null && t != "s") return
+        val obj = JSONObject()
+        obj.put("k", k)
+        obj.put("t", t)
+        when (t) {
+            "s" -> obj.put("v", v?.toString() ?: "")
+            "i" -> obj.put("v", (v as? Number)?.toInt() ?: 0)
+            "l" -> obj.put("v", (v as? Number)?.toLong() ?: 0L)
+            "f" -> obj.put("v", (v as? Number)?.toDouble() ?: 0.0)
+            "b" -> obj.put("v", v as? Boolean ?: false)
+            "set" -> obj.put("v", JSONArray((v as? Set<*>)?.map { it.toString() }?.toList() ?: emptyList<String>()))
+            else -> return
+        }
+        arr.put(obj)
+    }
+
+    /** Export all settings to a JSON string (for backup/restore and import on another device). Includes every fixed key at current value plus all dynamic keys from prefs. */
     fun exportToJson(): String {
         val arr = JSONArray()
+        // 1) Export every fixed key with its current value (so defaults are included)
+        putEntry(arr, "mainBackgroundAlpha", "i", mainBackgroundAlpha)
+        putEntry(arr, "statusBarAlpha", "i", statusBarAlpha)
+        putEntry(arr, "headerAlpha", "i", headerAlpha)
+        putEntry(arr, "tabBarAlpha", "i", tabBarAlpha)
+        putEntry(arr, "dockAlpha", "i", dockAlpha)
+        putEntry(arr, "dockBackgroundColor", "i", dockBackgroundColor)
+        putEntry(arr, "accentColor", "i", accentColor)
+        putEntry(arr, "gridColumns", "i", gridColumns)
+        putEntry(arr, "iconSizeIndex", "i", iconSizeIndex)
+        putEntry(arr, "appViewMode", "i", appViewMode)
+        putEntry(arr, "appViewModeAllOnly", "b", appViewModeAllOnly)
+        putEntry(arr, "listViewPages", "set", getListViewPages())
+        putEntry(arr, "listViewColumns", "i", listViewColumns)
+        putEntry(arr, "listViewBgAlpha", "i", listViewBgAlpha)
+        putEntry(arr, "listViewUseAccent", "b", listViewUseAccent)
+        putEntry(arr, "listViewCustomColor", "i", listViewCustomColor)
+        putEntry(arr, "listViewIconBarAlpha", "i", listViewIconBarAlpha)
+        putEntry(arr, "listViewNameBarAlpha", "i", listViewNameBarAlpha)
+        putEntry(arr, "iconPackPackage", "s", iconPackPackage)
+        putEntry(arr, "allPageIconPackPackage", "s", allPageIconPackPackage)
+        putEntry(arr, "dockIconPackPackage", "s", dockIconPackPackage)
+        putEntry(arr, "iconFallbackShape", "i", iconFallbackShape)
+        putEntry(arr, "statusBarVisible", "b", statusBarVisible)
+        putEntry(arr, "statusBarShowClock", "b", statusBarShowClock)
+        putEntry(arr, "statusBarShowBattery", "b", statusBarShowBattery)
+        putEntry(arr, "statusBarShowNetwork", "b", statusBarShowNetwork)
+        putEntry(arr, "statusBarShowBluetooth", "b", statusBarShowBluetooth)
+        putEntry(arr, "statusBarShowAlarm", "b", statusBarShowAlarm)
+        putEntry(arr, "statusBarShowDND", "b", statusBarShowDND)
+        putEntry(arr, "systemStatusBarVisible", "b", systemStatusBarVisible)
+        putEntry(arr, "systemStatusBarAlpha", "i", systemStatusBarAlpha)
+        putEntry(arr, "navigationBarVisible", "b", navigationBarVisible)
+        putEntry(arr, "actionBarAlpha", "i", actionBarAlpha)
+        putEntry(arr, "notificationHubAlpha", "i", notificationHubAlpha)
+        putEntry(arr, "searchOverlayAlpha", "i", searchOverlayAlpha)
+        putEntry(arr, "notificationAppWhitelist", "set", getNotificationAppWhitelist())
+        putEntry(arr, "swipeMode", "i", swipeMode)
+        putEntry(arr, "defaultTab", "i", defaultTab)
+        putEntry(arr, "appSortMode", "i", appSortMode)
+        putEntry(arr, "sortApplyPages", "set", getSortApplyPages())
+        putEntry(arr, "doubleTapAction", "i", doubleTapAction)
+        putEntry(arr, "searchOnType", "b", searchOnType)
+        putEntry(arr, "searchEngineMode", "i", searchEngineMode)
+        putEntry(arr, "searchEnginePackage", "s", searchEnginePackage)
+        putEntry(arr, "searchEngineIntentUri", "s", searchEngineIntentUri)
+        putEntry(arr, "searchEngineShortcutIntentUri", "s", searchEngineShortcutIntentUri)
+        putEntry(arr, "searchEngineShortcutName", "s", searchEngineShortcutName)
+        putEntry(arr, "searchEngineLaunchInjectIntentUri", "s", searchEngineLaunchInjectIntentUri)
+        putEntry(arr, "searchEngineLaunchInjectName", "s", searchEngineLaunchInjectName)
+        putEntry(arr, "searchEngineLaunchInjectDelayMs", "i", searchEngineLaunchInjectDelayMs)
+        putEntry(arr, "searchEngineLaunchInjectWaitForFocus", "b", searchEngineLaunchInjectWaitForFocus)
+        putEntry(arr, "searchEngineLaunchInjectUseRoot", "b", searchEngineLaunchInjectUseRoot)
+        putEntry(arr, "searchEngineLaunchInjectAlternativeListener", "b", searchEngineLaunchInjectAlternativeListener)
+        putEntry(arr, "searchEngineLaunchInjectAlternativeWindowMs", "i", searchEngineLaunchInjectAlternativeWindowMs)
+        putEntry(arr, "keyShortcutsEnabled", "b", keyShortcutsEnabled)
+        putEntry(arr, "keyCodeHome", "i", keyCodeHome)
+        putEntry(arr, "keyCodeBack", "i", keyCodeBack)
+        putEntry(arr, "keyCodeRecents", "i", keyCodeRecents)
+        putEntry(arr, "customIcons", "s", prefs.getString("customIcons", null))
+        putEntry(arr, "customLabels", "s", prefs.getString("customLabels", null))
+        putEntry(arr, "customPages", "s", customPages)
+        putEntry(arr, "pageOrder", "s", prefs.getString("pageOrder", null))
+        putEntry(arr, "favoriteOrder", "s", prefs.getString("favoriteOrder", null))
+        putEntry(arr, "verticalScrollEnabled", "b", verticalScrollEnabled)
+        putEntry(arr, "widgetData", "s", prefs.getString("widgetData", null))
+        putEntry(arr, "widgetHeights", "s", prefs.getString("widgetHeights", null))
+        // 2) Export all dynamic keys from prefs (pageApps_*, pageAppOrder_*, dockSwipeAction_*, iconPack_*, etc.) that aren't fixed
         for ((k, v) in prefs.all) {
+            if (k in fixedExportKeys) continue
             val obj = JSONObject()
             obj.put("k", k)
             when (v) {
