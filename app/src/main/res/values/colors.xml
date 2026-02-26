@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="ic_launcher_background">#FF282828</color>
     <color name="bb_black">#FF000000</color>
     <color name="bb_background">#FF1A1A1A</color>
     <color name="bb_overlay">#7D000000</color>
