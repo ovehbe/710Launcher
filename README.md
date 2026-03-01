@@ -1,4 +1,4 @@
-<a href="https://github.com/ovehbe/710Launcher/releases/tag/v1.4.0">
+<a href="https://github.com/ovehbe/710Launcher/releases">
   <img src="https://img.shields.io/badge/Download-Pre--Release-red?style=for-the-badge" />
 </a>
 
@@ -10,16 +10,22 @@ optimized for square displays (e.g. Zinwa Q25 720×720).
 ## Features
 
 - **Custom status bar**: Battery (with level color), clock, carrier, network type, WiFi, optional Bluetooth / alarm / DND
-- **BB7 header**: Date and clock with BB Alphas font
-- **Tabbed app grid**: Frequent, Favorites, All + custom pages with swipe navigation
+- **BB7 header**: Date and clock with BB Alphas font; optional hide header; show/hide date and clock; layout (swap, center); tap actions (open app or shortcut)
+- **Tabbed app grid**: Frequent, Favorites, All + custom pages with swipe navigation; optional hide All or Frequent pages; default home tab by page ID (persists when pages are hidden)
+- **Hidden apps**: Long-press any app → Hide (everywhere or this page); manage in Settings → Hidden apps
 - **App sorting**: Sort by alphabetical, last opened, last installed, or most used; apply to all pages or selected pages (Settings → Sorting)
-- **Universal search**: Fuzzy matching (e.g. "playstore" → Play Store, "tui" → T-UI), results by frequency; long-press on results for context menu
-- **Context menus**: Long-press any app (grid, search, All) for add to Favorites/pages, pin to dock, change name/icon, App Info, Uninstall; same for shortcuts
+- **Universal search**: Fuzzy matching; type-to-search from home (hold Alt/Shift for symbols/capitals); search field hidden when overlay closed
+- **Context menus**: Long-press any app (grid, search, All) for add to Favorites/pages, pin to dock, hide app, change name/icon, App Info, Uninstall; same for shortcuts
 - **Sound profiles**: Loud, Normal, Medium, Silent, Vibrate, All Alerts Off (sound dialog with distinct icons)
 - **Notification hub**: Ticker (typing animation, center-out), hub with blocky layout; filter system/sticky/silent; centered Clear All button
-- **Icon pack support**: Per-page and dock icon packs (Nova/Apex compatible)
-- **Dock**: Pinned apps + intent shortcuts; per-icon swipe-up action with bounce animation; long-press opens menu (no accidental launch); horizontal swipe does not trigger tap
+- **Notification applets**: Optional per-app icons with counts next to ticker (or fallback “N Notifications”); auto-hide applets with 0 count (optional); per-applet custom icons; icon pack for applets
+- **Action bar**: Center tap configurable — notification hub (default), launch app, or shortcut
+- **Click highlights**: Subtle ripple on tap for grid, list, dock, tabs, header, action bar; color (accent or custom) and opacity in Settings; focus highlight disabled for trackpad-friendly use
+- **Icon pack support**: Per-page, dock, and applets; search in icon picker; global and fallback icon shaping (default, circle, rounded square, etc.)
+- **Dock**: Pinned apps + intent shortcuts; custom dock color; per-icon swipe-up action with bounce animation; long-press opens menu (no accidental launch); horizontal swipe does not trigger tap
+- **Tab bar**: Highlight color (accent or custom) and opacity for selected tab
 - **Double-tap**: Lock screen or open notification hub (configurable)
+- **Settings export/import**: Backup and restore all settings (fixed + dynamic keys)
 - **Restart**: Restart Launcher from Settings or intent `com.meowgi.launcher710.RESTART_LAUNCHER`
 
 ## Building

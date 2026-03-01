@@ -80,6 +80,14 @@
                     android:clickable="true"
                     android:focusable="true">
 
+                    <LinearLayout
+                        android:id="@+id/notificationAppletsContainer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:visibility="gone" />
+
                     <TextView
                         android:id="@+id/notificationTickerText"
                         android:layout_width="0dp"
@@ -89,7 +97,8 @@
                         android:maxLines="1"
                         android:ellipsize="end"
                         android:textColor="@color/bb_text_secondary"
-                        android:textSize="12sp"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
                         android:fontFamily="@font/bbalphas" />
 
                     <TextView
@@ -97,13 +106,9 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
-                        android:background="@drawable/tab_active_bg"
-                        android:paddingStart="6dp"
-                        android:paddingEnd="6dp"
-                        android:paddingTop="2dp"
-                        android:paddingBottom="2dp"
-                        android:textColor="@color/bb_text_primary"
-                        android:textSize="11sp"
+                        android:textColor="@color/bb_text_secondary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
                         android:fontFamily="@font/bbalphas" />
                 </LinearLayout>
 
@@ -111,7 +116,8 @@
                     android:id="@+id/searchInputInBar"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:visibility="gone"
+                    android:visibility="visible"
+                    android:alpha="0"
                     android:hint="@string/search_hint"
                     android:inputType="textNoSuggestions"
                     android:imeOptions="actionSearch"

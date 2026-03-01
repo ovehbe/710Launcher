@@ -18,6 +18,8 @@ class NotificationHub @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
+    var onClearAll: (() -> Unit)? = null
+
     private val scrollView: ScrollView
     private val container: LinearLayout
     private val emptyText: TextView
@@ -195,6 +197,7 @@ class NotificationHub @JvmOverloads constructor(
                 setOnClickListener {
                     NotifListenerService.instance?.dismissAllNotifications()
                     refresh(appWhitelist)
+                    onClearAll?.invoke()
                 }
             }
             container.addView(clearBtn, LinearLayout.LayoutParams(

@@ -18,8 +18,8 @@ class HeaderView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
-    private val dateText: TextView
-    private val clockText: TextView
+    val dateText: TextView
+    val clockText: TextView
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
     private val handler = Handler(Looper.getMainLooper())
     private val dateFormat = SimpleDateFormat("EEE d MMM", Locale.getDefault())
@@ -73,6 +73,46 @@ class HeaderView @JvmOverloads constructor(
 
     fun applyOpacity() {
         background?.alpha = LauncherPrefs(context).headerAlpha
+    }
+
+    fun refresh(prefs: LauncherPrefs) {
+        dateText.visibility = if (prefs.headerShowDate) android.view.View.VISIBLE else android.view.View.GONE
+        clockText.visibility = if (prefs.headerShowClock) android.view.View.VISIBLE else android.view.View.GONE
+        applyOpacity()
+        when (prefs.headerLayout) {
+            0 -> {
+                removeAllViews()
+                val dateLp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+                val spacerLp = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
+                val clockLp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+                dateText.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                clockText.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                addView(dateText, dateLp)
+                addView(android.view.View(context), spacerLp)
+                addView(clockText, clockLp)
+            }
+            1 -> {
+                removeAllViews()
+                val clockLp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+                val spacerLp = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
+                val dateLp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+                clockText.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                dateText.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                addView(clockText, clockLp)
+                addView(android.view.View(context), spacerLp)
+                addView(dateText, dateLp)
+            }
+            2 -> {
+                removeAllViews()
+                val centerLp = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+                dateText.gravity = Gravity.CENTER
+                clockText.gravity = Gravity.CENTER
+                addView(dateText, centerLp)
+                addView(clockText, centerLp)
+                gravity = Gravity.CENTER
+            }
+            else -> { }
+        }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

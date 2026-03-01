@@ -19,6 +19,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.WindowCompat
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
+import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
 import java.text.SimpleDateFormat
@@ -80,6 +81,57 @@ class SettingsActivity : AppCompatActivity() {
         val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
         prefs.searchEngineShortcutIntentUri = intentUri
         prefs.searchEngineShortcutName = name
+        rebuildSettings()
+    }
+
+    private val headerDateShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        prefs.headerDateAction = 2
+        prefs.headerDateActionPackage = null
+        prefs.headerDateActionIntentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.headerDateActionName = name
+        rebuildSettings()
+    }
+
+    private val headerClockShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        prefs.headerClockAction = 2
+        prefs.headerClockActionPackage = null
+        prefs.headerClockActionIntentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.headerClockActionName = name
+        rebuildSettings()
+    }
+
+    private val actionBarCenterShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        prefs.actionBarCenterAction = 2
+        prefs.actionBarCenterActionPackage = null
+        prefs.actionBarCenterActionIntentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.actionBarCenterActionName = name
         rebuildSettings()
     }
 
@@ -168,15 +220,42 @@ class SettingsActivity : AppCompatActivity() {
         addSlider("Main Background Opacity", prefs.mainBackgroundAlpha) { prefs.mainBackgroundAlpha = it }
         addSlider("Status Bar Opacity", prefs.statusBarAlpha) { prefs.statusBarAlpha = it }
         addSlider("Header Opacity", prefs.headerAlpha) { prefs.headerAlpha = it }
+
+        addSection("Header")
+        addToggle("Show header", prefs.headerVisible) { prefs.headerVisible = it; rebuildSettings() }
+        if (prefs.headerVisible) {
+            addToggle("Show date", prefs.headerShowDate) { prefs.headerShowDate = it }
+            addToggle("Show clock", prefs.headerShowClock) { prefs.headerShowClock = it }
+            addChoice("Header layout", listOf("Date left, Clock right", "Clock left, Date right", "Centered"), prefs.headerLayout.coerceIn(0, 2)) { prefs.headerLayout = it }
+            addButton("Date tap action: ${getHeaderActionLabel(prefs.headerDateAction, prefs.headerDateActionPackage, prefs.headerDateActionIntentUri, prefs.headerDateActionName)}") { showHeaderDateActionPicker() }
+            addButton("Clock tap action: ${getHeaderActionLabel(prefs.headerClockAction, prefs.headerClockActionPackage, prefs.headerClockActionIntentUri, prefs.headerClockActionName)}") { showHeaderClockActionPicker() }
+        }
+
         addSlider("Action bar (ticker) opacity", prefs.actionBarAlpha) { prefs.actionBarAlpha = it }
+        addButton("Action bar tap: ${getActionBarCenterActionLabel()}") { showActionBarCenterActionPicker() }
         addSlider("Tab Bar Opacity", prefs.tabBarAlpha) { prefs.tabBarAlpha = it }
+        addChoice("Tab bar highlight color", listOf("Use accent", "Choose color…"), if (prefs.tabBarHighlightUseAccent) 0 else 1) {
+            prefs.tabBarHighlightUseAccent = (it == 0)
+            if (it == 1) showColorPicker(prefs.tabBarHighlightCustomColor) { prefs.tabBarHighlightCustomColor = it }
+        }
+        addSlider("Tab Bar Highlight Opacity", prefs.tabBarHighlightAlpha) { prefs.tabBarHighlightAlpha = it }
+        addChoice("Click highlight color", listOf("Use accent", "Choose color…"), if (prefs.clickHighlightUseAccent) 0 else 1) {
+            prefs.clickHighlightUseAccent = (it == 0)
+            if (it == 1) showColorPicker(prefs.clickHighlightCustomColor) { prefs.clickHighlightCustomColor = it }
+        }
+        addSlider("Click highlight opacity", prefs.clickHighlightAlpha) { prefs.clickHighlightAlpha = it }
         addSlider("Dock Opacity", prefs.dockAlpha) { prefs.dockAlpha = it }
-        addChoice("Dock Color", listOf("Black", "Dark Gray", "Blue", "Navy"), getDockColorIndex()) {
-            prefs.dockBackgroundColor = when (it) {
-                0 -> 0xFF000000.toInt()
-                1 -> 0xFF1A1A1A.toInt()
-                2 -> 0xFF001A33.toInt()
-                else -> 0xFF0A1628.toInt()
+        addChoice("Dock Color", listOf("Black", "Dark Gray", "Blue", "Navy", "Custom…"), getDockColorIndex()) {
+            if (it == 4) {
+                showColorPicker(prefs.dockBackgroundColor) { prefs.dockBackgroundColor = it }
+            } else {
+                prefs.dockBackgroundColor = when (it) {
+                    0 -> 0xFF000000.toInt()
+                    1 -> 0xFF1A1A1A.toInt()
+                    2 -> 0xFF001A33.toInt()
+                    3 -> 0xFF0A1628.toInt()
+                    else -> 0xFF000000.toInt()
+                }
             }
         }
         addChoice("Accent Color", listOf("BB Blue", "Teal", "Red", "Green", "Purple", "Orange", "White", "Choose color…"), getAccentColorIndex()) {
@@ -235,6 +314,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         addButton("Dock Icon Pack: ${getPageIconPackName("dock")}") { showPageIconPackPicker("dock", "Dock") }
         addButton("Search Icon Pack: ${getPageIconPackName("search")}") { showPageIconPackPicker("search", "Search") }
+        addChoice("Icon shape", listOf("Default", "Circle", "Rounded Square", "Square", "Squircle"), prefs.iconGlobalShape.coerceIn(0, 4)) { prefs.iconGlobalShape = it }
         addChoice("Fallback Icon Shape",
             listOf("Circle", "Rounded Square", "Square", "Squircle"),
             prefs.iconFallbackShape) { prefs.iconFallbackShape = it }
@@ -243,6 +323,18 @@ class SettingsActivity : AppCompatActivity() {
         addSlider("Notification hub opacity", prefs.notificationHubAlpha) { prefs.notificationHubAlpha = it }
         addSlider("Search overlay opacity", prefs.searchOverlayAlpha) { prefs.searchOverlayAlpha = it }
         addButton("Apps in notification hub: ${getNotificationAppsLabel()}") { showNotificationAppsPicker() }
+
+        addSection("Notification Applets")
+        addChoice("Notification display", listOf("Count text", "App icons"), if (prefs.useNotificationApplets) 1 else 0) {
+            prefs.useNotificationApplets = (it == 1)
+            rebuildSettings()
+        }
+        if (prefs.useNotificationApplets) {
+            addToggle("Auto-hide when count is 0", prefs.notificationAppletsAutoHide) { prefs.notificationAppletsAutoHide = it }
+            addChoice("Applet icon shape", listOf("Default", "Circle", "Rounded square", "Square", "Squircle"), prefs.appletIconShape.coerceIn(0, 4)) { prefs.appletIconShape = it }
+            addButton("Applet Icon Pack: ${getPageIconPackName("applets")}") { showPageIconPackPicker("applets", "Applets") }
+            addButton("Manage applets (${prefs.getNotificationApplets().size})") { showAppletManager() }
+        }
 
         addSection("Permissions")
         addButton("Notification access") {
@@ -271,17 +363,23 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+        addSection("Hidden Apps")
+        addButton("Hidden apps (${prefs.getHiddenApps().size})") { showHiddenAppsPicker() }
+
         addSection("Pages")
+        addToggle("Show All apps page", !prefs.hideAllPage) { prefs.hideAllPage = !it; rebuildSettings() }
+        addToggle("Show Frequent apps page", !prefs.hideFrequentPage) { prefs.hideFrequentPage = !it; rebuildSettings() }
         addButton("Manage Pages") { showPageManager() }
 
         addSection("Behavior")
         addChoice("Swipe to switch pages", listOf("Bottom bar only", "Anywhere on screen"), prefs.swipeMode) {
             prefs.swipeMode = it
         }
-        val behaviorPageOrder = prefs.getPageOrder()
-        val pageNames = behaviorPageOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
-        addChoice("Default Home Tab", pageNames, prefs.defaultTab.coerceIn(0, pageNames.size - 1)) {
-            prefs.defaultTab = it
+        val filteredOrder = prefs.getFilteredPageOrder()
+        val pageNames = filteredOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
+        val defaultIdx = filteredOrder.indexOf(prefs.defaultTabPageId).coerceAtLeast(0)
+        addChoice("Default Home Tab", pageNames, defaultIdx.coerceIn(0, (pageNames.size - 1).coerceAtLeast(0))) {
+            prefs.defaultTabPageId = filteredOrder[it.coerceIn(0, filteredOrder.size - 1)]
         }
         addChoice("Double-Tap Action", listOf("None", "Lock Screen", "Notifications"), prefs.doubleTapAction) {
             prefs.doubleTapAction = it
@@ -388,6 +486,74 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(intent)
             finish()
         }
+    }
+
+    private fun showHiddenAppsPicker() {
+        val hidden = prefs.getHiddenApps().toMutableSet()
+        if (hidden.isEmpty()) {
+            Toast.makeText(this, "No hidden apps", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val maxHeightPx = (resources.displayMetrics.heightPixels * 0.6).toInt().coerceAtLeast(dp(240))
+        val wrapper = MaxHeightFrameLayout(this, maxHeightPx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val scroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isFillViewport = true
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        fun getLabelForComponent(cn: String): String {
+            return try {
+                val component = android.content.ComponentName.unflattenFromString(cn) ?: return cn
+                val info = packageManager.getActivityInfo(component, 0)
+                packageManager.getApplicationLabel(info.applicationInfo).toString()
+            } catch (_: Exception) { cn }
+        }
+        var dialogRef: AlertDialog? = null
+        for (cn in hidden.sortedBy { getLabelForComponent(it).lowercase() }) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+            }
+            val label = TextView(this).apply {
+                text = getLabelForComponent(cn)
+                setTextColor(getColor(R.color.bb_text_primary))
+                textSize = 14f
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                typeface = font
+            }
+            val unhideBtn = Button(this).apply {
+                text = "Unhide"
+                setOnClickListener {
+                    prefs.unhideApp(cn)
+                    hidden.remove(cn)
+                    dialogRef?.dismiss()
+                    rebuildSettings()
+                }
+            }
+            row.addView(label)
+            row.addView(unhideBtn)
+            layout.addView(row)
+        }
+        scroll.addView(layout)
+        wrapper.addView(scroll)
+        dialogRef = AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Hidden apps")
+            .setView(wrapper)
+            .setNegativeButton("Done") { _, _ -> rebuildSettings() }
+            .create()
+        dialogRef!!.show()
     }
 
     private fun showPageManager() {
@@ -572,12 +738,137 @@ class SettingsActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    private fun showAppletManager() {
+        val packages = prefs.getNotificationApplets().toMutableList()
+        val maxHeightPx = (resources.displayMetrics.heightPixels * 0.6).toInt().coerceAtLeast(dp(240))
+        val wrapper = MaxHeightFrameLayout(this, maxHeightPx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val scroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isFillViewport = true
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        layout.addView(rowsContainer)
+
+        fun getAppletIconForDisplay(pkg: String): android.graphics.drawable.Drawable? {
+            val customName = prefs.getAppletCustomIcon(pkg)
+            val customPack = prefs.getAppletCustomIconPack(pkg)
+            if (customName != null && customPack != null) {
+                val mgr = IconPackManager(this@SettingsActivity)
+                if (mgr.loadIconPack(customPack)) {
+                    mgr.getIconByName(customName)?.let { return it }
+                }
+            }
+            return try { packageManager.getApplicationIcon(packageManager.getApplicationInfo(pkg, 0)) } catch (_: Exception) { null }
+        }
+
+        fun refreshList() {
+            rowsContainer.removeAllViews()
+            for (pkg in packages) {
+                val label = try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (_: Exception) { pkg }
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(4), 0, dp(4))
+                }
+                val iconView = ImageView(this).apply {
+                    setImageDrawable(getAppletIconForDisplay(pkg))
+                    layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+                }
+                val labelView = TextView(this).apply {
+                    text = label
+                    setPadding(dp(8), 0, dp(8), 0)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                val changeIconBtn = Button(this).apply {
+                    text = "Change icon"
+                    setOnClickListener {
+                        val picker = IconPickerDialog(this@SettingsActivity,
+                            onIconSelected = { drawableName, packPackage ->
+                                prefs.setAppletCustomIcon(pkg, drawableName, packPackage)
+                                refreshList()
+                            },
+                            onReset = {
+                                prefs.setAppletCustomIcon(pkg, null)
+                                refreshList()
+                            }
+                        )
+                        picker.showPackPicker()
+                    }
+                }
+                val removeBtn = Button(this).apply {
+                    text = "Remove"
+                    setOnClickListener {
+                        packages.remove(pkg)
+                        prefs.setNotificationApplets(packages)
+                        refreshList()
+                    }
+                }
+                row.addView(iconView)
+                row.addView(labelView)
+                row.addView(changeIconBtn)
+                row.addView(removeBtn)
+                rowsContainer.addView(row)
+            }
+        }
+        val addBtn = Button(this).apply {
+            text = "Add app"
+            setOnClickListener {
+                val currentSet = packages.toSet()
+                val installed = packageManager.getInstalledApplications(0)
+                    .mapNotNull { info ->
+                        val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                        if (label.isBlank() || info.packageName in currentSet) null else (info.packageName to label)
+                    }
+                    .sortedBy { it.second.lowercase() }
+                if (installed.isEmpty()) {
+                    Toast.makeText(this@SettingsActivity, "No more apps to add.", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val items = installed.map { it.second }.toTypedArray()
+                AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
+                    .setTitle("Add applet")
+                    .setItems(items) { _, which ->
+                        val (pkg, _) = installed[which]
+                        packages.add(pkg)
+                        prefs.setNotificationApplets(packages)
+                        refreshList()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+        layout.addView(addBtn)
+        refreshList()
+        wrapper.addView(scroll)
+        scroll.addView(layout)
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Notification applets")
+            .setView(wrapper)
+            .setNegativeButton("Done", null)
+            .show()
+    }
+
     private fun getDockColorIndex(): Int {
         return when (prefs.dockBackgroundColor) {
+            0xFF000000.toInt() -> 0
             0xFF1A1A1A.toInt() -> 1
             0xFF001A33.toInt() -> 2
             0xFF0A1628.toInt() -> 3
-            else -> 0
+            else -> 4 // Custom
         }
     }
 
@@ -959,6 +1250,176 @@ class SettingsActivity : AppCompatActivity() {
         return try {
             packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
         } catch (_: Exception) { pkg }
+    }
+
+    private fun getHeaderActionLabel(action: Int, pkg: String?, intentUri: String?, name: String?): String {
+        return when (action) {
+            0 -> "Nothing"
+            1 -> {
+                if (pkg != null) {
+                    try {
+                        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                    } catch (_: Exception) { pkg }
+                } else "Choose app"
+            }
+            2 -> name ?: (if (intentUri != null) "Shortcut" else "Choose shortcut")
+            else -> "Nothing"
+        }
+    }
+
+    private fun getActionBarCenterActionLabel(): String = when (prefs.actionBarCenterAction) {
+        0 -> "Notification hub"
+        1 -> {
+            val pkg = prefs.actionBarCenterActionPackage
+            if (pkg != null) {
+                try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (_: Exception) { pkg }
+            } else "Choose app"
+        }
+        2 -> prefs.actionBarCenterActionName ?: (if (prefs.actionBarCenterActionIntentUri != null) "Shortcut" else "Choose shortcut")
+        else -> "Notification hub"
+    }
+
+    private fun showHeaderDateActionPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Date tap action")
+            .setItems(arrayOf("Nothing", "App", "Shortcut")) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.headerDateAction = 0
+                        prefs.headerDateActionPackage = null
+                        prefs.headerDateActionIntentUri = null
+                        prefs.headerDateActionName = null
+                        rebuildSettings()
+                    }
+                    1 -> showHeaderDateAppPicker()
+                    2 -> {
+                        try {
+                            headerDateShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showActionBarCenterActionPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Action bar tap")
+            .setItems(arrayOf("Notification hub", "App", "Shortcut")) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.actionBarCenterAction = 0
+                        prefs.actionBarCenterActionPackage = null
+                        prefs.actionBarCenterActionIntentUri = null
+                        prefs.actionBarCenterActionName = null
+                        rebuildSettings()
+                    }
+                    1 -> showActionBarCenterAppPicker()
+                    2 -> {
+                        try {
+                            actionBarCenterShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showActionBarCenterAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose app")
+            .setItems(options) { _, which ->
+                val (pkg) = pkgList[which]
+                prefs.actionBarCenterAction = 1
+                prefs.actionBarCenterActionPackage = pkg
+                prefs.actionBarCenterActionIntentUri = null
+                prefs.actionBarCenterActionName = null
+                rebuildSettings()
+            }
+            .show()
+    }
+
+    private fun showHeaderClockActionPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Clock tap action")
+            .setItems(arrayOf("Nothing", "App", "Shortcut")) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.headerClockAction = 0
+                        prefs.headerClockActionPackage = null
+                        prefs.headerClockActionIntentUri = null
+                        prefs.headerClockActionName = null
+                        rebuildSettings()
+                    }
+                    1 -> showHeaderClockAppPicker()
+                    2 -> {
+                        try {
+                            headerClockShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showHeaderDateAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose app")
+            .setItems(options) { _, which ->
+                val (pkg) = pkgList[which]
+                prefs.headerDateAction = 1
+                prefs.headerDateActionPackage = pkg
+                prefs.headerDateActionIntentUri = null
+                prefs.headerDateActionName = null
+                rebuildSettings()
+            }
+            .show()
+    }
+
+    private fun showHeaderClockAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose app")
+            .setItems(options) { _, which ->
+                val (pkg) = pkgList[which]
+                prefs.headerClockAction = 1
+                prefs.headerClockActionPackage = pkg
+                prefs.headerClockActionIntentUri = null
+                prefs.headerClockActionName = null
+                rebuildSettings()
+            }
+            .show()
     }
 
     private fun showSearchEngineAppPicker() {
