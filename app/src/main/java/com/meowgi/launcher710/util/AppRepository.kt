@@ -177,13 +177,17 @@ class AppRepository(private val context: Context) {
         return filterHidden(base)
     }
 
-    fun searchApps(query: String): List<AppInfo> {
-        if (query.isBlank()) return emptyList()
+    /**
+     * @param alsoMatchDialDigits If non-empty, apps whose label contains this digit string are also included (e.g. "710" so "zw0" finds "710 Launcher").
+     */
+    fun searchApps(query: String, alsoMatchDialDigits: String? = null): List<AppInfo> {
+        if (query.isBlank() && (alsoMatchDialDigits.isNullOrBlank())) return emptyList()
         val q = query.lowercase().replace(Regex("[^a-z0-9]"), "")
-        if (q.isEmpty()) return emptyList()
+        val digitsOnly = alsoMatchDialDigits?.filter { it in '0'..'9' }?.takeIf { it.isNotEmpty() }
+        if (q.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
         return filterHidden(apps.filter {
             val normalized = it.label.lowercase().replace(Regex("[^a-z0-9]"), "")
-            normalized.contains(q)
+            normalized.contains(q) || (digitsOnly != null && normalized.contains(digitsOnly))
         }).sortedWith(
             compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
                 .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }

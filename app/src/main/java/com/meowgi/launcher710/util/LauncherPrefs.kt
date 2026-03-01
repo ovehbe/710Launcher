@@ -457,6 +457,21 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("searchEngineLaunchInjectAlternativeWindowMs", 120).coerceIn(0, 500)
         set(v) = prefs.edit().putInt("searchEngineLaunchInjectAlternativeWindowMs", v.coerceIn(0, 500)).apply()
 
+    /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used by built-in search to convert letters to dial digits. */
+    var dialerNumberLayout: Int
+        get() = prefs.getInt("dialerNumberLayout", 0).coerceIn(0, 1)
+        set(v) = prefs.edit().putInt("dialerNumberLayout", v.coerceIn(0, 1)).apply()
+
+    /** When true, extended search includes contacts. */
+    var searchContactsEnabled: Boolean
+        get() = prefs.getBoolean("searchContactsEnabled", true)
+        set(v) = prefs.edit().putBoolean("searchContactsEnabled", v).apply()
+
+    /** Contact source for search: "all", "favorites", or "accountType:accountName" (e.g. "com.google:user@gmail.com"). */
+    var searchContactsSource: String?
+        get() = prefs.getString("searchContactsSource", "all")?.takeIf { it.isNotEmpty() } ?: "all"
+        set(v) = prefs.edit().putString("searchContactsSource", v ?: "all").apply()
+
     // --- Key shortcuts (recorded key codes) ---
     var keyShortcutsEnabled: Boolean
         get() = prefs.getBoolean("keyShortcutsEnabled", false)
@@ -748,7 +763,7 @@ class LauncherPrefs(context: Context) {
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
         "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
         "searchEngineLaunchInjectWaitForFocus", "searchEngineLaunchInjectUseRoot", "searchEngineLaunchInjectAlternativeListener",
-        "searchEngineLaunchInjectAlternativeWindowMs", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
+        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsSource", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
         "customIcons", "customLabels", "customPages", "pageOrder", "favoriteOrder", "verticalScrollEnabled",
         "hideAllPage", "hideFrequentPage", "hiddenApps",
         "widgetData", "widgetHeights"
@@ -859,6 +874,9 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "searchEngineLaunchInjectUseRoot", "b", searchEngineLaunchInjectUseRoot)
         putEntry(arr, "searchEngineLaunchInjectAlternativeListener", "b", searchEngineLaunchInjectAlternativeListener)
         putEntry(arr, "searchEngineLaunchInjectAlternativeWindowMs", "i", searchEngineLaunchInjectAlternativeWindowMs)
+        putEntry(arr, "dialerNumberLayout", "i", dialerNumberLayout)
+        putEntry(arr, "searchContactsEnabled", "b", searchContactsEnabled)
+        putEntry(arr, "searchContactsSource", "s", searchContactsSource)
         putEntry(arr, "keyShortcutsEnabled", "b", keyShortcutsEnabled)
         putEntry(arr, "keyCodeHome", "i", keyCodeHome)
         putEntry(arr, "keyCodeBack", "i", keyCodeBack)

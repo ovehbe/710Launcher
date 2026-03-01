@@ -290,15 +290,20 @@ class LauncherActivity : AppCompatActivity() {
                 else -> { }
             }
         }
+        // Single touch overlay so one view gets the tap and ripple (avoids wrong highlight on touch vs trackpad)
         findViewById<View>(R.id.actionBarCenter).apply {
-            isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
-            setOnClickListener { onActionBarCenterClick() }
+            isClickable = false
+            isFocusable = false
         }
         notificationTickerBar.apply {
+            isClickable = false
+            isFocusable = false
+        }
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
             isClickable = true
-            defaultFocusHighlightEnabled = false
+            isFocusable = true
+            isFocusableInTouchMode = true
+            defaultFocusHighlightEnabled = true
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener { onActionBarCenterClick() }
         }
@@ -333,6 +338,9 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> repository.launchApp(item.app)
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
+                is LaunchableItem.Contact -> item.phoneNumbers.firstOrNull()?.let { num ->
+                    try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch (_: Exception) {}
+                }
                 else -> {}
             }
         }
@@ -341,9 +349,13 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> showAppContextMenu(item.app, view)
                 is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                 is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                is LaunchableItem.Contact -> { }
                 else -> {}
             }
         }
+        searchOverlay.dialerLayoutProvider = { prefs.dialerNumberLayout }
+        searchOverlay.contactSearchEnabledProvider = { prefs.searchContactsEnabled }
+        searchOverlay.contactSourceProvider = { prefs.searchContactsSource ?: "all" }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -385,6 +397,7 @@ class LauncherActivity : AppCompatActivity() {
             withContext(Dispatchers.IO) { repository.loadApps() }
             setupPager()
             dockBar.loadDock()
+            setupFocusOrder()
         }
     }
 
@@ -475,6 +488,7 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.App -> showAppContextMenu(item.app, view)
                     is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                     is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                    is LaunchableItem.Contact -> { }
                 }
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
@@ -482,6 +496,7 @@ class LauncherActivity : AppCompatActivity() {
         appPager.adapter = pagerAdapter
         appPager.isUserInputEnabled = false
         buildTabBar()
+        setupFocusOrder()
         setupBottomSwipe()
         val startTab = pagerAdapter.getPositionForPageId(prefs.defaultTabPageId)
         appPager.setCurrentItem(startTab, false)
@@ -500,6 +515,7 @@ class LauncherActivity : AppCompatActivity() {
         val font = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bbalphas)
         for (i in 0 until pagerAdapter.itemCount) {
             val tv = TextView(this).apply {
+                id = View.generateViewId()
                 text = pagerAdapter.getPageName(i)
                 setTextColor(getColor(R.color.bb_text_secondary))
                 textSize = 13f
@@ -507,7 +523,9 @@ class LauncherActivity : AppCompatActivity() {
                 gravity = android.view.Gravity.CENTER
                 setPadding(dp(12), 0, dp(12), 0)
                 isClickable = true
-                defaultFocusHighlightEnabled = false
+                isFocusable = true
+                isFocusableInTouchMode = true
+                defaultFocusHighlightEnabled = true
                 foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
                 setOnClickListener { appPager.setCurrentItem(i, true) }
             }
@@ -515,6 +533,43 @@ class LauncherActivity : AppCompatActivity() {
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1f)
             tabBarContainer.addView(tv, lp)
             tabViews.add(tv)
+        }
+    }
+
+    /** Sets explicit focus order for trackpad/keyboard: date → clock → action bar → tabs → dock. */
+    private fun setupFocusOrder() {
+        tabBarContainer.isFocusable = false
+        tabBarContainer.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        dockBar.isFocusable = false
+        dockBar.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        headerView.dateText.nextFocusForwardId = R.id.header_clock_text
+        headerView.dateText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
+        headerView.clockText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
+            nextFocusForwardId = R.id.btnSearch
+            nextFocusDownId = R.id.tabBar
+        }
+        findViewById<View>(R.id.btnSearch).apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            nextFocusForwardId = R.id.btnSoundProfile
+            nextFocusDownId = R.id.tabBar
+        }
+        findViewById<View>(R.id.btnSoundProfile).apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            nextFocusDownId = R.id.tabBar
+        }
+        for (i in tabViews.indices) {
+            val tab = tabViews[i]
+            tab.nextFocusDownId = R.id.dockBar
+            if (i == 0) tab.nextFocusUpId = R.id.btnSoundProfile
+        }
+        for (i in 1 until tabViews.size) {
+            tabViews[i - 1].nextFocusForwardId = tabViews[i].id
+        }
+        if (dockBar.childCount > 0 && tabViews.isNotEmpty()) {
+            dockBar.getChildAt(0).nextFocusUpId = tabViews.last().id
         }
     }
 
@@ -559,35 +614,53 @@ class LauncherActivity : AppCompatActivity() {
     /** Re-applies click highlight color/opacity to all launcher elements (e.g. after accent color change). */
     private fun refreshClickHighlights() {
         val ripple = prefs.getClickHighlightRipple(this)
-        applyClickHighlight(findViewById(R.id.actionBarCenter))
-        notificationTickerBar.apply {
-            isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = ripple
-        }
+        applyClickHighlight(findViewById(R.id.actionBarCenterTouchOverlay))
         applyClickHighlight(findViewById(R.id.btnSearch))
         applyClickHighlight(findViewById(R.id.btnSoundProfile))
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).defaultFocusHighlightEnabled = true
+        findViewById<View>(R.id.btnSearch).defaultFocusHighlightEnabled = true
+        findViewById<View>(R.id.btnSoundProfile).defaultFocusHighlightEnabled = true
         headerView.dateText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = ripple
+            defaultFocusHighlightEnabled = true
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
         }
         headerView.clockText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = ripple
+            defaultFocusHighlightEnabled = true
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
         }
         for (tab in tabViews) {
-            tab.defaultFocusHighlightEnabled = false
+            tab.defaultFocusHighlightEnabled = true
             tab.foreground = ripple
         }
         for (i in 0 until dockBar.childCount) {
             dockBar.getChildAt(i).apply {
-                defaultFocusHighlightEnabled = false
+                defaultFocusHighlightEnabled = true
                 foreground = ripple
             }
         }
-        if (::pagerAdapter.isInitialized) pagerAdapter.notifyDataSetChanged()
+        if (::pagerAdapter.isInitialized) {
+            pagerAdapter.notifyDataSetChanged()
+            setupFocusOrder()
+        }
+    }
+
+    /** Clears focus and pressed state from all interactive views so no highlight "traces" remain when returning to the launcher. */
+    private fun clearHighlightTraces() {
+        window.decorView.findFocus()?.clearFocus()
+        headerView.dateText.apply { setPressed(false); clearFocus() }
+        headerView.clockText.apply { setPressed(false); clearFocus() }
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply { setPressed(false); clearFocus() }
+        findViewById<View>(R.id.btnSearch).apply { setPressed(false); clearFocus() }
+        findViewById<View>(R.id.btnSoundProfile).apply { setPressed(false); clearFocus() }
+        for (tab in tabViews) {
+            tab.setPressed(false)
+            tab.clearFocus()
+        }
+        for (i in 0 until dockBar.childCount) {
+            dockBar.getChildAt(i).apply { setPressed(false); clearFocus() }
+        }
     }
 
     private var bottomSwipeStartX = 0f
@@ -714,19 +787,25 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun setupHeader() {
-        val ripple = prefs.getClickHighlightRipple(this)
+        headerView.isFocusable = false
+        headerView.isClickable = false
+        headerView.descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
         headerView.dateText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = ripple
+            isFocusable = true
+            isFocusableInTouchMode = true
+            defaultFocusHighlightEnabled = true
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
                 launchHeaderAction(prefs.headerDateAction, prefs.headerDateActionPackage, prefs.headerDateActionIntentUri)
             }
         }
         headerView.clockText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = false
-            foreground = ripple
+            isFocusable = true
+            isFocusableInTouchMode = true
+            defaultFocusHighlightEnabled = true
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
                 launchHeaderAction(prefs.headerClockAction, prefs.headerClockActionPackage, prefs.headerClockActionIntentUri)
             }
@@ -2072,6 +2151,7 @@ class LauncherActivity : AppCompatActivity() {
         }
         reloadAppsAndRefresh()
         refreshClickHighlights()
+        window.decorView.post { clearHighlightTraces() }
     }
 
     override fun onDestroy() {

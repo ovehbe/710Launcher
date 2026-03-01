@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.util.AttributeSet
 import android.view.Gravity
@@ -17,6 +18,8 @@ import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.util.AppRepository
+import com.meowgi.launcher710.util.ContactSearchHelper
+import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -34,9 +37,15 @@ class SearchOverlay @JvmOverloads constructor(
     var onDismiss: (() -> Unit)? = null
     var onLaunchItem: ((LaunchableItem) -> Unit)? = null
     var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
+    /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used to convert letters to dial digits. */
+    var dialerLayoutProvider: () -> Int = { 0 }
+    var contactSearchEnabledProvider: () -> Boolean = { true }
+    var contactSourceProvider: () -> String = { "all" }
 
     private var filterItems: List<LaunchableItem>? = null
     private var lastQuery: String = ""
+    private val defaultContactIcon: Drawable
+        get() = ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
     private var currentResults: List<LaunchableItem> = emptyList()
     private var searchContextLabel: String = "Extended"
 
@@ -93,6 +102,16 @@ class SearchOverlay @JvmOverloads constructor(
                             repository?.launchApp(item.app)
                             dismiss()
                         }
+                        is LaunchableItem.Contact -> {
+                            item.phoneNumbers.firstOrNull()?.let { num ->
+                                try {
+                                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                                    dismiss()
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+                                }
+                            } ?: dismiss()
+                        }
                         is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                     }
                 }
@@ -148,6 +167,11 @@ class SearchOverlay @JvmOverloads constructor(
                 handler(first)
             } else when (first) {
                 is LaunchableItem.App -> repository?.launchApp(first.app)
+                is LaunchableItem.Contact -> first.phoneNumbers.firstOrNull()?.let { num ->
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                    } catch (_: Exception) { Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show() }
+                }
                 else -> {}
             }
             dismiss()
@@ -172,35 +196,107 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun onSearch(query: String) {
+        val layout = dialerLayoutProvider().coerceIn(0, 1)
+        val dialDigits = convertToDialDigits(query, layout)
+        val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+
         val filter = filterItems
         if (filter != null) {
             val raw = query.trim().lowercase()
             val q = raw.replace(Regex("[^a-z0-9]"), "")
-            val filtered = if (q.isEmpty()) filter else filter.filter {
+            val filtered = if (q.isEmpty() && dialDigitsForAppSearch == null) filter else filter.filter {
                 val normalized = it.label.toString().lowercase().replace(Regex("[^a-z0-9]"), "")
-                normalized.contains(q)
+                normalized.contains(q) || (dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch))
             }
             currentResults = filtered
             adapter.submitList(filtered)
         } else {
             val repo = repository ?: return
-            val results = repo.searchApps(query).map { LaunchableItem.App(it) }
-            currentResults = results
-            adapter.submitList(results)
+            val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
+            currentResults = appResults
+            adapter.submitList(appResults)
+            if (contactSearchEnabledProvider()) {
+                val queryForContact = query
+                ContactSearchHelper.searchAsync(
+                    context,
+                    queryForContact,
+                    dialDigitsForAppSearch,
+                    defaultContactIcon,
+                    enabled = contactSearchEnabledProvider(),
+                    sourceFilter = contactSourceProvider()
+                ) { contactResults ->
+                    if (lastQuery != queryForContact) return@searchAsync
+                    val combined = appResults + contactResults
+                    currentResults = combined
+                    adapter.submitList(combined)
+                }
+            }
         }
-
-        val isPhone = query.matches(Regex("^[0-9+*#]+$"))
-        if (isPhone && query.length > 2) {
+        if (dialDigits.isNotEmpty()) {
             dialRow.visibility = VISIBLE
-            dialText.text = "${context.getString(R.string.dial_prefix)} $query"
+            dialText.text = "${context.getString(R.string.dial_prefix)} $dialDigits"
             dialRow.setOnClickListener {
-                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$query"))
-                context.startActivity(intent)
-                dismiss()
+                try {
+                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$dialDigits")).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                    dismiss()
+                } catch (_: Exception) {
+                    Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+                }
             }
         } else {
             dialRow.visibility = GONE
         }
+    }
+
+    /**
+     * Converts search query to dial digits using the selected layout.
+     * Layout 0 = Qwerty (w→1, e→2, r→3, s→4, d→5, f→6, z→7, x→8, c→9; 0→0; digits and +*# pass through).
+     * Layout 1 = T9 (abc→2, def→3, ghi→4, jkl→5, mno→6, pqrs→7, tuv→8, wxyz→9; 0/space→0, . or 1→1; digits and +*# pass through).
+     */
+    private fun convertToDialDigits(query: String, layout: Int): String {
+        if (query.isEmpty()) return ""
+        val sb = StringBuilder()
+        when (layout) {
+            1 -> { // T9
+                for (ch in query) {
+                    when (ch) {
+                        '+', '*', '#' -> sb.append(ch)
+                        in '0'..'9' -> sb.append(ch)
+                        ' ', '\u00A0' -> sb.append('0')
+                        '.' -> sb.append('1')
+                        in 'a'..'z' -> sb.append(t9LetterToDigit(ch))
+                        in 'A'..'Z' -> sb.append(t9LetterToDigit(ch.lowercaseChar()))
+                        else -> { /* skip */ }
+                    }
+                }
+            }
+            else -> { // 0 = Qwerty
+                for (ch in query) {
+                    when (ch) {
+                        '+', '*', '#' -> sb.append(ch)
+                        in '0'..'9' -> sb.append(ch)
+                        in "wWeErRsSdDfFzZxXcC" -> sb.append(qwertyLetterToDigit(ch.lowercaseChar()))
+                        else -> { /* skip unmapped letters */ }
+                    }
+                }
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun qwertyLetterToDigit(c: Char): Char = when (c) {
+        'w' -> '1'; 'e' -> '2'; 'r' -> '3'; 's' -> '4'; 'd' -> '5'
+        'f' -> '6'; 'z' -> '7'; 'x' -> '8'; 'c' -> '9'
+        else -> '0'
+    }
+
+    private fun t9LetterToDigit(c: Char): Char = when (c) {
+        in "abc" -> '2'; in "def" -> '3'; in "ghi" -> '4'; in "jkl" -> '5'
+        in "mno" -> '6'; in "pqrs" -> '7'; in "tuv" -> '8'; in "wxyz" -> '9'
+        else -> '0'
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

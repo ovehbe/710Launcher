@@ -101,6 +101,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.App -> repository?.launchApp(item.app)
                     is LaunchableItem.Shortcut -> shortcutHelper?.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
+                    is LaunchableItem.Contact -> { }
                 }
             },
             onLongClick = if (tab == TAB_FAVORITES) null else { item, view -> onItemLongClick?.invoke(item, view) },
@@ -111,6 +112,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.App -> repository!!.getIconForPage(item.app, pageId)
                         is LaunchableItem.Shortcut -> repository!!.getIconForShortcut(item.shortcut, pageId)
                         is LaunchableItem.IntentShortcut -> repository!!.getIconForIntentShortcut(item.info, pageId)
+                        is LaunchableItem.Contact -> item.icon
                     }
                 }
             } else { null },
@@ -121,6 +123,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.App -> repository!!.getDisplayLabel(item.app, pageId)
                         is LaunchableItem.Shortcut -> prefs.getCustomLabel(item.shortcut.shortcutKey, pageId) ?: item.shortcut.label
                         is LaunchableItem.IntentShortcut -> prefs.getCustomLabel(item.info.shortcutKey, pageId) ?: item.info.label
+                        is LaunchableItem.Contact -> item.displayName
                     }
                 })
             } else null

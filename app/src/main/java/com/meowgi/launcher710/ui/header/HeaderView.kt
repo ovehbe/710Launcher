@@ -38,6 +38,7 @@ class HeaderView @JvmOverloads constructor(
         setPadding(dp(12), dp(4), dp(12), dp(4))
 
         dateText = TextView(context).apply {
+            id = R.id.header_date_text
             textSize = 14f
             setTextColor(resources.getColor(R.color.bb_text_primary, null))
             typeface = font
@@ -46,6 +47,7 @@ class HeaderView @JvmOverloads constructor(
         addView(dateText, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
 
         clockText = TextView(context).apply {
+            id = R.id.header_clock_text
             textSize = 38f
             setTextColor(resources.getColor(R.color.bb_text_primary, null))
             typeface = font

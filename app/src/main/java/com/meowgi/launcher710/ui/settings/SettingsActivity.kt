@@ -21,6 +21,7 @@ import com.meowgi.launcher710.R
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
 import com.meowgi.launcher710.util.IconPackManager
+import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
 import java.text.SimpleDateFormat
 import java.util.*
@@ -47,6 +48,8 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         /** Set to true to show Key Shortcuts section and key mapping UI again. */
         private const val KEY_MAP_SETTINGS_VISIBLE = false
+        /** Hardcoded accent for Settings UI only (BB Blue); launcher accent is in prefs. */
+        private val SETTINGS_ACCENT_COLOR = 0xFF0073BC.toInt()
     }
 
     private lateinit var prefs: LauncherPrefs
@@ -444,6 +447,16 @@ class SettingsActivity : AppCompatActivity() {
             addInjectDelayInput()
         }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
+        addChoice(getString(R.string.dialer_number_layout), listOf(getString(R.string.dialer_layout_qwerty), getString(R.string.dialer_layout_t9)), prefs.dialerNumberLayout) { prefs.dialerNumberLayout = it }
+        addToggle(getString(R.string.search_contacts), prefs.searchContactsEnabled) { prefs.searchContactsEnabled = it }
+        run {
+            val sourceOptions = ContactSearchHelper.getContactSourceOptions(this)
+            val sourceLabels = sourceOptions.map { it.first }
+            val sourceValues = sourceOptions.map { it.second }
+            val currentSource = prefs.searchContactsSource ?: "all"
+            val sourceSelected = sourceValues.indexOf(currentSource).coerceIn(0, (sourceValues.size - 1).coerceAtLeast(0))
+            addChoice(getString(R.string.contact_source), sourceLabels, sourceSelected) { prefs.searchContactsSource = sourceValues.getOrElse(it) { "all" } }
+        }
 
         // Key map settings hidden for now; enable key shortcuts stays off by default
         if (KEY_MAP_SETTINGS_VISIBLE) {
@@ -605,7 +618,7 @@ class SettingsActivity : AppCompatActivity() {
                 if (index > 0) {
                     val upBtn = TextView(this).apply {
                         text = "▲"; textSize = 16f; setPadding(dp(8), 0, dp(8), 0)
-                        setTextColor(prefs.accentColor)
+                        setTextColor(SETTINGS_ACCENT_COLOR)
                         setOnClickListener {
                             pageOrder[index] = pageOrder[index - 1].also { pageOrder[index - 1] = pageOrder[index] }
                             prefs.setPageOrder(pageOrder)
@@ -617,7 +630,7 @@ class SettingsActivity : AppCompatActivity() {
                 if (index < pageOrder.size - 1) {
                     val downBtn = TextView(this).apply {
                         text = "▼"; textSize = 16f; setPadding(dp(8), 0, dp(8), 0)
-                        setTextColor(prefs.accentColor)
+                        setTextColor(SETTINGS_ACCENT_COLOR)
                         setOnClickListener {
                             pageOrder[index] = pageOrder[index + 1].also { pageOrder[index + 1] = pageOrder[index] }
                             prefs.setPageOrder(pageOrder)
@@ -929,7 +942,7 @@ class SettingsActivity : AppCompatActivity() {
             header.addView(makeLabel(label), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val valueText = TextView(this).apply {
                 text = value.toString()
-                setTextColor(prefs.accentColor)
+                setTextColor(SETTINGS_ACCENT_COLOR)
                 textSize = 12f
             }
             header.addView(valueText)
@@ -969,7 +982,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun addSection(title: String) {
         val tv = TextView(this).apply {
             text = title
-            setTextColor(prefs.accentColor)
+            setTextColor(SETTINGS_ACCENT_COLOR)
             textSize = 12f
             typeface = font?.let { Typeface.create(it, Typeface.BOLD) }
             setPadding(dp(16), dp(16), dp(16), dp(6))
@@ -992,7 +1005,7 @@ class SettingsActivity : AppCompatActivity() {
         val label = makeLabel(title)
         val valueText = TextView(this).apply {
             text = "${(current * 100) / 255}%"
-            setTextColor(prefs.accentColor)
+            setTextColor(SETTINGS_ACCENT_COLOR)
             textSize = 12f
             typeface = font
         }
@@ -1040,7 +1053,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         val saveBtn = TextView(this).apply {
             text = "Save"
-            setTextColor(prefs.accentColor)
+            setTextColor(SETTINGS_ACCENT_COLOR)
             textSize = 14f
             typeface = font
             setPadding(dp(16), dp(8), dp(8), dp(8))
@@ -1081,7 +1094,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         val saveBtn = TextView(this).apply {
             text = "Save"
-            setTextColor(prefs.accentColor)
+            setTextColor(SETTINGS_ACCENT_COLOR)
             textSize = 14f
             typeface = font
             setPadding(dp(16), dp(8), dp(8), dp(8))

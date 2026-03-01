@@ -62,9 +62,7 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:clickable="true"
-                android:focusable="true">
+                android:paddingEnd="4dp">
 
                 <View
                     android:layout_width="match_parent"
@@ -76,9 +74,7 @@
                     android:layout_height="match_parent"
                     android:orientation="horizontal"
                     android:gravity="center"
-                    android:visibility="gone"
-                    android:clickable="true"
-                    android:focusable="true">
+                    android:visibility="gone">
 
                     <LinearLayout
                         android:id="@+id/notificationAppletsContainer"
@@ -111,6 +107,14 @@
                         android:textStyle="bold"
                         android:fontFamily="@font/bbalphas" />
                 </LinearLayout>
+
+                <!-- Single touch target for center tap (avoids multiple ripples / wrong highlight on touch) -->
+                <View
+                    android:id="@+id/actionBarCenterTouchOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <EditText
                     android:id="@+id/searchInputInBar"
