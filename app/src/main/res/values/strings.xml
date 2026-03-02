@@ -15,6 +15,10 @@
     <string name="dialer_layout_t9">T9</string>
     <string name="search_contacts">Search contacts</string>
     <string name="contact_source">Contact source</string>
+    <string name="contact_icon">Contact icon</string>
+    <string name="contact_icon_contacts_app">Contacts app icon</string>
+    <string name="contact_icon_custom">Custom</string>
+    <string name="contact_icon_choose_pack">Choose from icon pack…</string>
 
     <string name="profile_title">Select a Profile</string>
     <string name="profile_all_off">All Alerts Off</string>

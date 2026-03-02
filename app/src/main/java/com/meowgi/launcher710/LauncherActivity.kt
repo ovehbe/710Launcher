@@ -361,6 +361,7 @@ class LauncherActivity : AppCompatActivity() {
         searchOverlay.dialerLayoutProvider = { prefs.dialerNumberLayout }
         searchOverlay.contactSearchEnabledProvider = { prefs.searchContactsEnabled }
         searchOverlay.contactSourceProvider = { prefs.searchContactsSource ?: "all" }
+        searchOverlay.contactIconProvider = { repository.getContactIconForSearch() }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -1153,7 +1154,6 @@ class LauncherActivity : AppCompatActivity() {
         popup.menu.add("Remove from page")
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
-        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -1209,10 +1209,6 @@ class LauncherActivity : AppCompatActivity() {
                                 .show()
                     true
                 }
-                "Uninstall" -> {
-                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${shortcut.packageName}")))
-                    true
-                }
                 else -> false
             }
         }
@@ -1228,7 +1224,6 @@ class LauncherActivity : AppCompatActivity() {
         else popup.menu.add(getString(R.string.pin_to_dock))
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
-        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -1290,16 +1285,6 @@ class LauncherActivity : AppCompatActivity() {
                                 }
                                 .setNegativeButton("Cancel", null)
                                 .show()
-                    true
-                }
-                "Uninstall" -> {
-                    try {
-                        val intent = Intent.parseUri(info.intentUri, 0)
-                        val pkg = intent.`package` ?: intent.component?.packageName
-                        if (pkg != null) {
-                            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))
-                        }
-                    } catch (_: Exception) {}
                     true
                 }
                 else -> false
@@ -1648,7 +1633,6 @@ class LauncherActivity : AppCompatActivity() {
             add("Change Name")
             add("Change Icon")
             add(getString(R.string.app_info))
-            add("Uninstall")
             add("Hide app")
         }
         popup.setOnMenuItemClickListener { item ->
@@ -1738,10 +1722,6 @@ class LauncherActivity : AppCompatActivity() {
                     startActivity(Intent(
                         android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
                     ).apply { data = Uri.parse("package:${app.packageName}") })
-                    true
-                }
-                title == "Uninstall" -> {
-                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}")))
                     true
                 }
                 title == "Hide app" -> {

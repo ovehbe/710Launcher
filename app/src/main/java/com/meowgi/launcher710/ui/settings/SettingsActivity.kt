@@ -463,6 +463,7 @@ class SettingsActivity : AppCompatActivity() {
             val sourceSelected = sourceValues.indexOf(currentSource).coerceIn(0, (sourceValues.size - 1).coerceAtLeast(0))
             addChoice(getString(R.string.contact_source), sourceLabels, sourceSelected) { prefs.searchContactsSource = sourceValues.getOrElse(it) { "all" } }
         }
+        addButton(getString(R.string.contact_icon) + ": " + getContactIconLabel()) { showContactIconPicker() }
 
         // Key map settings hidden for now; enable key shortcuts stays off by default
         if (KEY_MAP_SETTINGS_VISIBLE) {
@@ -698,6 +699,43 @@ class SettingsActivity : AppCompatActivity() {
     private fun getNotificationAppsLabel(): String {
         val w = prefs.getNotificationAppWhitelist()
         return if (w.isEmpty()) "All apps" else "${w.size} app(s)"
+    }
+
+    private fun getContactIconLabel(): String =
+        if (!prefs.contactIconDrawableName.isNullOrBlank() && !prefs.contactIconPackPackage.isNullOrBlank())
+            getString(R.string.contact_icon_custom)
+        else
+            getString(R.string.contact_icon_contacts_app)
+
+    private fun showContactIconPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle(getString(R.string.contact_icon))
+            .setItems(arrayOf(getString(R.string.contact_icon_contacts_app), getString(R.string.contact_icon_choose_pack))) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.contactIconDrawableName = null
+                        prefs.contactIconPackPackage = null
+                        rebuildSettings()
+                    }
+                    1 -> {
+                        val picker = IconPickerDialog(this,
+                            onIconSelected = { drawableName, packPackage ->
+                                prefs.contactIconDrawableName = drawableName
+                                prefs.contactIconPackPackage = packPackage
+                                rebuildSettings()
+                            },
+                            onReset = {
+                                prefs.contactIconDrawableName = null
+                                prefs.contactIconPackPackage = null
+                                rebuildSettings()
+                            }
+                        )
+                        picker.showPackPicker()
+                    }
+                }
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
     }
 
     private fun showNotificationAppsPicker() {

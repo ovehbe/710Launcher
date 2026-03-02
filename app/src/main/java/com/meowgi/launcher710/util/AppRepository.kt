@@ -330,4 +330,34 @@ class AppRepository(private val context: Context) {
             IconPackManager(context).applyFallbackShape(icon, shapeMapped, iconSizePx)
         } else icon!!
     }
+
+    /** Icon for contact results in search: custom from icon pack, or Contacts app icon from search page pack, or system Contacts icon. */
+    fun getContactIconForSearch(): android.graphics.drawable.Drawable {
+        val customName = prefs.contactIconDrawableName
+        val customPack = prefs.contactIconPackPackage
+        if (!customName.isNullOrBlank() && !customPack.isNullOrBlank()) {
+            val tempMgr = IconPackManager(context)
+            if (tempMgr.loadIconPack(customPack)) {
+                tempMgr.getIconByName(customName)?.let { return applyGlobalShape(it) }
+            }
+        }
+        val contactsComponent = pm.getLaunchIntentForPackage("com.android.contacts")?.component
+        if (contactsComponent != null) {
+            val packManager = getPackManagerForPage("search")
+            val themedIcon = packManager?.getIconForApp(contactsComponent)
+            if (themedIcon != null) return applyGlobalShape(themedIcon)
+            if (packManager?.isLoaded() == true) {
+                val rawIcon = try { pm.getApplicationIcon(pm.getApplicationInfo("com.android.contacts", 0)) } catch (_: Exception) { null }
+                if (rawIcon != null) {
+                    val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
+                    return applyGlobalShape(packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx))
+                }
+            }
+        }
+        return try {
+            applyGlobalShape(pm.getApplicationIcon(pm.getApplicationInfo("com.android.contacts", 0)))
+        } catch (_: Exception) {
+            applyGlobalShape(pm.defaultActivityIcon)
+        }
+    }
 }

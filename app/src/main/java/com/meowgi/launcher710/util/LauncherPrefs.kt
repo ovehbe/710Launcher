@@ -496,6 +496,16 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("searchContactsSource", "all")?.takeIf { it.isNotEmpty() } ?: "all"
         set(v) = prefs.edit().putString("searchContactsSource", v ?: "all").apply()
 
+    /** Custom contact icon: drawable name in the pack. When set with contactIconPackPackage, search shows this icon for contacts. */
+    var contactIconDrawableName: String?
+        get() = prefs.getString("contactIconDrawableName", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("contactIconDrawableName", v ?: "").apply()
+
+    /** Custom contact icon: icon pack package. When set with contactIconDrawableName, search uses this icon for contacts. */
+    var contactIconPackPackage: String?
+        get() = prefs.getString("contactIconPackPackage", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("contactIconPackPackage", v ?: "").apply()
+
     // --- Key shortcuts (recorded key codes) ---
     var keyShortcutsEnabled: Boolean
         get() = prefs.getBoolean("keyShortcutsEnabled", false)
@@ -787,7 +797,7 @@ class LauncherPrefs(context: Context) {
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
         "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
         "searchEngineLaunchInjectWaitForFocus", "searchEngineLaunchInjectUseRoot", "searchEngineLaunchInjectAlternativeListener",
-        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsSource", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
+        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsSource", "contactIconDrawableName", "contactIconPackPackage", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
         "customIcons", "customLabels", "customPages", "pageOrder", "favoriteOrder", "verticalScrollEnabled",
         "hideAllPage", "hideFrequentPage", "hiddenApps",
         "widgetData", "widgetHeights"
@@ -905,6 +915,8 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "dialerNumberLayout", "i", dialerNumberLayout)
         putEntry(arr, "searchContactsEnabled", "b", searchContactsEnabled)
         putEntry(arr, "searchContactsSource", "s", searchContactsSource)
+        putEntry(arr, "contactIconDrawableName", "s", contactIconDrawableName)
+        putEntry(arr, "contactIconPackPackage", "s", contactIconPackPackage)
         putEntry(arr, "keyShortcutsEnabled", "b", keyShortcutsEnabled)
         putEntry(arr, "keyCodeHome", "i", keyCodeHome)
         putEntry(arr, "keyCodeBack", "i", keyCodeBack)

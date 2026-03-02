@@ -42,6 +42,8 @@ class SearchOverlay @JvmOverloads constructor(
     var dialerLayoutProvider: () -> Int = { 0 }
     var contactSearchEnabledProvider: () -> Boolean = { true }
     var contactSourceProvider: () -> String = { "all" }
+    /** When set, provides the icon used for contact results in search (e.g. from Contacts app icon pack or custom). */
+    var contactIconProvider: (() -> Drawable)? = null
 
     private var filterItems: List<LaunchableItem>? = null
     private var lastQuery: String = ""
@@ -224,11 +226,12 @@ class SearchOverlay @JvmOverloads constructor(
             adapter.submitList(appResults)
             if (contactSearchEnabledProvider()) {
                 val queryForContact = query
+                val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
                 ContactSearchHelper.searchAsync(
                     context,
                     queryForContact,
                     dialDigitsForAppSearch,
-                    defaultContactIcon,
+                    contactIcon,
                     enabled = contactSearchEnabledProvider(),
                     sourceFilter = contactSourceProvider()
                 ) { contactResults ->
