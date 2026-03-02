@@ -36,6 +36,7 @@ import androidx.viewpager2.widget.ViewPager2
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
+import com.meowgi.launcher710.ui.dialogs.AppPickerWithSearchDialog
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
 import com.meowgi.launcher710.ui.dialogs.SoundProfileOverlay
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
@@ -361,6 +362,7 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> repository.launchApp(item.app)
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
+                is LaunchableItem.LauncherSettings -> startActivity(Intent(this, SettingsActivity::class.java))
                 is LaunchableItem.Contact -> item.phoneNumbers.firstOrNull()?.let { num ->
                     try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch (_: Exception) {}
                 }
@@ -372,6 +374,7 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> showAppContextMenu(item.app, view)
                 is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                 is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                is LaunchableItem.LauncherSettings -> { /* no context menu */ }
                 is LaunchableItem.Contact -> { }
                 else -> {}
             }
@@ -513,6 +516,7 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.App -> showAppContextMenu(item.app, view)
                     is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                     is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                    is LaunchableItem.LauncherSettings -> { /* no context menu */ }
                     is LaunchableItem.Contact -> { }
                 }
             },
@@ -1144,26 +1148,22 @@ class LauncherActivity : AppCompatActivity() {
             android.widget.Toast.makeText(this, "No app shortcuts available", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val appNames = appsWithShortcuts.map { it.label }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle(getString(R.string.add_app_shortcut))
-            .setItems(appNames) { _, which ->
-                val app = appsWithShortcuts[which]
-                val shortcuts = shortcutHelper.getShortcutsForPackage(app.packageName)
-                if (shortcuts.isEmpty()) return@setItems
-                val shortcutLabels = shortcuts.map { it.shortLabel?.toString() ?: it.longLabel?.toString() ?: it.id }.toTypedArray()
-                AlertDialog.Builder(this, R.style.BBDialogTheme)
-                    .setTitle(app.label)
-                    .setItems(shortcutLabels) { _, idx ->
-                        val info = shortcuts[idx]
-                        prefs.addShortcutToPage(pageId, app.packageName, info.id)
-                        pagerAdapter.refreshAll()
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        val items = appsWithShortcuts.map { it.packageName to it.label }
+        AppPickerWithSearchDialog.show(this, getString(R.string.add_app_shortcut), items, onSelected = { pkg, _ ->
+            val app = appsWithShortcuts.find { it.packageName == pkg } ?: return@show
+            val shortcuts = shortcutHelper.getShortcutsForPackage(app.packageName)
+            if (shortcuts.isEmpty()) return@show
+            val shortcutLabels = shortcuts.map { it.shortLabel?.toString() ?: it.longLabel?.toString() ?: it.id }.toTypedArray()
+            AlertDialog.Builder(this, R.style.BBDialogTheme)
+                .setTitle(app.label)
+                .setItems(shortcutLabels) { _, idx ->
+                    val info = shortcuts[idx]
+                    prefs.addShortcutToPage(pageId, app.packageName, info.id)
+                    pagerAdapter.refreshAll()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        })
     }
 
     private fun showShortcutContextMenu(shortcut: ShortcutDisplayInfo, anchor: View) {
@@ -1583,8 +1583,10 @@ class LauncherActivity : AppCompatActivity() {
         }
         val counts = packages.associateWith { pkg -> notifs.count { it.packageName == pkg } }
         val autoHide = prefs.notificationAppletsAutoHide
-        val iconSizePx = (28 * resources.displayMetrics.density).toInt()
+        val iconSizePx = (prefs.notificationAppletSizeDp * resources.displayMetrics.density).toInt()
+        val spacingPx = (prefs.notificationAppletsSpacingDp * resources.displayMetrics.density).toInt()
         notificationAppletsContainer.removeAllViews()
+        var first = true
         for (pkg in packages) {
             val count = counts[pkg] ?: 0
             if (autoHide && count == 0) continue
@@ -1605,7 +1607,13 @@ class LauncherActivity : AppCompatActivity() {
             }
             row.addView(iconView)
             row.addView(countText)
-            notificationAppletsContainer.addView(row)
+            val lp = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            if (!first) lp.marginStart = spacingPx
+            first = false
+            notificationAppletsContainer.addView(row, lp)
         }
     }
 
@@ -1804,16 +1812,11 @@ class LauncherActivity : AppCompatActivity() {
                 when (which) {
                     0 -> {
                         val apps = repository.getAllApps().sortedBy { it.label.lowercase() }
-                        val labels = apps.map { it.label }.toTypedArray()
-                        AlertDialog.Builder(this, R.style.BBDialogTheme)
-                            .setTitle("Choose app")
-                            .setItems(labels) { _, idx ->
-                                val app = apps[idx]
-                                prefs.setDockSwipeAction(slotIndex, app.componentName.flattenToString())
-                                dockBar.loadDock()
-                            }
-                            .setNegativeButton("Cancel", null)
-                            .show()
+                        val items = apps.map { it.componentName.flattenToString() to it.label }
+                        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { cn, _ ->
+                            prefs.setDockSwipeAction(slotIndex, cn)
+                            dockBar.loadDock()
+                        })
                     }
                     1 -> {
                         pendingDockSwipeSlotIndex = slotIndex

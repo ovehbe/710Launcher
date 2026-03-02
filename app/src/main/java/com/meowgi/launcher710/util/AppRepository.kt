@@ -2,10 +2,12 @@ package com.meowgi.launcher710.util
 
 import android.content.*
 import android.content.pm.PackageManager
+import com.meowgi.launcher710.R
 import com.meowgi.launcher710.model.AppDatabase
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.model.AppStats
 import com.meowgi.launcher710.model.IntentShortcutInfo
+import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import kotlinx.coroutines.*
 
@@ -368,5 +370,27 @@ class AppRepository(private val context: Context) {
         } catch (_: Exception) {
             applyGlobalShape(pm.defaultActivityIcon)
         }
+    }
+
+    /** Built-in shortcut to open Launcher settings. Uses icon pack settings icon when available. */
+    fun createLauncherSettingsItem(): LaunchableItem.LauncherSettings {
+        val label = context.getString(R.string.launcher_settings_label)
+        var icon: android.graphics.drawable.Drawable? = null
+        val settingsComponent = ComponentName("com.android.settings", "com.android.settings.Settings")
+        val packManager = getPackManagerForPage("all") ?: iconPackManager
+        if (packManager?.isLoaded() == true) {
+            icon = packManager.getIconForApp(settingsComponent)
+                ?: packManager.getIconByName("settings")
+                ?: packManager.getIconByName("ic_settings")
+                ?: packManager.getIconByName("com_android_settings")
+        }
+        if (icon == null) {
+            try {
+                icon = pm.getApplicationIcon(pm.getApplicationInfo("com.android.settings", 0))
+            } catch (_: Exception) {
+                icon = pm.defaultActivityIcon
+            }
+        }
+        return LaunchableItem.LauncherSettings(label, applyGlobalShape(icon!!))
     }
 }

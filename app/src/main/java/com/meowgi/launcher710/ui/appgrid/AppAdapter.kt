@@ -31,6 +31,7 @@ class AppAdapter(
             is LaunchableItem.App -> item.app.componentName.flattenToString()
             is LaunchableItem.Shortcut -> item.shortcut.shortcutKey
             is LaunchableItem.IntentShortcut -> item.info.shortcutKey
+            is LaunchableItem.LauncherSettings -> "launcher_settings_710"
             is LaunchableItem.Contact -> item.displayName.toString()
         }
     }

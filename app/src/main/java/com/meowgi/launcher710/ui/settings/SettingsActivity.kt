@@ -19,6 +19,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.WindowCompat
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
+import com.meowgi.launcher710.ui.dialogs.AppPickerWithSearchDialog
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.ContactSearchHelper
@@ -359,6 +360,8 @@ class SettingsActivity : AppCompatActivity() {
         if (prefs.useNotificationApplets) {
             addToggle("Auto-hide when count is 0", prefs.notificationAppletsAutoHide) { prefs.notificationAppletsAutoHide = it }
             addChoice("Applet icon shape", listOf("Default", "Circle", "Rounded square", "Square", "Squircle"), prefs.appletIconShape.coerceIn(0, 4)) { prefs.appletIconShape = it }
+            addSliderRange("Space between applets", 0, 20, prefs.notificationAppletsSpacingDp, { "${it}dp" }) { prefs.notificationAppletsSpacingDp = it }
+            addChoice("Applet icon size", listOf("Small", "Medium", "Large"), prefs.notificationAppletSizeIndex) { prefs.notificationAppletSizeIndex = it }
             addButton("Applet Icon Pack: ${getPageIconPackName("applets")}") { showPageIconPackPicker("applets", "Applets") }
             addButton("Manage applets (${prefs.getNotificationApplets().size})") { showAppletManager() }
         }
@@ -853,7 +856,7 @@ class SettingsActivity : AppCompatActivity() {
 
         fun refreshList() {
             rowsContainer.removeAllViews()
-            for (pkg in packages) {
+            for ((index, pkg) in packages.withIndex()) {
                 val label = try {
                     packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
                 } catch (_: Exception) { pkg }
@@ -870,6 +873,34 @@ class SettingsActivity : AppCompatActivity() {
                     text = label
                     setPadding(dp(8), 0, dp(8), 0)
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                if (index > 0) {
+                    val upBtn = TextView(this).apply {
+                        text = "▲"
+                        textSize = 16f
+                        setPadding(dp(8), 0, dp(8), 0)
+                        setTextColor(SETTINGS_ACCENT_COLOR)
+                        setOnClickListener {
+                            packages[index] = packages[index - 1].also { packages[index - 1] = packages[index] }
+                            prefs.setNotificationApplets(packages)
+                            refreshList()
+                        }
+                    }
+                    row.addView(upBtn)
+                }
+                if (index < packages.size - 1) {
+                    val downBtn = TextView(this).apply {
+                        text = "▼"
+                        textSize = 16f
+                        setPadding(dp(8), 0, dp(8), 0)
+                        setTextColor(SETTINGS_ACCENT_COLOR)
+                        setOnClickListener {
+                            packages[index] = packages[index + 1].also { packages[index + 1] = packages[index] }
+                            prefs.setNotificationApplets(packages)
+                            refreshList()
+                        }
+                    }
+                    row.addView(downBtn)
                 }
                 val changeIconBtn = Button(this).apply {
                     text = "Change icon"
@@ -916,17 +947,12 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(this@SettingsActivity, "No more apps to add.", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                val items = installed.map { it.second }.toTypedArray()
-                AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
-                    .setTitle("Add applet")
-                    .setItems(items) { _, which ->
-                        val (pkg, _) = installed[which]
-                        packages.add(pkg)
-                        prefs.setNotificationApplets(packages)
-                        refreshList()
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
+                val items = installed.map { it.first to it.second }
+                AppPickerWithSearchDialog.show(this@SettingsActivity, "Add applet", items, onSelected = { pkg, _ ->
+                    packages.add(pkg)
+                    prefs.setNotificationApplets(packages)
+                    refreshList()
+                })
             }
         }
         layout.addView(addBtn)
@@ -1176,6 +1202,46 @@ class SettingsActivity : AppCompatActivity() {
         addDivider()
     }
 
+    private fun addSliderRange(title: String, min: Int, max: Int, current: Int, format: (Int) -> String, onChanged: (Int) -> Unit) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val label = makeLabel(title)
+        val valueText = TextView(this).apply {
+            text = format(current.coerceIn(min, max))
+            setTextColor(SETTINGS_ACCENT_COLOR)
+            textSize = 12f
+            typeface = font
+        }
+        header.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(valueText)
+        row.addView(header)
+        val slider = SeekBar(this).apply {
+            this.max = max - min
+            progress = (current.coerceIn(min, max) - min)
+            setPadding(0, dp(4), 0, dp(4))
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val v = min + progress
+                    valueText.text = format(v)
+                    if (fromUser) onChanged(v)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        row.addView(slider, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        container.addView(row)
+        addDivider()
+    }
+
     private fun addInjectDelayInput() {
         val minMs = 0
         val maxMs = 5000
@@ -1273,29 +1339,23 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showLaunchInjectAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Choose app")
-            .setItems(options) { _, which ->
-                val pkg = pkgList[which].first
-                val name = pkgList[which].second
-                val intent = packageManager.getLaunchIntentForPackage(pkg)
-                if (intent != null) {
-                    prefs.searchEngineLaunchInjectIntentUri = intent.toUri(Intent.URI_INTENT_SCHEME)
-                    prefs.searchEngineLaunchInjectName = name
-                    rebuildSettings()
-                } else {
-                    Toast.makeText(this, "Could not get launch intent", Toast.LENGTH_SHORT).show()
-                }
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { pkg, name ->
+            val intent = packageManager.getLaunchIntentForPackage(pkg)
+            if (intent != null) {
+                prefs.searchEngineLaunchInjectIntentUri = intent.toUri(Intent.URI_INTENT_SCHEME)
+                prefs.searchEngineLaunchInjectName = name
+                rebuildSettings()
+            } else {
+                Toast.makeText(this, "Could not get launch intent", Toast.LENGTH_SHORT).show()
             }
-            .show()
+        })
     }
 
     // --- Choice picker ---
@@ -1487,25 +1547,20 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showActionBarCenterAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Choose app")
-            .setItems(options) { _, which ->
-                val (pkg) = pkgList[which]
-                prefs.actionBarCenterAction = 1
-                prefs.actionBarCenterActionPackage = pkg
-                prefs.actionBarCenterActionIntentUri = null
-                prefs.actionBarCenterActionName = null
-                rebuildSettings()
-            }
-            .show()
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { pkg, _ ->
+            prefs.actionBarCenterAction = 1
+            prefs.actionBarCenterActionPackage = pkg
+            prefs.actionBarCenterActionIntentUri = null
+            prefs.actionBarCenterActionName = null
+            rebuildSettings()
+        })
     }
 
     private fun getActionBarCenterLongPressActionLabel(): String = when (prefs.actionBarCenterLongPressAction) {
@@ -1548,25 +1603,20 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showActionBarCenterLongPressAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Choose app")
-            .setItems(options) { _, which ->
-                val (pkg) = pkgList[which]
-                prefs.actionBarCenterLongPressAction = 1
-                prefs.actionBarCenterLongPressActionPackage = pkg
-                prefs.actionBarCenterLongPressActionIntentUri = null
-                prefs.actionBarCenterLongPressActionName = null
-                rebuildSettings()
-            }
-            .show()
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { pkg, _ ->
+            prefs.actionBarCenterLongPressAction = 1
+            prefs.actionBarCenterLongPressActionPackage = pkg
+            prefs.actionBarCenterLongPressActionIntentUri = null
+            prefs.actionBarCenterLongPressActionName = null
+            rebuildSettings()
+        })
     }
 
     private fun showHeaderClockActionPicker() {
@@ -1595,69 +1645,61 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun showHeaderDateAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Choose app")
-            .setItems(options) { _, which ->
-                val (pkg) = pkgList[which]
-                prefs.headerDateAction = 1
-                prefs.headerDateActionPackage = pkg
-                prefs.headerDateActionIntentUri = null
-                prefs.headerDateActionName = null
-                rebuildSettings()
-            }
-            .show()
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { pkg, _ ->
+            prefs.headerDateAction = 1
+            prefs.headerDateActionPackage = pkg
+            prefs.headerDateActionIntentUri = null
+            prefs.headerDateActionName = null
+            rebuildSettings()
+        })
     }
 
     private fun showHeaderClockAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Choose app")
-            .setItems(options) { _, which ->
-                val (pkg) = pkgList[which]
-                prefs.headerClockAction = 1
-                prefs.headerClockActionPackage = pkg
-                prefs.headerClockActionIntentUri = null
-                prefs.headerClockActionName = null
-                rebuildSettings()
-            }
-            .show()
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(this, "Choose app", items, onSelected = { pkg, _ ->
+            prefs.headerClockAction = 1
+            prefs.headerClockActionPackage = pkg
+            prefs.headerClockActionIntentUri = null
+            prefs.headerClockActionName = null
+            rebuildSettings()
+        })
     }
 
     private fun showSearchEngineAppPicker() {
-        val installed = packageManager.getInstalledApplications(0)
-        val pkgList = installed
+        val pkgList = packageManager.getInstalledApplications(0)
             .mapNotNull { info ->
                 val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
                 if (label.isBlank()) null else (info.packageName to label)
             }
             .sortedBy { it.second.lowercase() }
-        val options = pkgList.map { it.second }.toTypedArray()
-        AlertDialog.Builder(this, R.style.BBDialogTheme)
-            .setTitle("Search app")
-            .setItems(options) { _, which ->
-                prefs.searchEnginePackage = pkgList[which].first
+        val items = pkgList.map { it.first to it.second }
+        AppPickerWithSearchDialog.show(
+            context = this,
+            title = "Search app",
+            items = items,
+            onSelected = { pkg, _ ->
+                prefs.searchEnginePackage = pkg
                 rebuildSettings()
-            }
-            .setNegativeButton("Clear") { _, _ ->
+            },
+            negativeButton = "Clear",
+            onNegative = {
                 prefs.searchEnginePackage = null
                 rebuildSettings()
             }
-            .show()
+        )
     }
 
     private fun showSearchEngineIntentUriDialog() {
