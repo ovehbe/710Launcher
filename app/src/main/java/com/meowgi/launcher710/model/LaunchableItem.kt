@@ -31,4 +31,7 @@ sealed class LaunchableItem {
     ) : LaunchableItem() {
         override val label: CharSequence get() = displayName
     }
+
+    /** Built-in shortcut to open Launcher settings. Shown on All apps page and in search. */
+    data class LauncherSettings(override val label: CharSequence, override val icon: Drawable) : LaunchableItem()
 }

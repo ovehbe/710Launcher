@@ -121,6 +121,10 @@ class SearchOverlay @JvmOverloads constructor(
                                 }
                             } ?: dismiss()
                         }
+                        is LaunchableItem.LauncherSettings -> {
+                            context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                            dismiss()
+                        }
                         is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                     }
                 }
@@ -181,7 +185,8 @@ class SearchOverlay @JvmOverloads constructor(
                         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     } catch (_: Exception) { Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show() }
                 }
-                else -> {}
+                is LaunchableItem.LauncherSettings -> context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
             }
             dismiss()
         } else {
@@ -222,8 +227,15 @@ class SearchOverlay @JvmOverloads constructor(
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
-            currentResults = appResults
-            adapter.submitList(appResults)
+            val raw = query.trim().lowercase()
+            val q = raw.replace(Regex("[^a-z0-9]"), "")
+            val settingsItem = repo.createLauncherSettingsItem()
+            val settingsMatches = q.isEmpty() && dialDigitsForAppSearch == null ||
+                settingsItem.label.toString().lowercase().replace(Regex("[^a-z0-9]"), "").contains(q) ||
+                (dialDigitsForAppSearch != null && "710".contains(dialDigitsForAppSearch))
+            val baseResults = if (settingsMatches) appResults + settingsItem else appResults
+            currentResults = baseResults
+            adapter.submitList(baseResults)
             if (contactSearchEnabledProvider()) {
                 val queryForContact = query
                 val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
@@ -236,7 +248,7 @@ class SearchOverlay @JvmOverloads constructor(
                     sourceFilter = contactSourceProvider()
                 ) { contactResults ->
                     if (lastQuery != queryForContact) return@searchAsync
-                    val combined = appResults + contactResults
+                    val combined = baseResults + contactResults
                     currentResults = combined
                     adapter.submitList(combined)
                 }

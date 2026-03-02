@@ -1,6 +1,7 @@
 package com.meowgi.launcher710.ui.appgrid
 
 import android.appwidget.AppWidgetProviderInfo
+import android.content.Intent
 import android.graphics.Canvas
 import android.os.Bundle
 import android.view.*
@@ -16,6 +17,7 @@ import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.ShortcutHelper
+import com.meowgi.launcher710.ui.settings.SettingsActivity
 import com.meowgi.launcher710.ui.widgets.WidgetContainer
 import com.meowgi.launcher710.ui.widgets.WidgetHost
 
@@ -137,6 +139,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.App -> repository?.launchApp(item.app)
                     is LaunchableItem.Shortcut -> shortcutHelper?.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
+                    is LaunchableItem.LauncherSettings -> startActivity(Intent(requireContext(), SettingsActivity::class.java))
                     is LaunchableItem.Contact -> { }
                 }
             },
@@ -148,6 +151,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.App -> repository!!.getIconForPage(item.app, pageId)
                         is LaunchableItem.Shortcut -> repository!!.getIconForShortcut(item.shortcut, pageId)
                         is LaunchableItem.IntentShortcut -> repository!!.getIconForIntentShortcut(item.info, pageId)
+                        is LaunchableItem.LauncherSettings -> item.icon
                         is LaunchableItem.Contact -> item.icon
                     }
                 }
@@ -159,6 +163,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.App -> repository!!.getDisplayLabel(item.app, pageId)
                         is LaunchableItem.Shortcut -> prefs.getCustomLabel(item.shortcut.shortcutKey, pageId) ?: item.shortcut.label
                         is LaunchableItem.IntentShortcut -> prefs.getCustomLabel(item.info.shortcutKey, pageId) ?: item.info.label
+                        is LaunchableItem.LauncherSettings -> item.label
                         is LaunchableItem.Contact -> item.displayName
                     }
                 })
@@ -307,6 +312,9 @@ class AppGridFragment : Fragment() {
             val prefs = LauncherPrefs(requireContext())
             shortcutHelper?.getShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.Shortcut(it)) }
             shortcutHelper?.getIntentShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.IntentShortcut(it)) }
+        }
+        if (tab == TAB_ALL) {
+            repository?.createLauncherSettingsItem()?.let { items.add(it) }
         }
         if (isSparseGrid) {
             val prefs = LauncherPrefs(requireContext())
@@ -489,7 +497,13 @@ class AppGridFragment : Fragment() {
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onLongPress(e: MotionEvent) {
                     val child = recycler.findChildViewUnder(e.x, e.y)
-                    if (child == null) onEmptySpaceLongClick?.invoke()
+                    // Treat invisible empty-grid cells the same as bare empty space — in sparse
+                    // grid mode every pixel is covered by a child view, so checking for null alone
+                    // would never fire. EmptyVH cells are visually indistinguishable from empty
+                    // space and should open the page/settings menu on long press.
+                    val isEmpty = child == null ||
+                        recycler.getChildViewHolder(child) is AppAdapter.EmptyVH
+                    if (isEmpty) onEmptySpaceLongClick?.invoke()
                 }
             })
         recycler.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {

@@ -5,6 +5,7 @@
 - **Polish:** Touchpad highlight size, persistent hide of Frequent/All when hidden, notification applet icon quality, general reliability.
 
 ## Recent changes (summary)
+- Header opacity fix: BBStatusBar, HeaderView, and tab bar shared bb_overlay drawable; alpha set on one overwrote others. Each now calls background?.mutate() before setting alpha so opacity sliders work correctly and persist across home/restart.
 - Search/trackpad: search field GONE when overlay closed; no programmatic focus on pager when overlay dismissed; type-to-search from home with Alt/Shift for symbols.
 - Default tab by page ID; hide All/Frequent; hidden apps; dock and tab bar customization (color, highlight opacity).
 - Action bar center: configurable (hub / app / shortcut). Click highlights (ripple + no focus ring); refresh on resume so accent change applies.

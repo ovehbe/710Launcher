@@ -391,6 +391,19 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("appletIconShape", 0)
         set(v) = prefs.edit().putInt("appletIconShape", v).apply()
 
+    /** Horizontal spacing (dp) between notification applets. 0–20, default 4. */
+    var notificationAppletsSpacingDp: Int
+        get() = prefs.getInt("notificationAppletsSpacingDp", 4).coerceIn(0, 20)
+        set(v) = prefs.edit().putInt("notificationAppletsSpacingDp", v.coerceIn(0, 20)).apply()
+
+    /** 0 = small (20dp), 1 = medium (28dp), 2 = large (36dp) */
+    var notificationAppletSizeIndex: Int
+        get() = prefs.getInt("notificationAppletSizeIndex", 1).coerceIn(0, 2)
+        set(v) = prefs.edit().putInt("notificationAppletSizeIndex", v.coerceIn(0, 2)).apply()
+
+    val notificationAppletSizeDp: Int
+        get() = when (notificationAppletSizeIndex) { 0 -> 20; 2 -> 36; else -> 28 }
+
     /** Icon pack for notification applets; uses same per-page key "applets". */
     fun getAppletIconPackPackage(): String? = getPageIconPackPackage("applets")
     fun setAppletIconPackPackage(pkg: String?) = setPageIconPackPackage("applets", pkg)
@@ -697,7 +710,10 @@ class LauncherPrefs(context: Context) {
         prefs.edit().putString("pageAppOrder_$pageId", arr.toString()).apply()
     }
 
-    fun isPageScrollable(pageId: String): Boolean = prefs.getBoolean("pageScroll_$pageId", false)
+    fun isPageScrollable(pageId: String): Boolean {
+        val default = pageId == "all" || pageId == "frequent"
+        return prefs.getBoolean("pageScroll_$pageId", default)
+    }
     fun setPageScrollable(pageId: String, value: Boolean) = prefs.edit().putBoolean("pageScroll_$pageId", value).apply()
 
     /** true = widgets appear below app grid; false = above (default) */
@@ -828,7 +844,7 @@ class LauncherPrefs(context: Context) {
         "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
         "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName",
         "actionBarCenterLongPressAction", "actionBarCenterLongPressActionPackage", "actionBarCenterLongPressActionIntentUri", "actionBarCenterLongPressActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
-        "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape",
+        "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape", "notificationAppletsSpacingDp", "notificationAppletSizeIndex",
         "swipeMode", "defaultTab", "defaultTabPageId", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
         "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
@@ -933,6 +949,8 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "appletCustomIcons", "s", prefs.getString("appletCustomIcons", null))
         putEntry(arr, "appletCustomIconPacks", "s", prefs.getString("appletCustomIconPacks", null))
         putEntry(arr, "appletIconShape", "i", appletIconShape)
+        putEntry(arr, "notificationAppletsSpacingDp", "i", notificationAppletsSpacingDp)
+        putEntry(arr, "notificationAppletSizeIndex", "i", notificationAppletSizeIndex)
         putEntry(arr, "swipeMode", "i", swipeMode)
         putEntry(arr, "defaultTab", "i", defaultTab)
         putEntry(arr, "defaultTabPageId", "s", defaultTabPageId)

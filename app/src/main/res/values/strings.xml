@@ -39,6 +39,7 @@
     <string name="uninstall">Uninstall</string>
 
     <string name="settings_title">Settings</string>
+    <string name="launcher_settings_label">710 Settings</string>
     <string name="add_widget">Add Widget</string>
     <string name="add_app_shortcut">Add App Shortcut</string>
     <string name="add_shortcut_all">Add shortcut…</string>
