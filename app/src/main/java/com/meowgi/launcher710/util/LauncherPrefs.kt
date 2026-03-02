@@ -82,7 +82,7 @@ class LauncherPrefs(context: Context) {
         set(v) = prefs.edit().putInt("tabBarAlpha", v).apply()
 
     var dockAlpha: Int
-        get() = prefs.getInt("dockAlpha", 166) // 65%
+        get() = prefs.getInt("dockAlpha", 115) // 45%
         set(v) = prefs.edit().putInt("dockAlpha", v).apply()
 
     var dockBackgroundColor: Int
@@ -91,16 +91,16 @@ class LauncherPrefs(context: Context) {
 
     /** Opacity (0–255) for the tab bar highlight (selected tab background). */
     var tabBarHighlightAlpha: Int
-        get() = prefs.getInt("tabBarHighlightAlpha", 255)
+        get() = prefs.getInt("tabBarHighlightAlpha", 92) // 36%
         set(v) = prefs.edit().putInt("tabBarHighlightAlpha", v.coerceIn(0, 255)).apply()
 
     /** true = use accent color for tab bar highlight; false = use tabBarHighlightCustomColor */
     var tabBarHighlightUseAccent: Boolean
-        get() = prefs.getBoolean("tabBarHighlightUseAccent", true)
+        get() = prefs.getBoolean("tabBarHighlightUseAccent", false)
         set(v) = prefs.edit().putBoolean("tabBarHighlightUseAccent", v).apply()
 
     var tabBarHighlightCustomColor: Int
-        get() = prefs.getInt("tabBarHighlightCustomColor", 0xFF0073BC.toInt())
+        get() = prefs.getInt("tabBarHighlightCustomColor", 0xFF000000.toInt())
         set(v) = prefs.edit().putInt("tabBarHighlightCustomColor", v).apply()
 
     var accentColor: Int
@@ -109,16 +109,16 @@ class LauncherPrefs(context: Context) {
 
     /** Opacity (0–255) for the click/tap highlight ripple on launcher elements. */
     var clickHighlightAlpha: Int
-        get() = prefs.getInt("clickHighlightAlpha", 50)
+        get() = prefs.getInt("clickHighlightAlpha", 64) // 25%
         set(v) = prefs.edit().putInt("clickHighlightAlpha", v.coerceIn(0, 255)).apply()
 
     /** true = use accent color for click highlight; false = use clickHighlightCustomColor */
     var clickHighlightUseAccent: Boolean
-        get() = prefs.getBoolean("clickHighlightUseAccent", true)
+        get() = prefs.getBoolean("clickHighlightUseAccent", false)
         set(v) = prefs.edit().putBoolean("clickHighlightUseAccent", v).apply()
 
     var clickHighlightCustomColor: Int
-        get() = prefs.getInt("clickHighlightCustomColor", 0xFF0073BC.toInt())
+        get() = prefs.getInt("clickHighlightCustomColor", 0xFFFFFFFF.toInt())
         set(v) = prefs.edit().putInt("clickHighlightCustomColor", v).apply()
 
     /** Returns a RippleDrawable for click feedback using the configured highlight color and opacity. Uses a rect mask to constrain the ripple and avoid chunky rectangular artifacts. */
