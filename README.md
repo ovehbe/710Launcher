@@ -1,4 +1,4 @@
-<a href="https://github.com/ovehbe/710Launcher/releases/tag/v1.4.1">
+<a href="https://github.com/ovehbe/710Launcher/releases">
   <img src="https://img.shields.io/badge/Download-Pre--Release-red?style=for-the-badge" />
 </a>
 
