@@ -268,6 +268,9 @@ class SearchOverlay @JvmOverloads constructor(
      */
     private fun convertToDialDigits(query: String, layout: Int): String {
         if (query.isEmpty()) return ""
+        // If the user has typed a space, treat the query as normal text only
+        // and stop generating dial digits / dialer suggestions.
+        if (query.any { it.isWhitespace() }) return ""
         val sb = StringBuilder()
         when (layout) {
             1 -> { // T9

@@ -39,9 +39,10 @@ object ContactSearchHelper {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
         }
-        val q = textQuery.lowercase().replace(Regex("[^a-z0-9]"), "").trim()
+        val rawTextQuery = textQuery.trim()
+        val normalizedQuery = SearchNormalizer.normalize(rawTextQuery)
         val digits = digitQuery?.filter { it in '0'..'9' }?.takeIf { it.isNotEmpty() }
-        if (q.isEmpty() && digits.isNullOrEmpty()) return emptyList()
+        if (normalizedQuery.isEmpty() && digits.isNullOrEmpty()) return emptyList()
 
         val source = sourceFilter.trim().ifEmpty { "all" }
         val accountContactIds: Set<Long>? = when {
@@ -56,9 +57,9 @@ object ContactSearchHelper {
         val matchedIds = mutableSetOf<Long>()
         val idToName = mutableMapOf<Long, String>()
 
-        if (q.isNotEmpty()) {
+        if (rawTextQuery.isNotEmpty()) {
             try {
-                val filterUri = Uri.withAppendedPath(Contacts.CONTENT_FILTER_URI, Uri.encode(q))
+                val filterUri = Uri.withAppendedPath(Contacts.CONTENT_FILTER_URI, Uri.encode(rawTextQuery))
                 val nameSelection = if (source == "favorites") ContactsContract.Contacts.STARRED + "=1" else null
                 context.contentResolver.query(
                     filterUri,
@@ -154,8 +155,7 @@ object ContactSearchHelper {
         val idToNumbers = batchGetPhoneNumbers(context, ids)
 
         // Client-side relevance: only keep contacts that actually match the query (provider can return loose results).
-        fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
-        val normalizedQuery = q
+        fun norm(s: String) = SearchNormalizer.normalize(s)
 
         val scored = mutableListOf<Pair<Int, LaunchableItem.Contact>>()
         for (id in ids) {
@@ -165,7 +165,12 @@ object ContactSearchHelper {
             if (numbers.isEmpty()) continue
 
             val nameNorm = norm(name.toString())
-            val nameMatches = normalizedQuery.isEmpty() || nameNorm.contains(normalizedQuery)
+            val nameMatches = when {
+                normalizedQuery.isEmpty() -> true
+                nameNorm == normalizedQuery -> true
+                nameNorm.startsWith(normalizedQuery) -> true
+                else -> false
+            }
             val numberMatches = digits == null || numbers.any { it.replace(Regex("[^0-9]"), "").contains(digits) }
             if (!nameMatches && !numberMatches) continue
 
@@ -175,8 +180,8 @@ object ContactSearchHelper {
                 icon = defaultIcon
             )
             val rank = when {
-                normalizedQuery.isNotEmpty() && nameNorm.startsWith(normalizedQuery) -> 0
-                nameMatches -> 1
+                normalizedQuery.isNotEmpty() && nameNorm == normalizedQuery -> 0
+                normalizedQuery.isNotEmpty() && nameNorm.startsWith(normalizedQuery) -> 1
                 else -> 2
             }
             scored.add(rank to contact)
