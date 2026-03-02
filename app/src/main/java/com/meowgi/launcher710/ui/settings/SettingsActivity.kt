@@ -933,6 +933,7 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(16), dp(24), dp(16))
         }
+        val sliders = mutableListOf<Pair<SeekBar, TextView>>()
         fun makeSlider(label: String, value: Int, onChanged: (Int) -> Unit): LinearLayout {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -959,17 +960,93 @@ class SettingsActivity : AppCompatActivity() {
                     override fun onStopTrackingTouch(s: SeekBar?) {}
                 })
             }
+            sliders.add(seek to valueText)
             row.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             return row
         }
-        content.addView(makeSlider("Red", r) { r = it })
-        content.addView(makeSlider("Green", g) { g = it })
-        content.addView(makeSlider("Blue", b) { b = it })
+
         val preview = View(this).apply {
             setBackgroundColor(Color.rgb(r, g, b))
             minimumHeight = dp(48)
         }
+        val hexEdit = EditText(this).apply {
+            setText("#%02X%02X%02X".format(r, g, b))
+            hint = "#RRGGBB"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setTextColor(SETTINGS_ACCENT_COLOR)
+            textSize = 14f
+        }
+        val hsvPicker = HsvColorPickerView(this).apply {
+            setColor(Color.rgb(r, g, b))
+            minimumHeight = dp(220)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220))
+        }
+        fun syncFromRgb() {
+            preview.setBackgroundColor(Color.rgb(r, g, b))
+            hexEdit.setText("#%02X%02X%02X".format(r, g, b))
+            if (sliders.size >= 3) {
+                sliders[0].first.progress = r
+                sliders[0].second.text = r.toString()
+                sliders[1].first.progress = g
+                sliders[1].second.text = g.toString()
+                sliders[2].first.progress = b
+                sliders[2].second.text = b.toString()
+            }
+            hsvPicker.setColor(Color.rgb(r, g, b))
+        }
+        fun applyHexFromInput() {
+            var raw = hexEdit.text.toString().trim()
+            if (raw.isNotEmpty() && !raw.startsWith("#")) raw = "#$raw"
+            if (raw.length !in 7..9) return
+            try {
+                val c = Color.parseColor(raw)
+                r = Color.red(c)
+                g = Color.green(c)
+                b = Color.blue(c)
+                syncFromRgb()
+            } catch (_: Exception) {
+                Toast.makeText(this, "Invalid hex", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        content.addView(hsvPicker, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
         content.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
+        val hexRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        hexRow.addView(makeLabel("Hex"), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hexRow.addView(hexEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.5f))
+        val applyHexBtn = TextView(this).apply {
+            text = "Apply"
+            setTextColor(SETTINGS_ACCENT_COLOR)
+            textSize = 14f
+            setPadding(dp(16), dp(8), dp(8), dp(8))
+            setOnClickListener { applyHexFromInput() }
+        }
+        hexRow.addView(applyHexBtn)
+        content.addView(hexRow)
+        hexEdit.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) applyHexFromInput() }
+        hexEdit.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                applyHexFromInput()
+                hexEdit.clearFocus()
+                true
+            } else false
+        }
+        hsvPicker.onColorChanged = { color ->
+            r = Color.red(color)
+            g = Color.green(color)
+            b = Color.blue(color)
+            syncFromRgb()
+        }
+        content.addView(makeSlider("Red", r) { r = it; syncFromRgb() })
+        content.addView(makeSlider("Green", g) { g = it; syncFromRgb() })
+        content.addView(makeSlider("Blue", b) { b = it; syncFromRgb() })
+        syncFromRgb()
+
         AlertDialog.Builder(this, R.style.BBDialogTheme)
             .setTitle("Custom color")
             .setView(content)
