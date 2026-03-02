@@ -1,3 +1,5 @@
+[![Downloads](https://img.shields.io/github/downloads/ovehbe/710Launcher/total)](https://github.com/ovehbe/710Launcher/releases)
+
 <a href="https://github.com/ovehbe/710Launcher/releases">
   <img src="https://img.shields.io/badge/Download-Pre--Release-red?style=for-the-badge" />
 </a>
