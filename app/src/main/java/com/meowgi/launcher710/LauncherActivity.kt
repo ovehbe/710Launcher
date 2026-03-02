@@ -303,7 +303,7 @@ class LauncherActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             isFocusableInTouchMode = true
-            defaultFocusHighlightEnabled = true
+            defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener { onActionBarCenterClick() }
         }
@@ -525,7 +525,7 @@ class LauncherActivity : AppCompatActivity() {
                 isClickable = true
                 isFocusable = true
                 isFocusableInTouchMode = true
-                defaultFocusHighlightEnabled = true
+                defaultFocusHighlightEnabled = false
                 foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
                 setOnClickListener { appPager.setCurrentItem(i, true) }
             }
@@ -617,26 +617,26 @@ class LauncherActivity : AppCompatActivity() {
         applyClickHighlight(findViewById(R.id.actionBarCenterTouchOverlay))
         applyClickHighlight(findViewById(R.id.btnSearch))
         applyClickHighlight(findViewById(R.id.btnSoundProfile))
-        findViewById<View>(R.id.actionBarCenterTouchOverlay).defaultFocusHighlightEnabled = true
-        findViewById<View>(R.id.btnSearch).defaultFocusHighlightEnabled = true
-        findViewById<View>(R.id.btnSoundProfile).defaultFocusHighlightEnabled = true
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).defaultFocusHighlightEnabled = false
+        findViewById<View>(R.id.btnSearch).defaultFocusHighlightEnabled = false
+        findViewById<View>(R.id.btnSoundProfile).defaultFocusHighlightEnabled = false
         headerView.dateText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = true
+            defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
         }
         headerView.clockText.apply {
             isClickable = true
-            defaultFocusHighlightEnabled = true
+            defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
         }
         for (tab in tabViews) {
-            tab.defaultFocusHighlightEnabled = true
-            tab.foreground = ripple
+            tab.defaultFocusHighlightEnabled = false
+            tab.foreground = prefs.getClickHighlightRipple(this)
         }
         for (i in 0 until dockBar.childCount) {
             dockBar.getChildAt(i).apply {
-                defaultFocusHighlightEnabled = true
+                defaultFocusHighlightEnabled = false
                 foreground = ripple
             }
         }
@@ -646,21 +646,32 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
-    /** Clears focus and pressed state from all interactive views so no highlight "traces" remain when returning to the launcher. */
+    /** Recursively clears focus and pressed state from a view and its descendants. */
+    private fun clearViewStateRecursive(view: View) {
+        if (view.isClickable || view.isFocusable) {
+            view.setPressed(false)
+            view.clearFocus()
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                clearViewStateRecursive(view.getChildAt(i))
+            }
+        }
+    }
+
+    /** Clears focus and pressed state from all interactive views (header, action bar, tabs, dock, app grid) so no highlight "traces" remain. */
     private fun clearHighlightTraces() {
         window.decorView.findFocus()?.clearFocus()
-        headerView.dateText.apply { setPressed(false); clearFocus() }
-        headerView.clockText.apply { setPressed(false); clearFocus() }
-        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply { setPressed(false); clearFocus() }
-        findViewById<View>(R.id.btnSearch).apply { setPressed(false); clearFocus() }
-        findViewById<View>(R.id.btnSoundProfile).apply { setPressed(false); clearFocus() }
+        clearViewStateRecursive(headerView)
+        findViewById<View>(R.id.actionBar)?.let { clearViewStateRecursive(it) }
         for (tab in tabViews) {
             tab.setPressed(false)
             tab.clearFocus()
+            tab.foreground = prefs.getClickHighlightRipple(this)
         }
-        for (i in 0 until dockBar.childCount) {
-            dockBar.getChildAt(i).apply { setPressed(false); clearFocus() }
-        }
+        clearViewStateRecursive(tabBarContainer)
+        clearViewStateRecursive(dockBar)
+        findViewById<View>(R.id.contentArea)?.let { clearViewStateRecursive(it) }
     }
 
     private var bottomSwipeStartX = 0f
@@ -794,7 +805,7 @@ class LauncherActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             isFocusableInTouchMode = true
-            defaultFocusHighlightEnabled = true
+            defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
                 launchHeaderAction(prefs.headerDateAction, prefs.headerDateActionPackage, prefs.headerDateActionIntentUri)
@@ -804,7 +815,7 @@ class LauncherActivity : AppCompatActivity() {
             isClickable = true
             isFocusable = true
             isFocusableInTouchMode = true
-            defaultFocusHighlightEnabled = true
+            defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
                 launchHeaderAction(prefs.headerClockAction, prefs.headerClockActionPackage, prefs.headerClockActionIntentUri)
@@ -2085,6 +2096,16 @@ class LauncherActivity : AppCompatActivity() {
         if (::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition()) {
             appPager.setCurrentItem(getDefaultTabPosition(), true)
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        clearHighlightTraces()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) clearHighlightTraces()
     }
 
     override fun onResume() {

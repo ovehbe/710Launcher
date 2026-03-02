@@ -121,11 +121,15 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("clickHighlightCustomColor", 0xFF0073BC.toInt())
         set(v) = prefs.edit().putInt("clickHighlightCustomColor", v).apply()
 
-    /** Returns a RippleDrawable for click feedback using the configured highlight color and opacity. */
+    /** Returns a RippleDrawable for click feedback using the configured highlight color and opacity. Uses a rect mask to constrain the ripple and avoid chunky rectangular artifacts. */
     fun getClickHighlightRipple(context: Context): RippleDrawable {
         val baseColor = if (clickHighlightUseAccent) accentColor else clickHighlightCustomColor
         val color = Color.argb(clickHighlightAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
-        return RippleDrawable(ColorStateList.valueOf(color), null, null)
+        val mask = android.graphics.drawable.GradientDrawable().apply {
+            setShape(android.graphics.drawable.GradientDrawable.RECTANGLE)
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(color), null, mask)
     }
 
     // --- Grid ---
