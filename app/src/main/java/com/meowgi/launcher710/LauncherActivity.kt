@@ -295,6 +295,23 @@ class LauncherActivity : AppCompatActivity() {
                 else -> { }
             }
         }
+        val onActionBarCenterLongPress: () -> Unit = {
+            when (prefs.actionBarCenterLongPressAction) {
+                0 -> {
+                    if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+                    else {
+                        dismissOtherOverlays()
+                        notificationHub.show(prefs.getNotificationAppWhitelist())
+                    }
+                }
+                1, 2 -> launchHeaderAction(
+                    prefs.actionBarCenterLongPressAction,
+                    prefs.actionBarCenterLongPressActionPackage,
+                    prefs.actionBarCenterLongPressActionIntentUri
+                )
+                else -> { }
+            }
+        }
         // Single touch overlay so one view gets the tap and ripple (avoids wrong highlight on touch vs trackpad)
         findViewById<View>(R.id.actionBarCenter).apply {
             isClickable = false
@@ -311,6 +328,7 @@ class LauncherActivity : AppCompatActivity() {
             defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener { onActionBarCenterClick() }
+            setOnLongClickListener { onActionBarCenterLongPress(); true }
         }
         notificationHub.onClearAll = { keyHandler.postDelayed({ refreshNotificationTicker() }, 500) }
 
@@ -480,7 +498,7 @@ class LauncherActivity : AppCompatActivity() {
         headerView.visibility = if (prefs.headerVisible) View.VISIBLE else View.GONE
         headerView.refresh(prefs)
         actionBar.setBackgroundColor(Color.argb(prefs.actionBarAlpha, 0, 0, 0))
-        tabBarContainer.background?.alpha = prefs.tabBarAlpha
+        tabBarContainer.background?.mutate()?.alpha = prefs.tabBarAlpha
         dockBar.applyOpacity()
         notificationHub.applyOpacity(prefs.notificationHubAlpha)
         searchOverlay.applyOpacity(prefs.searchOverlayAlpha)
@@ -1993,7 +2011,42 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
-        return super.dispatchKeyEvent(event ?: return false)
+        event ?: return false
+
+        // When a full-screen overlay (notification hub or sound profile) is visible, make sure
+        // DPAD / trackpad navigation keeps focus inside that overlay instead of "behind" it.
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP,
+                KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT,
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    val overlay: View? = when {
+                        ::notificationHub.isInitialized && notificationHub.visibility == View.VISIBLE -> notificationHub
+                        ::soundProfileOverlay.isInitialized && soundProfileOverlay.visibility == View.VISIBLE -> soundProfileOverlay
+                        else -> null
+                    }
+                    if (overlay != null) {
+                        val focused = currentFocus
+                        if (focused == null || !isDescendantOf(focused, overlay)) {
+                            overlay.requestFocus()
+                        }
+                    }
+                }
+            }
+        }
+
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun isDescendantOf(view: View, root: View): Boolean {
+        var v: View? = view
+        while (v != null) {
+            if (v === root) return true
+            val parent = v.parent
+            v = if (parent is View) parent else null
+        }
+        return false
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {

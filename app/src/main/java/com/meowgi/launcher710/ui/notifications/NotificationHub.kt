@@ -6,7 +6,11 @@ import android.service.notification.StatusBarNotification
 import android.content.Intent
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.app.ActivityOptions
+import android.os.Build
+import android.view.FocusFinder
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -28,7 +32,8 @@ class NotificationHub @JvmOverloads constructor(
 
     init {
         setBackgroundColor(resources.getColor(R.color.bb_overlay_dark, null))
-        isFocusable = false
+        isFocusable = true
+        isFocusableInTouchMode = false
         descendantFocusability = FOCUS_AFTER_DESCENDANTS
 
         emptyText = TextView(context).apply {
@@ -57,8 +62,47 @@ class NotificationHub @JvmOverloads constructor(
         setOnClickListener { hide() }
     }
 
+    /**
+     * While the hub is visible, keep D-pad / trackpad focus trapped inside it.
+     * [FocusFinder] only searches within this ViewGroup; if no next focusable child
+     * exists in the requested direction the current focus simply stays put.
+     */
+    override fun focusSearch(focused: View?, direction: Int): View? {
+        if (visibility != VISIBLE) return super.focusSearch(focused, direction)
+        val next = FocusFinder.getInstance().findNextFocus(this, focused, direction)
+        return next ?: focused
+    }
+
+    /**
+     * When the hub is visible, only expose our own descendants as focusable so the
+     * system-level focus search never jumps to views behind the overlay.
+     */
+    override fun addFocusables(views: ArrayList<View>?, direction: Int, focusableMode: Int) {
+        if (visibility == VISIBLE) {
+            super.addFocusables(views, direction, focusableMode)
+        }
+    }
+
+    /**
+     * Intercept touch: if the hub is visible, consume all touches so nothing
+     * leaks to views behind the overlay. Children still receive their events
+     * normally via [dispatchTouchEvent].
+     */
+    override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
+        return false
+    }
+
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        if (visibility == VISIBLE) {
+            if (event?.action == MotionEvent.ACTION_UP) hide()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
     fun show(appWhitelist: Set<String> = emptySet()) {
         visibility = VISIBLE
+        requestFocus()
         refresh(appWhitelist)
     }
 
@@ -113,25 +157,10 @@ class NotificationHub @JvmOverloads constructor(
                     setBackgroundColor(resources.getColor(R.color.bb_overlay, null))
                     isFocusable = true
                     isFocusableInTouchMode = false
+                    isClickable = true
                     id = View.generateViewId()
                     setOnClickListener {
-                        var opened = false
-                        try {
-                            val intent = sbn.notification.contentIntent
-                            if (intent != null) {
-                                intent.send(context, 0, null, null, null)
-                                opened = true
-                            }
-                        } catch (_: Exception) { }
-                        if (!opened) {
-                            try {
-                                val launch = context.packageManager.getLaunchIntentForPackage(sbn.packageName)
-                                if (launch != null) {
-                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    context.startActivity(launch)
-                                }
-                            } catch (_: Exception) { }
-                        }
+                        launchNotification(sbn)
                         hide()
                     }
                 }
@@ -202,6 +231,7 @@ class NotificationHub @JvmOverloads constructor(
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 isFocusable = true
                 isFocusableInTouchMode = false
+                isClickable = true
                 id = View.generateViewId()
                 setOnClickListener {
                     NotifListenerService.instance?.dismissAllNotifications()
@@ -217,17 +247,70 @@ class NotificationHub @JvmOverloads constructor(
                 gravity = Gravity.CENTER_HORIZONTAL
             })
 
-            // Chain focus: rows then Clear all, so trackpad moves between items
-            for (i in 0 until container.childCount - 1) {
-                val curr = container.getChildAt(i)
-                val next = container.getChildAt(i + 1)
-                if (curr.isFocusable && next.isFocusable) {
-                    curr.nextFocusDownId = next.id
-                    next.nextFocusUpId = curr.id
-                }
-            }
-            // Focus first item when hub is shown (post so it works when opened by touch or trackpad)
+            chainAndWrapFocus()
+
             container.post { container.getChildAt(0)?.requestFocus() }
+        }
+    }
+
+    private fun launchNotification(sbn: StatusBarNotification) {
+        val ci = sbn.notification.contentIntent
+
+        // Try the notification's own content intent first — this is the correct way
+        // to open a specific chat/screen as set by the originating app.
+        if (ci != null) {
+            val launched = tryLaunchPendingIntent(ci)
+            if (launched) return
+        }
+
+        // Fallback: open the app's main activity
+        try {
+            val launch = context.packageManager.getLaunchIntentForPackage(sbn.packageName)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launch)
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun tryLaunchPendingIntent(ci: android.app.PendingIntent): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // API 34+: use ActivityOptions to explicitly permit background start
+                val opts = ActivityOptions.makeBasic().apply {
+                    @Suppress("NewApi")
+                    pendingIntentBackgroundActivityStartMode =
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
+                ci.send(context, 0, null, null, null, null, opts.toBundle())
+            } else {
+                // API < 34: plain send; the launcher is foregrounded so the OS allows it
+                ci.send(context, 0, null, null, null)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Build a circular focus chain among all focusable children so DPAD/trackpad
+     * cannot escape the overlay. The last item wraps to the first and vice-versa.
+     */
+    private fun chainAndWrapFocus() {
+        val focusable = (0 until container.childCount)
+            .map { container.getChildAt(it) }
+            .filter { it.isFocusable }
+        if (focusable.isEmpty()) return
+
+        for (i in focusable.indices) {
+            val curr = focusable[i]
+            val next = focusable[(i + 1) % focusable.size]
+            val prev = focusable[(i - 1 + focusable.size) % focusable.size]
+            curr.nextFocusDownId = next.id
+            curr.nextFocusUpId = prev.id
+            curr.nextFocusLeftId = curr.id
+            curr.nextFocusRightId = curr.id
         }
     }
 

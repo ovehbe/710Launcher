@@ -7,7 +7,9 @@ import android.graphics.Typeface
 import android.media.AudioManager
 import android.os.Build
 import android.util.AttributeSet
+import android.view.FocusFinder
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -30,7 +32,8 @@ class SoundProfileOverlay @JvmOverloads constructor(
 
     init {
         setBackgroundColor(Color.argb(prefs.soundProfileOverlayAlpha, 0, 0, 0))
-        isFocusable = false
+        isFocusable = true
+        isFocusableInTouchMode = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         setOnClickListener { hide() }
 
@@ -38,14 +41,42 @@ class SoundProfileOverlay @JvmOverloads constructor(
             orientation = LinearLayout.VERTICAL
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
             setPadding(dp(16), dp(12), dp(16), dp(12))
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isClickable = true
+            setOnClickListener { /* consume so root doesn't close */ }
         }
         addView(container)
     }
 
+    override fun focusSearch(focused: View?, direction: Int): View? {
+        if (visibility != VISIBLE) return super.focusSearch(focused, direction)
+        val next = FocusFinder.getInstance().findNextFocus(this, focused, direction)
+        return next ?: focused
+    }
+
+    override fun addFocusables(views: ArrayList<View>?, direction: Int, focusableMode: Int) {
+        if (visibility == VISIBLE) {
+            super.addFocusables(views, direction, focusableMode)
+        }
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
+        return false
+    }
+
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        if (visibility == VISIBLE) {
+            if (event?.action == MotionEvent.ACTION_UP) hide()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
     fun show() {
         visibility = VISIBLE
+        requestFocus()
         refresh()
-        // Focus first row (post so it works when opened by touch or trackpad)
         container.post { container.getChildAt(0)?.requestFocus() }
     }
 
@@ -88,14 +119,24 @@ class SoundProfileOverlay @JvmOverloads constructor(
         container.addView(makeDivider())
         container.addView(makeRow("All Alerts Off", currentMode == AudioManager.RINGER_MODE_SILENT && isDnd, R.drawable.ic_sound_alerts_off_custom) { applyAlertsOff() }, rowParams)
 
-        // Chain focus between rows so trackpad moves highlight per profile
+        val focusableRows = mutableListOf<View>()
         for (i in 0 until container.childCount step 2) {
             val row = container.getChildAt(i)
             row.id = View.generateViewId()
             row.isFocusable = true
             row.isFocusableInTouchMode = false
-            if (i >= 2) row.nextFocusUpId = container.getChildAt(i - 2).id
-            if (i + 2 < container.childCount) row.nextFocusDownId = container.getChildAt(i + 2).id
+            row.isClickable = true
+            focusableRows.add(row)
+        }
+
+        for (i in focusableRows.indices) {
+            val curr = focusableRows[i]
+            val next = focusableRows[(i + 1) % focusableRows.size]
+            val prev = focusableRows[(i - 1 + focusableRows.size) % focusableRows.size]
+            curr.nextFocusDownId = next.id
+            curr.nextFocusUpId = prev.id
+            curr.nextFocusLeftId = curr.id
+            curr.nextFocusRightId = curr.id
         }
     }
 
@@ -104,7 +145,6 @@ class SoundProfileOverlay @JvmOverloads constructor(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(10), dp(8), dp(10))
-            // Focus and ID set in refresh() after all rows added
             if (isSelected) {
                 val baseColor = if (prefs.soundProfileHighlightUseAccent) prefs.accentColor else prefs.soundProfileHighlightCustomColor
                 val alpha = prefs.soundProfileHighlightAlpha

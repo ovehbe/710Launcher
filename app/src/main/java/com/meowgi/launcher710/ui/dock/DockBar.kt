@@ -47,23 +47,54 @@ class DockBar @JvmOverloads constructor(
     fun loadDock() {
         removeAllViews()
         val repo = repository ?: return
-        val dockedApps = getDockApps(repo)
-        dockAppCount = dockedApps.size
-        val prefs = launcherPrefs
-        val dockedShortcuts = if (shortcutHelper != null && prefs != null) shortcutHelper!!.getIntentShortcutsForPage("dock", prefs) else emptyList()
-        val total = dockedApps.size + dockedShortcuts.size
-        if (total == 0) return
+        val allApps = repo.getAllApps()
+        // Apps not loaded yet — bail so we never prune against an empty list and wipe the saved order.
+        if (allApps.isEmpty()) return
+        val lp = launcherPrefs
+        val allShortcuts = if (shortcutHelper != null && lp != null)
+            shortcutHelper!!.getIntentShortcutsForPage("dock", lp) else emptyList()
 
-        var viewIndex = 0
-        for (app in dockedApps) {
-            val icon = dockIconResolver?.invoke(app) ?: app.icon
-            val idx = viewIndex++
-            addView(makeDockIconView(icon, idx, { onAppLaunch?.invoke(app) }, { onDockIconLongClick?.invoke(app, idx) }), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        // If the stored order is empty (first run after feature addition, or previously corrupted),
+        // rebuild from the legacy separate prefs so existing docks are recovered.
+        val stored = getUnifiedDockOrder()
+        val rebuiltFromDefault = stored.isEmpty()
+        val rawOrder = if (rebuiltFromDefault) buildDefaultUnifiedOrder() else stored
+
+        // Prune keys whose backing item no longer exists (e.g. uninstalled app)
+        val order = rawOrder.filter { key ->
+            when {
+                key.startsWith("app:") -> allApps.any { "${it.packageName}/${it.activityName}" == key.removePrefix("app:") }
+                key.startsWith("shortcut:") -> allShortcuts.any { it.intentUri == key.removePrefix("shortcut:") }
+                else -> false
+            }
         }
-        for (info in dockedShortcuts) {
-            val icon = repo.getIconForIntentShortcut(info, "dock")
-            val idx = viewIndex++
-            addView(makeDockIconView(icon, idx, { onIntentShortcutLaunch?.invoke(info) }, { onIntentShortcutLongClick?.invoke(info, idx) }), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+
+        // Persist the order when it changed or when we just rebuilt from default.
+        // If everything was pruned away, remove the pref so the next load rebuilds from default.
+        if (rebuiltFromDefault || order.size != rawOrder.size) {
+            if (order.isEmpty()) dockPrefs.edit().remove("dock_unified_order").apply()
+            else saveUnifiedDockOrder(order)
+        }
+
+        if (order.isEmpty()) return
+
+        dockAppCount = order.count { it.startsWith("app:") }
+
+        for ((idx, key) in order.withIndex()) {
+            when {
+                key.startsWith("app:") -> {
+                    val cn = key.removePrefix("app:")
+                    val app = allApps.find { "${it.packageName}/${it.activityName}" == cn } ?: continue
+                    val icon = dockIconResolver?.invoke(app) ?: app.icon
+                    addView(makeDockIconView(icon, idx, { onAppLaunch?.invoke(app) }, { onDockIconLongClick?.invoke(app, idx) }), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+                }
+                key.startsWith("shortcut:") -> {
+                    val intentUri = key.removePrefix("shortcut:")
+                    val info = allShortcuts.find { it.intentUri == intentUri } ?: continue
+                    val icon = repo.getIconForIntentShortcut(info, "dock")
+                    addView(makeDockIconView(icon, idx, { onIntentShortcutLaunch?.invoke(info) }, { onIntentShortcutLongClick?.invoke(info, idx) }), LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+                }
+            }
         }
     }
 
@@ -80,31 +111,13 @@ class DockBar @JvmOverloads constructor(
 
     private fun reorderDockSlots(dragIndex: Int, dropIndex: Int) {
         if (dragIndex == dropIndex) return
-        if (dragIndex < dockAppCount && dropIndex < dockAppCount) {
-            val repo = repository ?: return
-            val apps = getDockApps(repo).toMutableList()
-            if (dragIndex >= apps.size || dropIndex >= apps.size) return
-            val a = apps[dragIndex]
-            apps[dragIndex] = apps[dropIndex]
-            apps[dropIndex] = a
-            saveDock(apps)
-            loadDock()
-        } else if (dragIndex >= dockAppCount && dropIndex >= dockAppCount) {
-            val prefs = launcherPrefs ?: return
-            val json = prefs.getPageIntentShortcuts("dock") ?: return
-            try {
-                val arr = JSONArray(json)
-                val a = dragIndex - dockAppCount
-                val b = dropIndex - dockAppCount
-                if (a < 0 || b < 0 || a >= arr.length() || b >= arr.length()) return
-                val oa = arr.getJSONObject(a)
-                val ob = arr.getJSONObject(b)
-                arr.put(a, ob)
-                arr.put(b, oa)
-                prefs.setPageIntentShortcuts("dock", arr.toString())
-                loadDock()
-            } catch (_: Exception) {}
-        }
+        val order = getUnifiedDockOrder().toMutableList()
+        if (dragIndex < 0 || dropIndex < 0 || dragIndex >= order.size || dropIndex >= order.size) return
+        val tmp = order[dragIndex]
+        order[dragIndex] = order[dropIndex]
+        order[dropIndex] = tmp
+        saveUnifiedDockOrder(order)
+        loadDock()
     }
 
     private val swipeUpThresholdPx = dp(40).toFloat()
@@ -226,11 +239,18 @@ class DockBar @JvmOverloads constructor(
 
     fun addToDock(app: AppInfo) {
         val repo = repository ?: return
+        val key = "app:${app.packageName}/${app.activityName}"
+        val order = getUnifiedDockOrder().toMutableList().ifEmpty { buildDefaultUnifiedOrder().toMutableList() }
+        if (order.contains(key)) return
+        if (order.size >= maxSlots) return
+        // Keep legacy dock_apps pref in sync
         val current = getDockApps(repo).toMutableList()
-        if (current.size >= maxSlots) return
-        if (current.any { it.packageName == app.packageName && it.activityName == app.activityName }) return
-        current.add(app)
-        saveDock(current)
+        if (current.none { it.packageName == app.packageName && it.activityName == app.activityName }) {
+            current.add(app)
+            saveDock(current)
+        }
+        order.add(key)
+        saveUnifiedDockOrder(order)
         loadDock()
     }
 
@@ -240,6 +260,10 @@ class DockBar @JvmOverloads constructor(
             it.packageName == app.packageName && it.activityName == app.activityName
         }
         saveDock(current)
+        val key = "app:${app.packageName}/${app.activityName}"
+        val order = getUnifiedDockOrder().toMutableList().ifEmpty { buildDefaultUnifiedOrder().toMutableList() }
+        order.remove(key)
+        saveUnifiedDockOrder(order)
         loadDock()
     }
 
@@ -251,16 +275,50 @@ class DockBar @JvmOverloads constructor(
 
     fun addIntentShortcutToDock(info: IntentShortcutInfo) {
         val prefs = launcherPrefs ?: return
-        val current = getDockIntentShortcutsList()
-        if (current.size + getDockAppsList().size >= maxSlots) return
-        if (current.any { it.intentUri == info.intentUri }) return
+        val key = "shortcut:${info.intentUri}"
+        val order = getUnifiedDockOrder().toMutableList().ifEmpty { buildDefaultUnifiedOrder().toMutableList() }
+        if (order.contains(key)) return
+        if (order.size >= maxSlots) return
         prefs.addIntentShortcutToPage("dock", info.label.toString(), info.intentUri, null)
+        order.add(key)
+        saveUnifiedDockOrder(order)
         loadDock()
     }
 
     fun removeIntentShortcutFromDock(info: IntentShortcutInfo) {
         launcherPrefs?.removeIntentShortcutFromPage("dock", info.intentUri)
+        val key = "shortcut:${info.intentUri}"
+        val order = getUnifiedDockOrder().toMutableList().ifEmpty { buildDefaultUnifiedOrder().toMutableList() }
+        order.remove(key)
+        saveUnifiedDockOrder(order)
         loadDock()
+    }
+
+    private fun getUnifiedDockOrder(): List<String> {
+        val saved = dockPrefs.getString("dock_unified_order", null)
+            ?: return buildDefaultUnifiedOrder()
+        return try {
+            val arr = JSONArray(saved)
+            val list = (0 until arr.length()).map { arr.getString(it) }
+            // Fall back to rebuilding from dock_apps/shortcuts if the saved order was
+            // previously wiped to empty by a premature prune during startup.
+            list.ifEmpty { buildDefaultUnifiedOrder() }
+        } catch (_: Exception) { buildDefaultUnifiedOrder() }
+    }
+
+    private fun buildDefaultUnifiedOrder(): List<String> {
+        val repo = repository ?: return emptyList()
+        val apps = getDockApps(repo)
+        val shortcuts = if (shortcutHelper != null && launcherPrefs != null)
+            shortcutHelper!!.getIntentShortcutsForPage("dock", launcherPrefs!!) else emptyList()
+        return apps.map { "app:${it.packageName}/${it.activityName}" } +
+               shortcuts.map { "shortcut:${it.intentUri}" }
+    }
+
+    private fun saveUnifiedDockOrder(order: List<String>) {
+        val arr = JSONArray()
+        order.forEach { arr.put(it) }
+        dockPrefs.edit().putString("dock_unified_order", arr.toString()).apply()
     }
 
     private fun getDockApps(repo: AppRepository): List<AppInfo> {

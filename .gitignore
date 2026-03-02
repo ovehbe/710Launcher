@@ -17,3 +17,6 @@ keystore.properties
 
 # Backups
 *.bak
+
+# Changelog (local use only)
+CHANGES.md

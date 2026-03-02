@@ -182,13 +182,22 @@ class AppRepository(private val context: Context) {
      */
     fun searchApps(query: String, alsoMatchDialDigits: String? = null): List<AppInfo> {
         if (query.isBlank() && (alsoMatchDialDigits.isNullOrBlank())) return emptyList()
-        val q = query.lowercase().replace(Regex("[^a-z0-9]"), "")
-        val digitsOnly = alsoMatchDialDigits?.filter { it in '0'..'9' }?.takeIf { it.isNotEmpty() }
-        if (q.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
-        return filterHidden(apps.filter {
-            val normalized = it.label.lowercase().replace(Regex("[^a-z0-9]"), "")
-            normalized.contains(q) || (digitsOnly != null && normalized.contains(digitsOnly))
-        }).sortedWith(
+
+        val normalizedQuery = SearchNormalizer.normalize(query)
+        val digitsOnly = alsoMatchDialDigits
+            ?.filter { it in '0'..'9' }
+            ?.takeIf { it.isNotEmpty() }
+
+        if (normalizedQuery.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
+
+        val filtered = filterHidden(apps.filter { app ->
+            val nameNorm = SearchNormalizer.normalize(app.label.toString())
+            val textMatch = normalizedQuery.isNotEmpty() && nameNorm.contains(normalizedQuery)
+            val digitMatch = digitsOnly != null && nameNorm.contains(digitsOnly)
+            textMatch || digitMatch
+        })
+
+        return filtered.sortedWith(
             compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
                 .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
                 .thenBy { it.label.lowercase() }

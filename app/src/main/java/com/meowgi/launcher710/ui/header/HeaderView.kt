@@ -73,14 +73,14 @@ class HeaderView @JvmOverloads constructor(
         clockText.text = timeFormat.format(now)
     }
 
-    fun applyOpacity() {
-        background?.alpha = LauncherPrefs(context).headerAlpha
+    fun applyOpacity(prefs: LauncherPrefs) {
+        background?.mutate()?.alpha = prefs.headerAlpha
     }
 
     fun refresh(prefs: LauncherPrefs) {
         dateText.visibility = if (prefs.headerShowDate) android.view.View.VISIBLE else android.view.View.GONE
         clockText.visibility = if (prefs.headerShowClock) android.view.View.VISIBLE else android.view.View.GONE
-        applyOpacity()
+        applyOpacity(prefs)
         when (prefs.headerLayout) {
             0 -> {
                 removeAllViews()

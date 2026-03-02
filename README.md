@@ -13,7 +13,7 @@ optimized for square displays (e.g. Zinwa Q25 720×720).
 
 - **Custom status bar**: Battery (with level color), clock, carrier, network type, WiFi, optional Bluetooth / alarm / DND
 - **BB7 header**: Date and clock with BB Alphas font; optional hide header; show/hide date and clock; layout (swap, center); tap actions (open app or shortcut)
-- **Tabbed app grid**: Frequent, Favorites, All + custom pages with swipe navigation; optional hide All or Frequent pages; default home tab by page ID (persists when pages are hidden)
+- **Tabbed app grid**: Frequent, Favorites, All + custom pages with swipe navigation; optional hide All or Frequent pages; default home tab by page ID (persists when pages are hidden); **free-form grid placement** on Favorites and Custom pages — hold any app or shortcut and drop it at any cell, leaving gaps wherever you like; positions are saved per-item and survive relaunches; boundary-locked to the visible screen area with no scrolling
 - **Hidden apps**: Long-press any app → Hide (everywhere or this page); manage in Settings → Hidden apps
 - **App sorting**: Sort by alphabetical, last opened, last installed, or most used; apply to all pages or selected pages (Settings → Sorting)
 - **Universal search**: Fuzzy matching; type-to-search from home (hold Alt/Shift for symbols/capitals); search field hidden when overlay closed; contact search in results (source filter, relevance); dialer layout (QWERTY/T9); contact icon from Contacts app or custom icon pack
@@ -22,10 +22,10 @@ optimized for square displays (e.g. Zinwa Q25 720×720).
 - **Overlays**: Only one overlay open at a time (search, sound profile, or notification hub); focus and highlight clearing for consistent touch and trackpad behavior
 - **Notification hub**: Ticker (typing animation, center-out), hub with blocky layout; filter system/sticky/silent; centered Clear All button
 - **Notification applets**: Optional per-app icons with counts next to ticker (or fallback “N Notifications”); auto-hide applets with 0 count (optional); per-applet custom icons; icon pack for applets
-- **Action bar**: Center tap configurable — notification hub (default), launch app, or shortcut
+- **Action bar**: Center tap and long press independently configurable — notification hub (default), launch app, or shortcut
 - **Click highlights**: Subtle ripple on tap for grid, list, dock, tabs, header, action bar; color (accent or custom) and opacity in Settings; focus highlight disabled for trackpad-friendly use
 - **Icon pack support**: Per-page, dock, and applets; search in icon picker; global and fallback icon shaping (default, circle, rounded square, etc.)
-- **Dock**: Pinned apps + intent shortcuts; custom dock color; per-icon swipe-up action with bounce animation; long-press opens menu (no accidental launch); horizontal swipe does not trigger tap
+- **Dock**: Pinned apps + intent shortcuts; custom dock color; per-icon swipe-up action with bounce animation; long-press opens menu (no accidental launch); horizontal swipe does not trigger tap; **drag-to-reorder** — apps and shortcuts share a single order and any item can be held and moved to any dock slot
 - **Tab bar**: Highlight color (accent or custom) and opacity for selected tab
 - **Double-tap**: Lock screen or open notification hub (configurable)
 - **Color picker**: Custom color options use an HSV graphical picker with hex input and live preview

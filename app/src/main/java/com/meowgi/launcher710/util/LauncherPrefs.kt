@@ -286,6 +286,23 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("actionBarCenterActionName", null)
         set(v) = prefs.edit().putString("actionBarCenterActionName", v).apply()
 
+    /** 0 = notification hub (default), 1 = app (package), 2 = shortcut (intentUri) */
+    var actionBarCenterLongPressAction: Int
+        get() = prefs.getInt("actionBarCenterLongPressAction", 0)
+        set(v) = prefs.edit().putInt("actionBarCenterLongPressAction", v).apply()
+
+    var actionBarCenterLongPressActionPackage: String?
+        get() = prefs.getString("actionBarCenterLongPressActionPackage", null)
+        set(v) = prefs.edit().putString("actionBarCenterLongPressActionPackage", v).apply()
+
+    var actionBarCenterLongPressActionIntentUri: String?
+        get() = prefs.getString("actionBarCenterLongPressActionIntentUri", null)
+        set(v) = prefs.edit().putString("actionBarCenterLongPressActionIntentUri", v).apply()
+
+    var actionBarCenterLongPressActionName: String?
+        get() = prefs.getString("actionBarCenterLongPressActionName", null)
+        set(v) = prefs.edit().putString("actionBarCenterLongPressActionName", v).apply()
+
     /** Opacity (0–255) for the notification hub overlay. */
     var notificationHubAlpha: Int
         get() = prefs.getInt("notificationHubAlpha", 179) // 70%
@@ -775,6 +792,24 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("verticalScrollEnabled", false)
         set(v) = prefs.edit().putBoolean("verticalScrollEnabled", v).apply()
 
+    // --- Grid positions (sparse grid placement for Fav/Custom pages) ---
+    /** Returns map of itemKey → cellIndex for the given page. Empty map = no positions saved yet. */
+    fun getPageGridPositions(pageId: String): Map<String, Int> {
+        val data = prefs.getString("gridPositions_$pageId", null) ?: return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(data)
+            val map = mutableMapOf<String, Int>()
+            for (key in obj.keys()) map[key] = obj.getInt(key)
+            map
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    fun setPageGridPositions(pageId: String, positions: Map<String, Int>) {
+        val obj = org.json.JSONObject()
+        positions.forEach { (k, v) -> obj.put(k, v) }
+        prefs.edit().putString("gridPositions_$pageId", obj.toString()).apply()
+    }
+
     fun resetAll() {
         prefs.edit().clear().apply()
     }
@@ -791,7 +826,8 @@ class LauncherPrefs(context: Context) {
         "iconPackPackage", "allPageIconPackPackage", "dockIconPackPackage", "iconFallbackShape", "iconGlobalShape",
         "statusBarVisible", "statusBarShowClock", "statusBarShowBattery", "statusBarShowNetwork", "statusBarShowBluetooth",
         "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
-        "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
+        "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName",
+        "actionBarCenterLongPressAction", "actionBarCenterLongPressActionPackage", "actionBarCenterLongPressActionIntentUri", "actionBarCenterLongPressActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
         "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape",
         "swipeMode", "defaultTab", "defaultTabPageId", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
@@ -880,6 +916,10 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "actionBarCenterActionPackage", "s", actionBarCenterActionPackage)
         putEntry(arr, "actionBarCenterActionIntentUri", "s", actionBarCenterActionIntentUri)
         putEntry(arr, "actionBarCenterActionName", "s", actionBarCenterActionName)
+        putEntry(arr, "actionBarCenterLongPressAction", "i", actionBarCenterLongPressAction)
+        putEntry(arr, "actionBarCenterLongPressActionPackage", "s", actionBarCenterLongPressActionPackage)
+        putEntry(arr, "actionBarCenterLongPressActionIntentUri", "s", actionBarCenterLongPressActionIntentUri)
+        putEntry(arr, "actionBarCenterLongPressActionName", "s", actionBarCenterLongPressActionName)
         putEntry(arr, "notificationHubAlpha", "i", notificationHubAlpha)
         putEntry(arr, "searchOverlayAlpha", "i", searchOverlayAlpha)
         putEntry(arr, "soundProfileOverlayAlpha", "i", soundProfileOverlayAlpha)

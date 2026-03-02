@@ -138,6 +138,23 @@ class SettingsActivity : AppCompatActivity() {
         rebuildSettings()
     }
 
+    private val actionBarCenterLongPressShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: return@registerForActivityResult
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        prefs.actionBarCenterLongPressAction = 2
+        prefs.actionBarCenterLongPressActionPackage = null
+        prefs.actionBarCenterLongPressActionIntentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        prefs.actionBarCenterLongPressActionName = name
+        rebuildSettings()
+    }
+
     private val launchInjectShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) return@registerForActivityResult
         val data = result.data!!
@@ -236,6 +253,7 @@ class SettingsActivity : AppCompatActivity() {
 
         addSlider("Action bar (ticker) opacity", prefs.actionBarAlpha) { prefs.actionBarAlpha = it }
         addButton("Action bar tap: ${getActionBarCenterActionLabel()}") { showActionBarCenterActionPicker() }
+        addButton("Action bar long press: ${getActionBarCenterLongPressActionLabel()}") { showActionBarCenterLongPressActionPicker() }
         addSlider("Tab Bar Opacity", prefs.tabBarAlpha) { prefs.tabBarAlpha = it }
         addChoice("Tab bar highlight color", listOf("Use accent", "Choose color…"), if (prefs.tabBarHighlightUseAccent) 0 else 1) {
             prefs.tabBarHighlightUseAccent = (it == 0)
@@ -1485,6 +1503,67 @@ class SettingsActivity : AppCompatActivity() {
                 prefs.actionBarCenterActionPackage = pkg
                 prefs.actionBarCenterActionIntentUri = null
                 prefs.actionBarCenterActionName = null
+                rebuildSettings()
+            }
+            .show()
+    }
+
+    private fun getActionBarCenterLongPressActionLabel(): String = when (prefs.actionBarCenterLongPressAction) {
+        0 -> "Notification hub"
+        1 -> {
+            val pkg = prefs.actionBarCenterLongPressActionPackage
+            if (pkg != null) {
+                try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (_: Exception) { pkg }
+            } else "Choose app"
+        }
+        2 -> prefs.actionBarCenterLongPressActionName ?: (if (prefs.actionBarCenterLongPressActionIntentUri != null) "Shortcut" else "Choose shortcut")
+        else -> "Notification hub"
+    }
+
+    private fun showActionBarCenterLongPressActionPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Action bar long press")
+            .setItems(arrayOf("Notification hub", "App", "Shortcut")) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.actionBarCenterLongPressAction = 0
+                        prefs.actionBarCenterLongPressActionPackage = null
+                        prefs.actionBarCenterLongPressActionIntentUri = null
+                        prefs.actionBarCenterLongPressActionName = null
+                        rebuildSettings()
+                    }
+                    1 -> showActionBarCenterLongPressAppPicker()
+                    2 -> {
+                        try {
+                            actionBarCenterLongPressShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                        } catch (_: Exception) {
+                            Toast.makeText(this, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showActionBarCenterLongPressAppPicker() {
+        val installed = packageManager.getInstalledApplications(0)
+        val pkgList = installed
+            .mapNotNull { info ->
+                val label = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                if (label.isBlank()) null else (info.packageName to label)
+            }
+            .sortedBy { it.second.lowercase() }
+        val options = pkgList.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Choose app")
+            .setItems(options) { _, which ->
+                val (pkg) = pkgList[which]
+                prefs.actionBarCenterLongPressAction = 1
+                prefs.actionBarCenterLongPressActionPackage = pkg
+                prefs.actionBarCenterLongPressActionIntentUri = null
+                prefs.actionBarCenterLongPressActionName = null
                 rebuildSettings()
             }
             .show()
