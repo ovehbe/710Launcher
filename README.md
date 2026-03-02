@@ -4,8 +4,6 @@
   <img src="https://img.shields.io/badge/Download-Pre--Release-red?style=for-the-badge" />
 </a>
 
-**Current release: 1.4.5**
-
 # BBOS7 Launcher
 
 A native Android launcher that recreates the BlackBerry OS 7 home screen experience,
