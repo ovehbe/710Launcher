@@ -90,6 +90,9 @@ class AppAdapter(
                     height = iconSizePx
                 } ?: android.view.ViewGroup.LayoutParams(iconSizePx, iconSizePx)
                 holder.label.text = label
+                holder.itemView.isClickable = true
+                holder.itemView.defaultFocusHighlightEnabled = false
+                holder.itemView.foreground = prefs.getClickHighlightRipple(context)
                 holder.itemView.setOnClickListener { onClick(item) }
                 val longClick = onLongClick
                 if (longClick != null) {
@@ -105,6 +108,9 @@ class AppAdapter(
                 holder.accentSquare.setBackgroundColor(Color.argb(prefs.listViewIconBarAlpha, Color.red(iconBarColor), Color.green(iconBarColor), Color.blue(iconBarColor)))
                 val nameBarColor = Color.argb(prefs.listViewNameBarAlpha, 0, 0, 0)
                 holder.nameBar.setBackgroundColor(nameBarColor)
+                holder.itemView.isClickable = true
+                holder.itemView.defaultFocusHighlightEnabled = false
+                holder.itemView.foreground = prefs.getClickHighlightRipple(context)
                 holder.itemView.setOnClickListener { onClick(item) }
                 val longClickList = onLongClick
                 if (longClickList != null) {

@@ -22,4 +22,13 @@ sealed class LaunchableItem {
         override val label: CharSequence get() = info.label
         override val icon: Drawable get() = info.icon
     }
+
+    /** Contact from device address book, shown in extended search. Tap to dial first number. */
+    data class Contact(
+        val displayName: CharSequence,
+        val phoneNumbers: List<String>,
+        override val icon: Drawable
+    ) : LaunchableItem() {
+        override val label: CharSequence get() = displayName
+    }
 }

@@ -67,7 +67,7 @@ class AppRepository(private val context: Context) {
                 val customDrawableName = prefs.getCustomIcon(cn)
                 val customIcon = if (customDrawableName != null) iconPackManager?.getIconByName(customDrawableName) else null
                 val themedIcon = customIcon ?: iconPackManager?.getIconForApp(component)
-                val finalIcon = if (customIcon != null) {
+                val baseIcon = if (customIcon != null) {
                     customIcon
                 } else if (themedIcon != null) {
                     themedIcon
@@ -77,6 +77,7 @@ class AppRepository(private val context: Context) {
                 } else {
                     rawIconDrawable
                 }
+                val finalIcon = applyGlobalShape(baseIcon)
 
                 AppInfo(
                     label = ri.loadLabel(pm).toString(),
@@ -113,54 +114,81 @@ class AppRepository(private val context: Context) {
         }
     }
 
+    private fun applyGlobalShape(icon: android.graphics.drawable.Drawable): android.graphics.drawable.Drawable {
+        if (prefs.iconGlobalShape <= 0) return icon
+        val shapeMapped = when (prefs.iconGlobalShape) {
+            1 -> LauncherPrefs.SHAPE_CIRCLE
+            2 -> LauncherPrefs.SHAPE_ROUNDED_SQUARE
+            3 -> LauncherPrefs.SHAPE_SQUARE
+            4 -> LauncherPrefs.SHAPE_SQUIRCLE
+            else -> return icon
+        }
+        val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
+        return IconPackManager(context).applyFallbackShape(icon, shapeMapped, sizePx)
+    }
+
     private fun sortAppliesToPage(pageId: String): Boolean {
         val pages = prefs.getSortApplyPages()
         return pages.isEmpty() || pages.contains("__all__") || pages.contains(pageId)
     }
 
-    fun getAllApps(): List<AppInfo> {
-        if (!sortAppliesToPage("all")) return apps
-        return sortApps(apps, prefs.appSortMode)
+    private fun filterHidden(list: List<AppInfo>): List<AppInfo> {
+        val hidden = prefs.getHiddenApps()
+        if (hidden.isEmpty()) return list
+        return list.filter { it.componentName.flattenToString() !in hidden }
     }
 
-    fun getFrequentApps() = apps
-        .filter { it.launchCount > 0 }
-        .sortedByDescending { it.launchCount }
+    fun getAllApps(): List<AppInfo> {
+        if (!sortAppliesToPage("all")) return filterHidden(apps)
+        return filterHidden(sortApps(apps, prefs.appSortMode))
+    }
+
+    fun getFrequentApps() = filterHidden(
+        apps.filter { it.launchCount > 0 }.sortedByDescending { it.launchCount }
+    )
 
     fun getFavoriteApps(): List<AppInfo> {
         val order = prefs.getFavoriteOrder()
         val favoriteApps = apps.filter { it.isFavorite }
-        if (order.isEmpty()) {
-            return if (sortAppliesToPage("favorites")) sortApps(favoriteApps, prefs.appSortMode) else favoriteApps
+        val base = if (order.isEmpty()) {
+            if (sortAppliesToPage("favorites")) sortApps(favoriteApps, prefs.appSortMode) else favoriteApps
+        } else {
+            val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn && it.isFavorite } }
+            val rest = apps.filter { it.isFavorite && it.componentName.flattenToString() !in order }
+            val sortedRest = if (sortAppliesToPage("favorites")) sortApps(rest, prefs.appSortMode) else rest
+            ordered + sortedRest
         }
-        val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn && it.isFavorite } }
-        val rest = apps.filter { it.isFavorite && it.componentName.flattenToString() !in order }
-        val sortedRest = if (sortAppliesToPage("favorites")) sortApps(rest, prefs.appSortMode) else rest
-        return ordered + sortedRest
+        return filterHidden(base)
     }
 
     fun getAppsForPage(pageId: String): List<AppInfo> {
         val members = prefs.getPageApps(pageId)
         val pageApps = apps.filter { members.contains(it.componentName.flattenToString()) }
         val order = if (pageId == "favorites") prefs.getFavoriteOrder() else prefs.getPageAppOrder(pageId)
-        if (order.isNotEmpty()) {
+        val base = if (order.isNotEmpty()) {
             val ordered = order.mapNotNull { cn -> apps.find { it.componentName.flattenToString() == cn } }
                 .filter { members.contains(it.componentName.flattenToString()) }
             val rest = apps.filter { members.contains(it.componentName.flattenToString()) && it.componentName.flattenToString() !in order }
             val sortedRest = if (sortAppliesToPage(pageId)) sortApps(rest, prefs.appSortMode) else rest
-            return ordered + sortedRest
+            ordered + sortedRest
+        } else {
+            if (sortAppliesToPage(pageId)) sortApps(pageApps, prefs.appSortMode) else pageApps
         }
-        return if (sortAppliesToPage(pageId)) sortApps(pageApps, prefs.appSortMode) else pageApps
+        return filterHidden(base)
     }
 
-    fun searchApps(query: String): List<AppInfo> {
-        if (query.isBlank()) return emptyList()
+    /**
+     * @param alsoMatchDialDigits If non-empty, apps whose label contains this digit string are also included (e.g. "710" so "zw0" finds "710 Launcher").
+     */
+    fun searchApps(query: String, alsoMatchDialDigits: String? = null): List<AppInfo> {
+        if (query.isBlank() && (alsoMatchDialDigits.isNullOrBlank())) return emptyList()
         val q = query.lowercase().replace(Regex("[^a-z0-9]"), "")
-        if (q.isEmpty()) return emptyList()
-        return apps.filter {
+        val digitsOnly = alsoMatchDialDigits?.filter { it in '0'..'9' }?.takeIf { it.isNotEmpty() }
+        if (q.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
+        return filterHidden(apps.filter {
             val normalized = it.label.lowercase().replace(Regex("[^a-z0-9]"), "")
-            normalized.contains(q)
-        }.sortedWith(
+            normalized.contains(q) || (digitsOnly != null && normalized.contains(digitsOnly))
+        }).sortedWith(
             compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
                 .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
                 .thenBy { it.label.lowercase() }
@@ -233,20 +261,20 @@ class AppRepository(private val context: Context) {
         val customDrawableName = prefs.getCustomIcon(cn, pageId)
         if (customDrawableName != null) {
             val customIcon = resolveCustomIconFromAnyPack(customDrawableName)
-            if (customIcon != null) return customIcon
+            if (customIcon != null) return applyGlobalShape(customIcon)
         }
 
         val packManager = getPackManagerForPage(pageId)
 
         val themedIcon = packManager?.getIconForApp(component)
-        if (themedIcon != null) return themedIcon
+        if (themedIcon != null) return applyGlobalShape(themedIcon)
 
         if (packManager?.isLoaded() == true) {
             val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
-            return packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx)
+            return applyGlobalShape(packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx))
         }
 
-        return rawIcon
+        return applyGlobalShape(rawIcon)
     }
 
     fun getIconForDock(app: AppInfo) = getIconForPage(app, "dock")
@@ -273,5 +301,63 @@ class AppRepository(private val context: Context) {
             if (customIcon != null) return customIcon
         }
         return info.icon
+    }
+
+    /** Icon for notification applet by package name: custom drawable, applet pack, or system. */
+    fun getAppletIcon(packageName: String, iconSizePx: Int): android.graphics.drawable.Drawable {
+        var icon: android.graphics.drawable.Drawable? = null
+        val customName = prefs.getAppletCustomIcon(packageName)
+        if (customName != null) {
+            val customPack = prefs.getAppletCustomIconPack(packageName)
+            if (customPack != null) {
+                val tempMgr = IconPackManager(context)
+                if (tempMgr.loadIconPack(customPack)) {
+                    icon = tempMgr.getIconByName(customName)
+                }
+            }
+            if (icon == null) icon = resolveCustomIconFromAnyPack(customName)
+        }
+        if (icon == null) {
+            val component = pm.getLaunchIntentForPackage(packageName)?.component
+            if (component != null) icon = getPackManagerForPage("applets")?.getIconForApp(component)
+        }
+        if (icon == null) {
+            icon = try { pm.getApplicationIcon(pm.getApplicationInfo(packageName, 0)) } catch (_: Exception) { pm.defaultActivityIcon }
+        }
+        val shape = prefs.appletIconShape
+        return if (shape > 0 && icon != null) {
+            val shapeMapped = when (shape) { 1 -> LauncherPrefs.SHAPE_CIRCLE; 2 -> LauncherPrefs.SHAPE_ROUNDED_SQUARE; 3 -> LauncherPrefs.SHAPE_SQUARE; 4 -> LauncherPrefs.SHAPE_SQUIRCLE; else -> LauncherPrefs.SHAPE_SQUARE }
+            IconPackManager(context).applyFallbackShape(icon, shapeMapped, iconSizePx)
+        } else icon!!
+    }
+
+    /** Icon for contact results in search: custom from icon pack, or Contacts app icon from search page pack, or system Contacts icon. */
+    fun getContactIconForSearch(): android.graphics.drawable.Drawable {
+        val customName = prefs.contactIconDrawableName
+        val customPack = prefs.contactIconPackPackage
+        if (!customName.isNullOrBlank() && !customPack.isNullOrBlank()) {
+            val tempMgr = IconPackManager(context)
+            if (tempMgr.loadIconPack(customPack)) {
+                tempMgr.getIconByName(customName)?.let { return applyGlobalShape(it) }
+            }
+        }
+        val contactsComponent = pm.getLaunchIntentForPackage("com.android.contacts")?.component
+        if (contactsComponent != null) {
+            val packManager = getPackManagerForPage("search")
+            val themedIcon = packManager?.getIconForApp(contactsComponent)
+            if (themedIcon != null) return applyGlobalShape(themedIcon)
+            if (packManager?.isLoaded() == true) {
+                val rawIcon = try { pm.getApplicationIcon(pm.getApplicationInfo("com.android.contacts", 0)) } catch (_: Exception) { null }
+                if (rawIcon != null) {
+                    val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
+                    return applyGlobalShape(packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx))
+                }
+            }
+        }
+        return try {
+            applyGlobalShape(pm.getApplicationIcon(pm.getApplicationInfo("com.android.contacts", 0)))
+        } catch (_: Exception) {
+            applyGlobalShape(pm.defaultActivityIcon)
+        }
     }
 }

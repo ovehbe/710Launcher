@@ -27,7 +27,9 @@ class NotifListenerService : NotificationListenerService() {
     private fun notifyChange() {
         val cb = onNotificationsChanged ?: return
         mainHandler.post { cb() }
-        mainHandler.postDelayed({ cb() }, 400)
+        listOf(300L, 800L, 1800L).forEach { delay ->
+            mainHandler.postDelayed({ cb() }, delay)
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {

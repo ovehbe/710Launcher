@@ -20,7 +20,10 @@ class AppPagerAdapter(
 
     private val fragments = mutableMapOf<Int, AppGridFragment>()
     private val prefs = LauncherPrefs(activity)
-    private var pageOrder = prefs.getPageOrder()
+    private var pageOrder = filterPageOrder(prefs.getPageOrder())
+
+    private fun filterPageOrder(order: List<String>): List<String> =
+        order.filter { pid -> if (pid == "all") !prefs.hideAllPage else if (pid == "frequent") !prefs.hideFrequentPage else true }
 
     override fun getItemCount() = pageOrder.size
 
@@ -60,7 +63,7 @@ class AppPagerAdapter(
     }
 
     fun reloadPageOrder() {
-        pageOrder = prefs.getPageOrder()
+        pageOrder = filterPageOrder(prefs.getPageOrder())
     }
 
     fun getPositionForPageId(pageId: String): Int = pageOrder.indexOf(pageId).takeIf { it >= 0 } ?: 0

@@ -37,7 +37,7 @@ import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
-import com.meowgi.launcher710.ui.dialogs.SoundProfileDialog
+import com.meowgi.launcher710.ui.dialogs.SoundProfileOverlay
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.ui.notifications.NotificationHub
 import com.meowgi.launcher710.ui.search.SearchOverlay
@@ -83,6 +83,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var appPager: ViewPager2
     private lateinit var searchOverlay: SearchOverlay
     private lateinit var notificationHub: NotificationHub
+    private lateinit var soundProfileOverlay: SoundProfileOverlay
     private lateinit var dockBar: DockBar
     private lateinit var tabBarContainer: android.widget.LinearLayout
     private lateinit var actionBar: View
@@ -90,6 +91,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var mainLayout: android.widget.LinearLayout
 
     private lateinit var notificationTickerBar: View
+    private lateinit var notificationAppletsContainer: android.widget.LinearLayout
     private lateinit var notificationTickerText: TextView
     private lateinit var notificationCount: TextView
     private lateinit var searchInputInBar: EditText
@@ -110,6 +112,7 @@ class LauncherActivity : AppCompatActivity() {
 
     private var tickerTypingRunnable: Runnable? = null
     private var tickerDismissRunnable: Runnable? = null
+    private var currentTickerNotificationKey: String? = null
     private val tickerTypingDelayMs = 45L
     private val tickerDisplayDurationMs = 5000L
 
@@ -214,11 +217,11 @@ class LauncherActivity : AppCompatActivity() {
         } else false
 
         val iconRes = when {
-            isDnd && am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_alerts_off
+            isDnd && am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_alerts_off_custom
             isDnd -> R.drawable.ic_sound_dnd
-            am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent
-            am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate
-            else -> R.drawable.ic_sound_normal
+            am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent_custom
+            am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate_custom
+            else -> R.drawable.ic_sound_normal_custom
         }
         btnSoundProfile.setImageResource(iconRes)
     }
@@ -262,24 +265,54 @@ class LauncherActivity : AppCompatActivity() {
         appPager = findViewById(R.id.appPager)
         searchOverlay = findViewById(R.id.searchOverlay)
         notificationHub = findViewById(R.id.notificationHub)
+        soundProfileOverlay = findViewById(R.id.soundProfileOverlay)
         dockBar = findViewById(R.id.dockBar)
         tabBarContainer = findViewById(R.id.tabBar)
         actionBar = findViewById(R.id.actionBar)
         notificationTickerBar = findViewById(R.id.notificationTickerBar)
+        notificationAppletsContainer = findViewById(R.id.notificationAppletsContainer)
         notificationTickerText = findViewById(R.id.notificationTickerText)
         notificationCount = findViewById(R.id.notificationCount)
         searchInputInBar = findViewById(R.id.searchInputInBar)
         btnSoundProfile = findViewById(R.id.btnSoundProfile)
 
-        val toggleHub: () -> Unit = {
-            if (notificationHub.visibility == View.VISIBLE) {
-                notificationHub.hide()
-            } else {
-                notificationHub.show(prefs.getNotificationAppWhitelist())
+        setupSearchInputBar()
+
+        val onActionBarCenterClick: () -> Unit = {
+            when (prefs.actionBarCenterAction) {
+                0 -> {
+                    if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+                    else {
+                        dismissOtherOverlays()
+                        notificationHub.show(prefs.getNotificationAppWhitelist())
+                    }
+                }
+                1, 2 -> launchHeaderAction(
+                    prefs.actionBarCenterAction,
+                    prefs.actionBarCenterActionPackage,
+                    prefs.actionBarCenterActionIntentUri
+                )
+                else -> { }
             }
         }
-        findViewById<View>(R.id.actionBarCenter).setOnClickListener { toggleHub() }
-        notificationTickerBar.setOnClickListener { toggleHub() }
+        // Single touch overlay so one view gets the tap and ripple (avoids wrong highlight on touch vs trackpad)
+        findViewById<View>(R.id.actionBarCenter).apply {
+            isClickable = false
+            isFocusable = false
+        }
+        notificationTickerBar.apply {
+            isClickable = false
+            isFocusable = false
+        }
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
+            isClickable = true
+            isFocusable = true
+            isFocusableInTouchMode = false
+            defaultFocusHighlightEnabled = false
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
+            setOnClickListener { onActionBarCenterClick() }
+        }
+        notificationHub.onClearAll = { keyHandler.postDelayed({ refreshNotificationTicker() }, 500) }
 
         ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { view, insets ->
             val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
@@ -310,6 +343,9 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> repository.launchApp(item.app)
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
+                is LaunchableItem.Contact -> item.phoneNumbers.firstOrNull()?.let { num ->
+                    try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch (_: Exception) {}
+                }
                 else -> {}
             }
         }
@@ -318,9 +354,14 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> showAppContextMenu(item.app, view)
                 is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                 is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                is LaunchableItem.Contact -> { }
                 else -> {}
             }
         }
+        searchOverlay.dialerLayoutProvider = { prefs.dialerNumberLayout }
+        searchOverlay.contactSearchEnabledProvider = { prefs.searchContactsEnabled }
+        searchOverlay.contactSourceProvider = { prefs.searchContactsSource ?: "all" }
+        searchOverlay.contactIconProvider = { repository.getContactIconForSearch() }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -338,6 +379,7 @@ class LauncherActivity : AppCompatActivity() {
         }
 
         setupActionBar()
+        setupHeader()
         setupNotifications()
         if (intent?.getBooleanExtra(OPEN_HOME_MENU_EXTRA, false) == true) {
             tabBarContainer.post { showHomeContextMenu(tabBarContainer) }
@@ -361,6 +403,7 @@ class LauncherActivity : AppCompatActivity() {
             withContext(Dispatchers.IO) { repository.loadApps() }
             setupPager()
             dockBar.loadDock()
+            setupFocusOrder()
         }
     }
 
@@ -415,6 +458,13 @@ class LauncherActivity : AppCompatActivity() {
                 repository.pageIconPackManagers["search"] = mgr
             }
         }
+        val appletsPkg = prefs.getPageIconPackPackage("applets")
+        if (appletsPkg != null) {
+            val mgr = IconPackManager(this)
+            if (mgr.loadIconPack(appletsPkg)) {
+                repository.pageIconPackManagers["applets"] = mgr
+            }
+        }
     }
 
     private fun refreshWallpaper() {
@@ -427,12 +477,14 @@ class LauncherActivity : AppCompatActivity() {
         rootFrame.setBackgroundColor(Color.argb(prefs.mainBackgroundAlpha, 0, 0, 0))
         statusBar.visibility = if (prefs.statusBarVisible) View.VISIBLE else View.GONE
         statusBar.applyOpacity()
-        headerView.applyOpacity()
+        headerView.visibility = if (prefs.headerVisible) View.VISIBLE else View.GONE
+        headerView.refresh(prefs)
         actionBar.setBackgroundColor(Color.argb(prefs.actionBarAlpha, 0, 0, 0))
         tabBarContainer.background?.alpha = prefs.tabBarAlpha
         dockBar.applyOpacity()
         notificationHub.applyOpacity(prefs.notificationHubAlpha)
         searchOverlay.applyOpacity(prefs.searchOverlayAlpha)
+        soundProfileOverlay.applyOpacity(prefs.soundProfileOverlayAlpha)
     }
 
     private fun setupPager() {
@@ -443,6 +495,7 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.App -> showAppContextMenu(item.app, view)
                     is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                     is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
+                    is LaunchableItem.Contact -> { }
                 }
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
@@ -450,8 +503,9 @@ class LauncherActivity : AppCompatActivity() {
         appPager.adapter = pagerAdapter
         appPager.isUserInputEnabled = false
         buildTabBar()
+        setupFocusOrder()
         setupBottomSwipe()
-        val startTab = prefs.defaultTab.coerceIn(0, pagerAdapter.itemCount - 1)
+        val startTab = pagerAdapter.getPositionForPageId(prefs.defaultTabPageId)
         appPager.setCurrentItem(startTab, false)
         updateTabHighlight(startTab)
 
@@ -468,12 +522,18 @@ class LauncherActivity : AppCompatActivity() {
         val font = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bbalphas)
         for (i in 0 until pagerAdapter.itemCount) {
             val tv = TextView(this).apply {
+                id = View.generateViewId()
                 text = pagerAdapter.getPageName(i)
                 setTextColor(getColor(R.color.bb_text_secondary))
                 textSize = 13f
                 typeface = font
                 gravity = android.view.Gravity.CENTER
                 setPadding(dp(12), 0, dp(12), 0)
+                isClickable = true
+                isFocusable = true
+                isFocusableInTouchMode = false
+                defaultFocusHighlightEnabled = false
+                foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
                 setOnClickListener { appPager.setCurrentItem(i, true) }
             }
             val lp = android.widget.LinearLayout.LayoutParams(0,
@@ -483,19 +543,57 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
+    /** Sets explicit focus order for trackpad/keyboard: date → clock → action bar → tabs → dock. */
+    private fun setupFocusOrder() {
+        tabBarContainer.isFocusable = false
+        tabBarContainer.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        dockBar.isFocusable = false
+        dockBar.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        headerView.dateText.nextFocusForwardId = R.id.header_clock_text
+        headerView.dateText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
+        headerView.clockText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
+            nextFocusForwardId = R.id.btnSearch
+            nextFocusDownId = R.id.tabBar
+        }
+        findViewById<View>(R.id.btnSearch).apply {
+            isFocusable = true
+            isFocusableInTouchMode = false
+            nextFocusForwardId = R.id.btnSoundProfile
+            nextFocusDownId = R.id.tabBar
+        }
+        findViewById<View>(R.id.btnSoundProfile).apply {
+            isFocusable = true
+            isFocusableInTouchMode = false
+            nextFocusDownId = R.id.tabBar
+        }
+        for (i in tabViews.indices) {
+            val tab = tabViews[i]
+            tab.nextFocusDownId = R.id.dockBar
+            if (i == 0) tab.nextFocusUpId = R.id.btnSoundProfile
+        }
+        for (i in 1 until tabViews.size) {
+            tabViews[i - 1].nextFocusForwardId = tabViews[i].id
+        }
+        if (dockBar.childCount > 0 && tabViews.isNotEmpty()) {
+            dockBar.getChildAt(0).nextFocusUpId = tabViews.last().id
+        }
+    }
+
     private fun updateTabHighlight(selected: Int) {
-        val accent = prefs.accentColor
+        val baseColor = if (prefs.tabBarHighlightUseAccent) prefs.accentColor else prefs.tabBarHighlightCustomColor
+        val alpha = prefs.tabBarHighlightAlpha
         val lighterAccent = Color.argb(
-            Color.alpha(accent),
-            kotlin.math.min(255, (Color.red(accent) * 1.15).toInt()),
-            kotlin.math.min(255, (Color.green(accent) * 1.15).toInt()),
-            kotlin.math.min(255, (Color.blue(accent) * 1.15).toInt())
+            alpha,
+            kotlin.math.min(255, (Color.red(baseColor) * 1.15).toInt()),
+            kotlin.math.min(255, (Color.green(baseColor) * 1.15).toInt()),
+            kotlin.math.min(255, (Color.blue(baseColor) * 1.15).toInt())
         )
         val darkerAccent = Color.argb(
-            Color.alpha(accent),
-            (Color.red(accent) * 0.78).toInt(),
-            (Color.green(accent) * 0.78).toInt(),
-            (Color.blue(accent) * 0.78).toInt()
+            alpha,
+            (Color.red(baseColor) * 0.78).toInt(),
+            (Color.green(baseColor) * 0.78).toInt(),
+            (Color.blue(baseColor) * 0.78).toInt()
         )
         for ((i, tab) in tabViews.withIndex()) {
             if (i == selected) {
@@ -510,6 +608,77 @@ class LauncherActivity : AppCompatActivity() {
                 tab.setTextColor(getColor(R.color.bb_text_secondary))
             }
         }
+    }
+
+    /** Applies the current click highlight ripple to a view and disables focus highlight (avoids stuck highlight when using trackpad). */
+    private fun applyClickHighlight(view: View?) {
+        view ?: return
+        view.isClickable = true
+        view.defaultFocusHighlightEnabled = false
+        view.foreground = prefs.getClickHighlightRipple(this)
+    }
+
+    /** Re-applies click highlight color/opacity to all launcher elements (e.g. after accent color change). */
+    private fun refreshClickHighlights() {
+        val ripple = prefs.getClickHighlightRipple(this)
+        applyClickHighlight(findViewById(R.id.actionBarCenterTouchOverlay))
+        applyClickHighlight(findViewById(R.id.btnSearch))
+        applyClickHighlight(findViewById(R.id.btnSoundProfile))
+        findViewById<View>(R.id.actionBarCenterTouchOverlay).defaultFocusHighlightEnabled = false
+        findViewById<View>(R.id.btnSearch).defaultFocusHighlightEnabled = false
+        findViewById<View>(R.id.btnSoundProfile).defaultFocusHighlightEnabled = false
+        headerView.dateText.apply {
+            isClickable = true
+            defaultFocusHighlightEnabled = false
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
+        }
+        headerView.clockText.apply {
+            isClickable = true
+            defaultFocusHighlightEnabled = false
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
+        }
+        for (tab in tabViews) {
+            tab.defaultFocusHighlightEnabled = false
+            tab.foreground = prefs.getClickHighlightRipple(this)
+        }
+        for (i in 0 until dockBar.childCount) {
+            dockBar.getChildAt(i).apply {
+                defaultFocusHighlightEnabled = false
+                foreground = ripple
+            }
+        }
+        if (::pagerAdapter.isInitialized) {
+            pagerAdapter.notifyDataSetChanged()
+            setupFocusOrder()
+        }
+    }
+
+    /** Recursively clears focus and pressed state from a view and its descendants. */
+    private fun clearViewStateRecursive(view: View) {
+        if (view.isClickable || view.isFocusable) {
+            view.setPressed(false)
+            view.clearFocus()
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                clearViewStateRecursive(view.getChildAt(i))
+            }
+        }
+    }
+
+    /** Clears focus and pressed state from all interactive views (header, action bar, tabs, dock, app grid) so no highlight "traces" remain. */
+    private fun clearHighlightTraces() {
+        window.decorView.findFocus()?.clearFocus()
+        clearViewStateRecursive(headerView)
+        findViewById<View>(R.id.actionBar)?.let { clearViewStateRecursive(it) }
+        for (tab in tabViews) {
+            tab.setPressed(false)
+            tab.clearFocus()
+            tab.foreground = prefs.getClickHighlightRipple(this)
+        }
+        clearViewStateRecursive(tabBarContainer)
+        clearViewStateRecursive(dockBar)
+        findViewById<View>(R.id.contentArea)?.let { clearViewStateRecursive(it) }
     }
 
     private var bottomSwipeStartX = 0f
@@ -594,9 +763,18 @@ class LauncherActivity : AppCompatActivity() {
         if (s.isNotEmpty()) injectTextViaRoot(s)
     }
 
-    private fun showSearchPageAware(initialChar: Char? = null) {
+    /** Close all overlays so only one can be visible at a time. Call before showing any overlay. */
+    private fun dismissOtherOverlays() {
+        if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
+        if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
+        if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+    }
+
+    private fun showSearchPageAware(initialChar: Char? = null, preserveText: Boolean = false) {
         searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
         searchApplyRunnable = null
+
+        dismissOtherOverlays()
 
         val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else null
         searchOverlay.setSearchContextLabel(
@@ -619,31 +797,74 @@ class LauncherActivity : AppCompatActivity() {
         }
         notificationTickerBar.visibility = View.GONE
         searchInputInBar.visibility = View.VISIBLE
+        searchInputInBar.alpha = 1f
         if (initialChar != null) {
             searchInputInBar.setSelection(0)
             searchInputInBar.setText(initialChar.toString())
             searchInputInBar.setSelection(searchInputInBar.text.length)
-        } else {
+        } else if (!preserveText) {
             searchInputInBar.setText("")
         }
-        searchInputInBar.requestFocus()
+        // Post focus so it works when opening by touch (not only trackpad)
         searchInputInBar.post {
+            searchInputInBar.requestFocus()
             if (searchOverlay.visibility == View.VISIBLE) {
                 searchOverlay.applyQuery(searchInputInBar.text.toString())
             }
         }
     }
 
-    private fun setupActionBar() {
-        findViewById<View>(R.id.btnSoundProfile).setOnClickListener {
-            val dlg = SoundProfileDialog(this)
-            dlg.onDismissed = { updateSoundProfileIcon() }
-            dlg.show()
+    private fun setupHeader() {
+        headerView.isFocusable = false
+        headerView.isClickable = false
+        headerView.descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
+        headerView.dateText.apply {
+            isClickable = true
+            isFocusable = true
+            isFocusableInTouchMode = false
+            defaultFocusHighlightEnabled = false
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
+            setOnClickListener {
+                launchHeaderAction(prefs.headerDateAction, prefs.headerDateActionPackage, prefs.headerDateActionIntentUri)
+            }
         }
-        findViewById<View>(R.id.btnSearch).setOnClickListener {
-            showSearchPageAware()
+        headerView.clockText.apply {
+            isClickable = true
+            isFocusable = true
+            isFocusableInTouchMode = false
+            defaultFocusHighlightEnabled = false
+            foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
+            setOnClickListener {
+                launchHeaderAction(prefs.headerClockAction, prefs.headerClockActionPackage, prefs.headerClockActionIntentUri)
+            }
         }
+    }
 
+    private fun launchHeaderAction(action: Int, pkg: String?, intentUri: String?) {
+        if (action == 0) return
+        try {
+            when (action) {
+                1 -> {
+                    if (pkg != null) {
+                        val intent = packageManager.getLaunchIntentForPackage(pkg)
+                        if (intent != null) {
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        }
+                    }
+                }
+                2 -> {
+                    if (intentUri != null) {
+                        val intent = Intent.parseUri(intentUri, 0)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun setupSearchInputBar() {
         searchInputInBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -654,6 +875,8 @@ class LauncherActivity : AppCompatActivity() {
                     searchApplyRunnable = null
                     if (searchOverlay.visibility == View.VISIBLE) {
                         searchOverlay.applyQuery(text)
+                    } else if (prefs.searchOnType && text.isNotEmpty()) {
+                        handleTypeToSearchFromText(text)
                     }
                 }
                 keyHandler.postDelayed(searchApplyRunnable!!, searchApplyDelayMs)
@@ -665,6 +888,150 @@ class LauncherActivity : AppCompatActivity() {
                 true
             } else false
         }
+        searchInputInBar.visibility = View.GONE
+    }
+
+    private fun handleTypeToSearchFromText(text: CharSequence) {
+        val firstChar = text.firstOrNull() ?: return
+        when (prefs.searchEngineMode) {
+            0 -> showSearchPageAware(initialChar = null, preserveText = true)
+            1 -> {
+                val pkg = prefs.searchEnginePackage
+                if (pkg != null) {
+                    try {
+                        startActivity(packageManager.getLaunchIntentForPackage(pkg)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: Exception) {}
+                }
+            }
+            2 -> {
+                val pkg = prefs.searchEnginePackage
+                val query = firstChar.toString()
+                val uriRaw = prefs.searchEngineIntentUri
+                if (uriRaw != null && uriRaw.isNotEmpty()) {
+                    try {
+                        val uri = uriRaw.replace("%s", Uri.encode(query))
+                        val intent = Intent.parseUri(uri, 0)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        if (!uri.contains("query", ignoreCase = true)) {
+                            intent.putExtra(SearchManager.QUERY, query)
+                            intent.putExtra("query", query)
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                        if (pkg != null) launchSearchAppWithQuery(pkg, query)
+                    }
+                } else if (pkg != null) {
+                    launchSearchAppWithQuery(pkg, query)
+                }
+            }
+            3 -> {
+                val uri = prefs.searchEngineShortcutIntentUri
+                if (uri != null) {
+                    try {
+                        shortcutHelper.launchIntentShortcut(uri)
+                    } catch (_: Exception) {}
+                }
+            }
+            4, 5 -> { /* inject modes need KeyEvent; use search button */ }
+            else -> {}
+        }
+    }
+
+    private fun handleTypeToSearch(event: KeyEvent, typingChar: Char) {
+        if (searchOverlay.visibility == View.VISIBLE) return
+        if (injectCaptureActive) {
+            injectCaptureBuffer.append(typingChar)
+            injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
+            injectCaptureRunnable = Runnable { flushInjectCapture() }
+            val elapsed = SystemClock.uptimeMillis() - injectCaptureStartTime
+            val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
+            val windowMs = prefs.searchEngineLaunchInjectAlternativeWindowMs.toLong()
+            val remaining = (delayMs - elapsed).coerceAtLeast(0)
+            keyHandler.postDelayed(injectCaptureRunnable!!, maxOf(remaining, windowMs))
+            return
+        }
+        when (prefs.searchEngineMode) {
+            0 -> showSearchPageAware(initialChar = typingChar)
+            1 -> {
+                val pkg = prefs.searchEnginePackage
+                if (pkg != null) {
+                    try {
+                        startActivity(packageManager.getLaunchIntentForPackage(pkg)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: Exception) {}
+                }
+            }
+            2 -> {
+                val pkg = prefs.searchEnginePackage
+                val query = typingChar.toString()
+                val uriRaw = prefs.searchEngineIntentUri
+                if (uriRaw != null && uriRaw.isNotEmpty()) {
+                    try {
+                        val uri = uriRaw.replace("%s", Uri.encode(query))
+                        val intent = Intent.parseUri(uri, 0)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        if (!uri.contains("query", ignoreCase = true)) {
+                            intent.putExtra(SearchManager.QUERY, query)
+                            intent.putExtra("query", query)
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                        if (pkg != null) launchSearchAppWithQuery(pkg, query)
+                    }
+                } else if (pkg != null) {
+                    launchSearchAppWithQuery(pkg, query)
+                }
+            }
+            3 -> {
+                val uri = prefs.searchEngineShortcutIntentUri
+                if (uri != null) {
+                    try {
+                        shortcutHelper.launchIntentShortcut(uri)
+                    } catch (_: Exception) {}
+                }
+            }
+            4 -> {
+                val uri = prefs.searchEngineLaunchInjectIntentUri
+                if (uri != null) {
+                    val keyToInject = event.keyCode
+                    val firstChar = typingChar.code
+                    try {
+                        shortcutHelper.launchIntentShortcut(uri)
+                    } catch (_: Exception) {}
+                    val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
+                    if (prefs.searchEngineLaunchInjectUseRoot && prefs.searchEngineLaunchInjectAlternativeListener && firstChar > 0) {
+                        injectCaptureActive = true
+                        injectCaptureStartTime = SystemClock.uptimeMillis()
+                        injectCaptureBuffer.setLength(0)
+                        injectCaptureBuffer.append(typingChar)
+                        injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
+                        injectCaptureRunnable = Runnable { flushInjectCapture() }
+                        keyHandler.postDelayed(injectCaptureRunnable!!, delayMs)
+                    } else if (prefs.searchEngineLaunchInjectUseRoot) {
+                        keyHandler.postDelayed({ injectKeyViaRoot(keyToInject) }, delayMs)
+                    } else if (prefs.searchEngineLaunchInjectWaitForFocus) {
+                        KeyCaptureAccessibilityService.setPendingKeyInject(keyToInject)
+                        keyHandler.postDelayed({ KeyCaptureAccessibilityService.clearPendingKeyInject() }, 15_000L)
+                    } else {
+                        keyHandler.postDelayed({
+                            KeyCaptureAccessibilityService.instance?.injectKey(keyToInject)
+                        }, delayMs)
+                    }
+                }
+            }
+            5 -> { /* disabled */ }
+            else -> {}
+        }
+    }
+
+    private fun setupActionBar() {
+        applyClickHighlight(findViewById(R.id.btnSoundProfile))
+        findViewById<View>(R.id.btnSoundProfile).setOnClickListener {
+            dismissOtherOverlays()
+            soundProfileOverlay.onDismissed = { updateSoundProfileIcon() }
+            soundProfileOverlay.show()
+        }
+        applyClickHighlight(findViewById(R.id.btnSearch))
+        findViewById<View>(R.id.btnSearch).setOnClickListener { showSearchPageAware() }
 
         val contentArea = findViewById<View>(R.id.contentArea)
         contentArea.setOnLongClickListener {
@@ -677,7 +1044,10 @@ class LauncherActivity : AppCompatActivity() {
                     1 -> lockScreen()
                     2 -> {
                         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                        else {
+                            dismissOtherOverlays()
+                            notificationHub.show(prefs.getNotificationAppWhitelist())
+                        }
                     }
                     else -> { /* 0 = None */ }
                 }
@@ -784,7 +1154,6 @@ class LauncherActivity : AppCompatActivity() {
         popup.menu.add("Remove from page")
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
-        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -840,10 +1209,6 @@ class LauncherActivity : AppCompatActivity() {
                                 .show()
                     true
                 }
-                "Uninstall" -> {
-                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${shortcut.packageName}")))
-                    true
-                }
                 else -> false
             }
         }
@@ -859,7 +1224,6 @@ class LauncherActivity : AppCompatActivity() {
         else popup.menu.add(getString(R.string.pin_to_dock))
         popup.menu.add("Change Name")
         popup.menu.add("Change Icon")
-        popup.menu.add("Uninstall")
         popup.setOnMenuItemClickListener { item ->
             when (item.title) {
                 "Remove from page" -> {
@@ -921,16 +1285,6 @@ class LauncherActivity : AppCompatActivity() {
                                 }
                                 .setNegativeButton("Cancel", null)
                                 .show()
-                    true
-                }
-                "Uninstall" -> {
-                    try {
-                        val intent = Intent.parseUri(info.intentUri, 0)
-                        val pkg = intent.`package` ?: intent.component?.packageName
-                        if (pkg != null) {
-                            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))
-                        }
-                    } catch (_: Exception) {}
                     true
                 }
                 else -> false
@@ -1055,6 +1409,9 @@ class LauncherActivity : AppCompatActivity() {
             runOnUiThread {
                 notificationHub.refresh(prefs.getNotificationAppWhitelist())
                 refreshNotificationTicker()
+                listOf(150L, 400L, 1000L, 2000L).forEach { delay ->
+                    keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
+                }
             }
         }
         refreshNotificationTicker()
@@ -1086,11 +1443,6 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun refreshNotificationTicker() {
-        tickerTypingRunnable?.let { keyHandler.removeCallbacks(it) }
-        tickerDismissRunnable?.let { keyHandler.removeCallbacks(it) }
-        tickerTypingRunnable = null
-        tickerDismissRunnable = null
-
         val service = NotifListenerService.instance
         var notifs = service?.getNotifications()?.filter {
             it.packageName != "android" &&
@@ -1101,25 +1453,74 @@ class LauncherActivity : AppCompatActivity() {
         } ?: emptyList()
         val whitelist = prefs.getNotificationAppWhitelist()
         if (whitelist.isNotEmpty()) notifs = notifs.filter { it.packageName in whitelist }
+        val useApplets = prefs.useNotificationApplets
+        val hasApplets = useApplets && prefs.getNotificationApplets().isNotEmpty()
+
         if (notifs.isEmpty()) {
-            notificationTickerBar.visibility = View.GONE
+            tickerTypingRunnable?.let { keyHandler.removeCallbacks(it) }
+            tickerDismissRunnable?.let { keyHandler.removeCallbacks(it) }
+            tickerTypingRunnable = null
+            tickerDismissRunnable = null
+            currentTickerNotificationKey = null
+            notificationTickerText.text = ""
+            notificationTickerText.visibility = View.GONE
+            notificationCount.visibility = View.GONE
+            if (hasApplets) {
+                notificationTickerBar.visibility = View.VISIBLE
+                refreshNotificationApplets(emptyList())
+                notificationAppletsContainer.visibility = View.VISIBLE
+            } else {
+                notificationAppletsContainer.visibility = View.GONE
+                notificationTickerBar.visibility = View.GONE
+            }
+            return
+        }
+
+        val first = notifs.firstOrNull() ?: return
+        val fullText = getTickerDisplayText(first)
+
+        if (fullText.isNotEmpty() && first.key == currentTickerNotificationKey && (tickerTypingRunnable != null || tickerDismissRunnable != null)) {
+            notificationTickerBar.visibility = View.VISIBLE
+            notificationTickerText.visibility = View.VISIBLE
+            notificationCount.visibility = View.GONE
+            notificationAppletsContainer.visibility = View.GONE
             return
         }
 
         notificationTickerBar.visibility = View.VISIBLE
-        notificationCount.text = notifs.size.toString()
-        val first = notifs.firstOrNull() ?: return
-        val fullText = getTickerDisplayText(first)
+        if (useApplets) {
+            refreshNotificationApplets(notifs)
+            notificationAppletsContainer.visibility = View.VISIBLE
+            notificationCount.visibility = View.GONE
+        } else {
+            notificationAppletsContainer.visibility = View.GONE
+            notificationCount.text = if (notifs.size == 1) "1 Notification" else "${notifs.size} Notifications"
+            notificationCount.visibility = View.VISIBLE
+        }
+
+        tickerTypingRunnable?.let { keyHandler.removeCallbacks(it) }
+        tickerDismissRunnable?.let { keyHandler.removeCallbacks(it) }
+        tickerTypingRunnable = null
+        tickerDismissRunnable = null
+
         notificationTickerText.text = ""
         notificationTickerText.visibility = View.VISIBLE
         notificationCount.visibility = View.GONE
+        notificationAppletsContainer.visibility = View.GONE
 
         if (fullText.isEmpty()) {
             notificationTickerText.visibility = View.GONE
-            notificationCount.visibility = View.VISIBLE
+            if (useApplets) {
+                notificationAppletsContainer.visibility = View.VISIBLE
+                notificationCount.visibility = View.GONE
+            } else {
+                notificationAppletsContainer.visibility = View.GONE
+                notificationCount.visibility = View.VISIBLE
+            }
             return
         }
 
+        currentTickerNotificationKey = first.key
         val L = fullText.length
         val midLeft = (L - 1) / 2
         val midRight = L / 2
@@ -1141,13 +1542,53 @@ class LauncherActivity : AppCompatActivity() {
                         notificationTickerText.visibility = View.GONE
                         notificationTickerText.text = ""
                         tickerDismissRunnable = null
-                        notificationCount.visibility = View.VISIBLE
+                        if (prefs.useNotificationApplets) {
+                            notificationAppletsContainer.visibility = View.VISIBLE
+                            notificationCount.visibility = View.GONE
+                        } else {
+                            notificationAppletsContainer.visibility = View.GONE
+                            notificationCount.visibility = View.VISIBLE
+                        }
                     }
                     keyHandler.postDelayed(tickerDismissRunnable!!, tickerDisplayDurationMs)
                 }
             }
         }
         keyHandler.postDelayed(tickerTypingRunnable!!, tickerTypingDelayMs)
+    }
+
+    private fun refreshNotificationApplets(notifs: List<android.service.notification.StatusBarNotification>) {
+        val packages = prefs.getNotificationApplets()
+        if (packages.isEmpty()) {
+            notificationAppletsContainer.visibility = View.GONE
+            return
+        }
+        val counts = packages.associateWith { pkg -> notifs.count { it.packageName == pkg } }
+        val autoHide = prefs.notificationAppletsAutoHide
+        val iconSizePx = (28 * resources.displayMetrics.density).toInt()
+        notificationAppletsContainer.removeAllViews()
+        for (pkg in packages) {
+            val count = counts[pkg] ?: 0
+            if (autoHide && count == 0) continue
+            val row = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            val iconView = android.widget.ImageView(this).apply {
+                setImageDrawable(repository.getAppletIcon(pkg, iconSizePx))
+                layoutParams = android.widget.LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+            }
+            val countText = TextView(this).apply {
+                text = count.toString()
+                setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+                textSize = 12f
+                setTypeface(resources.getFont(R.font.bbalphas), android.graphics.Typeface.BOLD)
+                setPadding((4 * resources.displayMetrics.density).toInt(), 0, (6 * resources.displayMetrics.density).toInt(), 0)
+            }
+            row.addView(iconView)
+            row.addView(countText)
+            notificationAppletsContainer.addView(row)
+        }
     }
 
     private fun getPageDisplayName(pageId: String): String {
@@ -1192,7 +1633,7 @@ class LauncherActivity : AppCompatActivity() {
             add("Change Name")
             add("Change Icon")
             add(getString(R.string.app_info))
-            add("Uninstall")
+            add("Hide app")
         }
         popup.setOnMenuItemClickListener { item ->
             val title = item.title?.toString() ?: return@setOnMenuItemClickListener false
@@ -1283,8 +1724,26 @@ class LauncherActivity : AppCompatActivity() {
                     ).apply { data = Uri.parse("package:${app.packageName}") })
                     true
                 }
-                title == "Uninstall" -> {
-                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}")))
+                title == "Hide app" -> {
+                    val currentPageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    val canHideFromPageOnly = currentPageId in listOf("favorites") || currentPageId.startsWith("custom_")
+                    val options = if (canHideFromPageOnly) arrayOf("Hide everywhere", "Hide from this page only") else arrayOf("Hide everywhere")
+                    AlertDialog.Builder(this, R.style.BBDialogTheme)
+                        .setTitle("Hide app")
+                        .setItems(options) { _, which ->
+                            when (which) {
+                                0 -> {
+                                    prefs.hideApp(cn)
+                                    reloadAppsAndRefresh()
+                                }
+                                1 -> if (canHideFromPageOnly) {
+                                    prefs.toggleAppOnPage(cn, currentPageId)
+                                    reloadAppsAndRefresh()
+                                }
+                            }
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                     true
                 }
                 else -> false
@@ -1447,12 +1906,16 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun doBackAction() {
         when {
+            soundProfileOverlay.visibility == View.VISIBLE -> soundProfileOverlay.hide()
             searchOverlay.visibility == View.VISIBLE -> searchOverlay.dismiss()
             notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
-            ::pagerAdapter.isInitialized && appPager.currentItem != prefs.defaultTab ->
-                appPager.setCurrentItem(prefs.defaultTab, true)
+            ::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition() ->
+                appPager.setCurrentItem(getDefaultTabPosition(), true)
         }
     }
+
+    private fun getDefaultTabPosition(): Int =
+        if (::pagerAdapter.isInitialized) pagerAdapter.getPositionForPageId(prefs.defaultTabPageId) else 0
 
     private fun lockScreen() {
         val a11y = KeyCaptureAccessibilityService.instance
@@ -1487,6 +1950,38 @@ class LauncherActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    /** Returns a printable character from a key event, respecting Shift/Alt for capitals and symbols. Includes numbers (main and numpad). Alt lock (double-tap Alt) is also applied. */
+    private fun getTypingChar(event: KeyEvent): Char? {
+        var c = event.getUnicodeChar(event.metaState)
+        if (c <= 0) {
+            val keyMap = try {
+                android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.BUILT_IN_KEYBOARD)
+            } catch (_: Exception) {
+                try { android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD) } catch (_: Exception) { null }
+            }
+            if (keyMap != null) {
+                c = keyMap.get(event.keyCode, event.metaState)
+            }
+        }
+        if (c > 0) {
+            val ch = c.toChar()
+            if (ch.code in 32..126 || ch.isLetterOrDigit()) return ch
+        }
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_0, KeyEvent.KEYCODE_NUMPAD_0 -> return '0'
+            KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> return '1'
+            KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_NUMPAD_2 -> return '2'
+            KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_NUMPAD_3 -> return '3'
+            KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_NUMPAD_4 -> return '4'
+            KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_NUMPAD_5 -> return '5'
+            KeyEvent.KEYCODE_6, KeyEvent.KEYCODE_NUMPAD_6 -> return '6'
+            KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_NUMPAD_7 -> return '7'
+            KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> return '8'
+            KeyEvent.KEYCODE_9, KeyEvent.KEYCODE_NUMPAD_9 -> return '9'
+            else -> return null
+        }
+    }
+
     private fun refreshLauncher() {
         CoroutineScope(Dispatchers.Main).launch {
             withContext(Dispatchers.IO) { repository.loadApps() }
@@ -1495,6 +1990,10 @@ class LauncherActivity : AppCompatActivity() {
             loadPageIconPacks()
             recreate()
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
+        return super.dispatchKeyEvent(event ?: return false)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -1514,98 +2013,19 @@ class LauncherActivity : AppCompatActivity() {
             keyHandler.postDelayed(keyRoleLongPressRunnable!!, LONG_PRESS_MS)
             return true
         }
-        if (searchOverlay.visibility != View.VISIBLE && prefs.searchOnType && event != null && event.isPrintingKey) {
-            if (injectCaptureActive && event.unicodeChar.toInt() > 0) {
-                injectCaptureBuffer.append(event.unicodeChar.toChar())
-                injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
-                injectCaptureRunnable = Runnable { flushInjectCapture() }
-                val elapsed = SystemClock.uptimeMillis() - injectCaptureStartTime
-                val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
-                val windowMs = prefs.searchEngineLaunchInjectAlternativeWindowMs.toLong()
-                val remaining = (delayMs - elapsed).coerceAtLeast(0)
-                keyHandler.postDelayed(injectCaptureRunnable!!, maxOf(remaining, windowMs))
+        // Focus is on content so trackpad works natively. Intercept first typing key (incl. Alt+key for
+        // symbols) and show search; modes 1-5 always handled here. No double-tap Alt (IME) support.
+        val typingChar = event?.let { getTypingChar(it) }
+        if (searchOverlay.visibility != View.VISIBLE && prefs.searchOnType && typingChar != null && event != null) {
+            if (prefs.searchEngineMode == 0) {
+                searchInputInBar.requestFocus()
+                searchInputInBar.setText(typingChar.toString())
+                searchInputInBar.setSelection(1)
+                showSearchPageAware(initialChar = null, preserveText = true)
                 return true
             }
-            when (prefs.searchEngineMode) {
-                0 -> {
-                    showSearchPageAware(initialChar = event.unicodeChar.toChar())
-                    return true
-                }
-                1 -> {
-                    val pkg = prefs.searchEnginePackage
-                    if (pkg != null) {
-                        try {
-                            startActivity(packageManager.getLaunchIntentForPackage(pkg)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        } catch (_: Exception) {}
-                        return true
-                    }
-                }
-                2 -> {
-                    val pkg = prefs.searchEnginePackage
-                    val query = event.unicodeChar.toChar().toString()
-                    val uriRaw = prefs.searchEngineIntentUri
-                    if (uriRaw != null && uriRaw.isNotEmpty()) {
-                        try {
-                            val uri = uriRaw.replace("%s", Uri.encode(query))
-                            val intent = Intent.parseUri(uri, 0)
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            if (!uri.contains("query", ignoreCase = true)) {
-                                intent.putExtra(SearchManager.QUERY, query)
-                                intent.putExtra("query", query)
-                            }
-                            startActivity(intent)
-                        } catch (_: Exception) {
-                            if (pkg != null) launchSearchAppWithQuery(pkg, query)
-                        }
-                        return true
-                    }
-                    if (pkg != null) {
-                        launchSearchAppWithQuery(pkg, query)
-                        return true
-                    }
-                }
-                3 -> {
-                    val uri = prefs.searchEngineShortcutIntentUri
-                    if (uri != null) {
-                        try {
-                            shortcutHelper.launchIntentShortcut(uri)
-                        } catch (_: Exception) {}
-                        return true
-                    }
-                }
-                4 -> {
-                    val uri = prefs.searchEngineLaunchInjectIntentUri
-                    if (uri != null) {
-                        val keyToInject = event.keyCode
-                        val firstChar = event.unicodeChar.toInt()
-                        try {
-                            shortcutHelper.launchIntentShortcut(uri)
-                        } catch (_: Exception) {}
-                        val delayMs = prefs.searchEngineLaunchInjectDelayMs.toLong()
-                        if (prefs.searchEngineLaunchInjectUseRoot && prefs.searchEngineLaunchInjectAlternativeListener && firstChar > 0) {
-                            injectCaptureActive = true
-                            injectCaptureStartTime = SystemClock.uptimeMillis()
-                            injectCaptureBuffer.setLength(0)
-                            injectCaptureBuffer.append(firstChar.toChar())
-                            injectCaptureRunnable?.let { keyHandler.removeCallbacks(it) }
-                            injectCaptureRunnable = Runnable { flushInjectCapture() }
-                            keyHandler.postDelayed(injectCaptureRunnable!!, delayMs)
-                        } else if (prefs.searchEngineLaunchInjectUseRoot) {
-                            keyHandler.postDelayed({ injectKeyViaRoot(keyToInject) }, delayMs)
-                        } else if (prefs.searchEngineLaunchInjectWaitForFocus) {
-                            KeyCaptureAccessibilityService.setPendingKeyInject(keyToInject)
-                            keyHandler.postDelayed({ KeyCaptureAccessibilityService.clearPendingKeyInject() }, 15_000L)
-                        } else {
-                            keyHandler.postDelayed({
-                                KeyCaptureAccessibilityService.instance?.injectKey(keyToInject)
-                            }, delayMs)
-                        }
-                        return true
-                    }
-                }
-                5 -> { /* disabled */ }
-                else -> {}
-            }
+            handleTypeToSearch(event, typingChar)
+            return true
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -1630,13 +2050,17 @@ class LauncherActivity : AppCompatActivity() {
                 keyRoleDoublePressRunnable = null
                 when (capturedRole) {
                     KEY_ROLE_HOME -> {
-                        if (::pagerAdapter.isInitialized && appPager.currentItem == prefs.defaultTab) lockScreen()
-                        else if (::pagerAdapter.isInitialized) appPager.setCurrentItem(prefs.defaultTab, true)
+                        val defPos = getDefaultTabPosition()
+                        if (::pagerAdapter.isInitialized && appPager.currentItem == defPos) lockScreen()
+                        else if (::pagerAdapter.isInitialized) appPager.setCurrentItem(defPos, true)
                     }
                     KEY_ROLE_BACK -> if (count >= 2) openQuickSettings() else doBackAction()
                     KEY_ROLE_RECENTS -> if (count >= 2) {
                         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                        else {
+                            dismissOtherOverlays()
+                            notificationHub.show(prefs.getNotificationAppWhitelist())
+                        }
                     }
                     else -> {}
                 }
@@ -1670,20 +2094,44 @@ class LauncherActivity : AppCompatActivity() {
             intent.removeExtra(OPEN_HOME_MENU_EXTRA)
             return
         }
+        if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
         if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-        if (::pagerAdapter.isInitialized && appPager.currentItem != prefs.defaultTab) {
-            appPager.setCurrentItem(prefs.defaultTab, true)
+        if (::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition()) {
+            appPager.setCurrentItem(getDefaultTabPosition(), true)
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        clearHighlightTraces()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) clearHighlightTraces()
     }
 
     override fun onResume() {
         super.onResume()
+        window.decorView.post { clearHighlightTraces() }
+        NotifListenerService.onNotificationsChanged = {
+            runOnUiThread {
+                notificationHub.refresh(prefs.getNotificationAppWhitelist())
+                refreshNotificationTicker()
+                listOf(150L, 400L, 1000L, 2000L).forEach { delay ->
+                    keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
+                }
+            }
+        }
         updateSoundProfileIcon()
         refreshWallpaper()
         applySystemUI()
         statusBar.refresh()
         refreshNotificationTicker()
+        listOf(300L, 800L, 1800L).forEach { delay ->
+            keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
+        }
         if (notificationHub.visibility == View.VISIBLE) notificationHub.refresh(prefs.getNotificationAppWhitelist())
         applyOpacitySettings()
 
@@ -1721,6 +2169,15 @@ class LauncherActivity : AppCompatActivity() {
             if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
             dockBar.loadDock()
         }
+        if (::pagerAdapter.isInitialized) {
+            pagerAdapter.reloadPageOrder()
+            pagerAdapter.notifyDataSetChanged()
+            buildTabBar()
+            updateTabHighlight(appPager.currentItem)
+        }
+        reloadAppsAndRefresh()
+        refreshClickHighlights()
+        window.decorView.post { clearHighlightTraces() }
     }
 
     override fun onDestroy() {

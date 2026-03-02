@@ -18,6 +18,8 @@ class NotificationHub @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
+    var onClearAll: (() -> Unit)? = null
+
     private val scrollView: ScrollView
     private val container: LinearLayout
     private val emptyText: TextView
@@ -26,6 +28,8 @@ class NotificationHub @JvmOverloads constructor(
 
     init {
         setBackgroundColor(resources.getColor(R.color.bb_overlay_dark, null))
+        isFocusable = false
+        descendantFocusability = FOCUS_AFTER_DESCENDANTS
 
         emptyText = TextView(context).apply {
             text = context.getString(R.string.no_notifications)
@@ -40,6 +44,7 @@ class NotificationHub @JvmOverloads constructor(
 
         scrollView = ScrollView(context).apply {
             isClickable = true
+            isFocusable = false
             setOnClickListener { /* consume so root doesn't close */ }
         }
         container = LinearLayout(context).apply {
@@ -106,6 +111,9 @@ class NotificationHub @JvmOverloads constructor(
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(10), dp(8), dp(10), dp(8))
                     setBackgroundColor(resources.getColor(R.color.bb_overlay, null))
+                    isFocusable = true
+                    isFocusableInTouchMode = false
+                    id = View.generateViewId()
                     setOnClickListener {
                         var opened = false
                         try {
@@ -192,9 +200,13 @@ class NotificationHub @JvmOverloads constructor(
                 typeface = font
                 gravity = Gravity.CENTER
                 setPadding(dp(12), dp(6), dp(12), dp(6))
+                isFocusable = true
+                isFocusableInTouchMode = false
+                id = View.generateViewId()
                 setOnClickListener {
                     NotifListenerService.instance?.dismissAllNotifications()
                     refresh(appWhitelist)
+                    onClearAll?.invoke()
                 }
             }
             container.addView(clearBtn, LinearLayout.LayoutParams(
@@ -204,6 +216,18 @@ class NotificationHub @JvmOverloads constructor(
                 topMargin = dp(6)
                 gravity = Gravity.CENTER_HORIZONTAL
             })
+
+            // Chain focus: rows then Clear all, so trackpad moves between items
+            for (i in 0 until container.childCount - 1) {
+                val curr = container.getChildAt(i)
+                val next = container.getChildAt(i + 1)
+                if (curr.isFocusable && next.isFocusable) {
+                    curr.nextFocusDownId = next.id
+                    next.nextFocusUpId = curr.id
+                }
+            }
+            // Focus first item when hub is shown (post so it works when opened by touch or trackpad)
+            container.post { container.getChildAt(0)?.requestFocus() }
         }
     }
 

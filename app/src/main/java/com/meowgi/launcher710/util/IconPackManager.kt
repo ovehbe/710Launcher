@@ -151,13 +151,19 @@ class IconPackManager(private val context: Context) {
     }
 
     private fun drawableToBitmap(drawable: Drawable, size: Int): Bitmap {
-        if (drawable is BitmapDrawable && drawable.bitmap != null) {
-            return Bitmap.createScaledBitmap(drawable.bitmap, size, size, true)
+        val src = when {
+            drawable is BitmapDrawable && drawable.bitmap != null -> drawable.bitmap!!
+            else -> {
+                val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else size * 2
+                val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else size * 2
+                val srcSize = maxOf(w, h, size * 2)
+                val tmp = Bitmap.createBitmap(srcSize, srcSize, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(tmp)
+                drawable.setBounds(0, 0, srcSize, srcSize)
+                drawable.draw(canvas)
+                tmp
+            }
         }
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, size, size)
-        drawable.draw(canvas)
-        return bitmap
+        return Bitmap.createScaledBitmap(src, size, size, true)
     }
 }

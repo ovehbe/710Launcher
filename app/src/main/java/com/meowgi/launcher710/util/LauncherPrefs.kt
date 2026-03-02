@@ -1,7 +1,10 @@
 package com.meowgi.launcher710.util
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.drawable.RippleDrawable
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -24,21 +27,110 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("headerAlpha", 125)
         set(v) = prefs.edit().putInt("headerAlpha", v).apply()
 
+    var headerVisible: Boolean
+        get() = prefs.getBoolean("headerVisible", true)
+        set(v) = prefs.edit().putBoolean("headerVisible", v).apply()
+
+    var headerShowDate: Boolean
+        get() = prefs.getBoolean("headerShowDate", true)
+        set(v) = prefs.edit().putBoolean("headerShowDate", v).apply()
+
+    var headerShowClock: Boolean
+        get() = prefs.getBoolean("headerShowClock", true)
+        set(v) = prefs.edit().putBoolean("headerShowClock", v).apply()
+
+    /** 0 = date left + clock right, 1 = clock left + date right, 2 = both centered */
+    var headerLayout: Int
+        get() = prefs.getInt("headerLayout", 0)
+        set(v) = prefs.edit().putInt("headerLayout", v).apply()
+
+    /** 0 = nothing, 1 = app (package), 2 = shortcut (intentUri) */
+    var headerDateAction: Int
+        get() = prefs.getInt("headerDateAction", 0)
+        set(v) = prefs.edit().putInt("headerDateAction", v).apply()
+
+    var headerDateActionPackage: String?
+        get() = prefs.getString("headerDateActionPackage", null)
+        set(v) = prefs.edit().putString("headerDateActionPackage", v).apply()
+
+    var headerDateActionIntentUri: String?
+        get() = prefs.getString("headerDateActionIntentUri", null)
+        set(v) = prefs.edit().putString("headerDateActionIntentUri", v).apply()
+
+    var headerDateActionName: String?
+        get() = prefs.getString("headerDateActionName", null)
+        set(v) = prefs.edit().putString("headerDateActionName", v).apply()
+
+    var headerClockAction: Int
+        get() = prefs.getInt("headerClockAction", 0)
+        set(v) = prefs.edit().putInt("headerClockAction", v).apply()
+
+    var headerClockActionPackage: String?
+        get() = prefs.getString("headerClockActionPackage", null)
+        set(v) = prefs.edit().putString("headerClockActionPackage", v).apply()
+
+    var headerClockActionIntentUri: String?
+        get() = prefs.getString("headerClockActionIntentUri", null)
+        set(v) = prefs.edit().putString("headerClockActionIntentUri", v).apply()
+
+    var headerClockActionName: String?
+        get() = prefs.getString("headerClockActionName", null)
+        set(v) = prefs.edit().putString("headerClockActionName", v).apply()
+
     var tabBarAlpha: Int
         get() = prefs.getInt("tabBarAlpha", 125)
         set(v) = prefs.edit().putInt("tabBarAlpha", v).apply()
 
     var dockAlpha: Int
-        get() = prefs.getInt("dockAlpha", 166) // 65%
+        get() = prefs.getInt("dockAlpha", 115) // 45%
         set(v) = prefs.edit().putInt("dockAlpha", v).apply()
 
     var dockBackgroundColor: Int
         get() = prefs.getInt("dockBackgroundColor", 0xFF000000.toInt())
         set(v) = prefs.edit().putInt("dockBackgroundColor", v).apply()
 
+    /** Opacity (0–255) for the tab bar highlight (selected tab background). */
+    var tabBarHighlightAlpha: Int
+        get() = prefs.getInt("tabBarHighlightAlpha", 92) // 36%
+        set(v) = prefs.edit().putInt("tabBarHighlightAlpha", v.coerceIn(0, 255)).apply()
+
+    /** true = use accent color for tab bar highlight; false = use tabBarHighlightCustomColor */
+    var tabBarHighlightUseAccent: Boolean
+        get() = prefs.getBoolean("tabBarHighlightUseAccent", false)
+        set(v) = prefs.edit().putBoolean("tabBarHighlightUseAccent", v).apply()
+
+    var tabBarHighlightCustomColor: Int
+        get() = prefs.getInt("tabBarHighlightCustomColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("tabBarHighlightCustomColor", v).apply()
+
     var accentColor: Int
         get() = prefs.getInt("accentColor", 0xFF0073BC.toInt())
         set(v) = prefs.edit().putInt("accentColor", v).apply()
+
+    /** Opacity (0–255) for the click/tap highlight ripple on launcher elements. */
+    var clickHighlightAlpha: Int
+        get() = prefs.getInt("clickHighlightAlpha", 64) // 25%
+        set(v) = prefs.edit().putInt("clickHighlightAlpha", v.coerceIn(0, 255)).apply()
+
+    /** true = use accent color for click highlight; false = use clickHighlightCustomColor */
+    var clickHighlightUseAccent: Boolean
+        get() = prefs.getBoolean("clickHighlightUseAccent", false)
+        set(v) = prefs.edit().putBoolean("clickHighlightUseAccent", v).apply()
+
+    var clickHighlightCustomColor: Int
+        get() = prefs.getInt("clickHighlightCustomColor", 0xFFFFFFFF.toInt())
+        set(v) = prefs.edit().putInt("clickHighlightCustomColor", v).apply()
+
+    /** Returns a RippleDrawable for click feedback using the configured highlight color and opacity. Uses a rect mask to constrain the ripple and avoid chunky rectangular artifacts. */
+    fun getClickHighlightRipple(context: Context): RippleDrawable {
+        val baseColor = if (clickHighlightUseAccent) accentColor else clickHighlightCustomColor
+        val color = Color.argb(clickHighlightAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
+        val mask = android.graphics.drawable.GradientDrawable().apply {
+            setShape(android.graphics.drawable.GradientDrawable.RECTANGLE)
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(color), null, mask)
+    }
 
     // --- Grid ---
     var gridColumns: Int
@@ -128,6 +220,11 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("iconFallbackShape", SHAPE_ROUNDED_SQUARE)
         set(v) = prefs.edit().putInt("iconFallbackShape", v).apply()
 
+    /** 0 = default (no shaping), 1 = circle, 2 = rounded square, 3 = square, 4 = squircle */
+    var iconGlobalShape: Int
+        get() = prefs.getInt("iconGlobalShape", 0)
+        set(v) = prefs.edit().putInt("iconGlobalShape", v).apply()
+
     // --- UI ---
     /** In-app BB-style status bar visibility. */
     var statusBarVisible: Boolean
@@ -172,6 +269,23 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("actionBarAlpha", 69) // 27%
         set(v) = prefs.edit().putInt("actionBarAlpha", v).apply()
 
+    /** 0 = notification hub (default), 1 = app (package), 2 = shortcut (intentUri) */
+    var actionBarCenterAction: Int
+        get() = prefs.getInt("actionBarCenterAction", 0)
+        set(v) = prefs.edit().putInt("actionBarCenterAction", v).apply()
+
+    var actionBarCenterActionPackage: String?
+        get() = prefs.getString("actionBarCenterActionPackage", null)
+        set(v) = prefs.edit().putString("actionBarCenterActionPackage", v).apply()
+
+    var actionBarCenterActionIntentUri: String?
+        get() = prefs.getString("actionBarCenterActionIntentUri", null)
+        set(v) = prefs.edit().putString("actionBarCenterActionIntentUri", v).apply()
+
+    var actionBarCenterActionName: String?
+        get() = prefs.getString("actionBarCenterActionName", null)
+        set(v) = prefs.edit().putString("actionBarCenterActionName", v).apply()
+
     /** Opacity (0–255) for the notification hub overlay. */
     var notificationHubAlpha: Int
         get() = prefs.getInt("notificationHubAlpha", 179) // 70%
@@ -182,12 +296,87 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("searchOverlayAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("searchOverlayAlpha", v).apply()
 
+    /** Opacity (0–255) for the sound profile overlay background. */
+    var soundProfileOverlayAlpha: Int
+        get() = prefs.getInt("soundProfileOverlayAlpha", 179) // 70%
+        set(v) = prefs.edit().putInt("soundProfileOverlayAlpha", v).apply()
+
+    /** Opacity (0–255) for the sound profile selected row highlight. Default 92 = 36%. */
+    var soundProfileHighlightAlpha: Int
+        get() = prefs.getInt("soundProfileHighlightAlpha", 92)
+        set(v) = prefs.edit().putInt("soundProfileHighlightAlpha", v.coerceIn(0, 255)).apply()
+
+    /** true = use accent color for sound profile highlight; false = use soundProfileHighlightCustomColor */
+    var soundProfileHighlightUseAccent: Boolean
+        get() = prefs.getBoolean("soundProfileHighlightUseAccent", false)
+        set(v) = prefs.edit().putBoolean("soundProfileHighlightUseAccent", v).apply()
+
+    /** Sound profile row highlight color when not using accent. Default black. */
+    var soundProfileHighlightCustomColor: Int
+        get() = prefs.getInt("soundProfileHighlightCustomColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("soundProfileHighlightCustomColor", v).apply()
+
     /** Package names to show in hub/ticker; empty = all. */
     fun getNotificationAppWhitelist(): Set<String> =
         prefs.getStringSet("notificationAppWhitelist", null) ?: emptySet()
 
     fun setNotificationAppWhitelist(packages: Set<String>) =
         prefs.edit().putStringSet("notificationAppWhitelist", packages).apply()
+
+    // --- Notification Applets ---
+    var useNotificationApplets: Boolean
+        get() = prefs.getBoolean("useNotificationApplets", false)
+        set(v) = prefs.edit().putBoolean("useNotificationApplets", v).apply()
+
+    var notificationAppletsAutoHide: Boolean
+        get() = prefs.getBoolean("notificationAppletsAutoHide", false)
+        set(v) = prefs.edit().putBoolean("notificationAppletsAutoHide", v).apply()
+
+    fun getNotificationApplets(): List<String> {
+        val data = prefs.getString("notificationApplets", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(data)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun setNotificationApplets(packages: List<String>) {
+        val arr = org.json.JSONArray()
+        packages.forEach { arr.put(it) }
+        prefs.edit().putString("notificationApplets", arr.toString()).apply()
+    }
+
+    fun getAppletCustomIcon(packageName: String): String? {
+        val map = prefs.getString("appletCustomIcons", null) ?: return null
+        return try { org.json.JSONObject(map).optString(packageName, "").takeIf { it.isNotEmpty() } } catch (_: Exception) { null }
+    }
+
+    fun getAppletCustomIconPack(packageName: String): String? {
+        val map = prefs.getString("appletCustomIconPacks", null) ?: return null
+        return try { org.json.JSONObject(map).optString(packageName, "").takeIf { it.isNotEmpty() } } catch (_: Exception) { null }
+    }
+
+    fun setAppletCustomIcon(packageName: String, drawableName: String?, packPackage: String? = null) {
+        val obj = try { org.json.JSONObject(prefs.getString("appletCustomIcons", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+        val packObj = try { org.json.JSONObject(prefs.getString("appletCustomIconPacks", null) ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+        if (drawableName != null) {
+            obj.put(packageName, drawableName)
+            if (packPackage != null) packObj.put(packageName, packPackage) else packObj.remove(packageName)
+        } else {
+            obj.remove(packageName)
+            packObj.remove(packageName)
+        }
+        prefs.edit().putString("appletCustomIcons", obj.toString()).putString("appletCustomIconPacks", packObj.toString()).apply()
+    }
+
+    /** 0 = default (no shaping), 1 = circle, 2 = rounded square, 3 = square, 4 = squircle */
+    var appletIconShape: Int
+        get() = prefs.getInt("appletIconShape", 0)
+        set(v) = prefs.edit().putInt("appletIconShape", v).apply()
+
+    /** Icon pack for notification applets; uses same per-page key "applets". */
+    fun getAppletIconPackPackage(): String? = getPageIconPackPackage("applets")
+    fun setAppletIconPackPackage(pkg: String?) = setPageIconPackPackage("applets", pkg)
 
     // --- Behavior ---
     /** 0 = bottom bar only, 1 = anywhere on screen */
@@ -198,6 +387,22 @@ class LauncherPrefs(context: Context) {
     var defaultTab: Int
         get() = prefs.getInt("defaultTab", 1)
         set(v) = prefs.edit().putInt("defaultTab", v).apply()
+
+    /** Page ID for default home tab (e.g. "favorites", "all", "frequent"). Resolves to position in filtered page order. */
+    var defaultTabPageId: String
+        get() {
+            if (prefs.contains("defaultTabPageId")) return prefs.getString("defaultTabPageId", "favorites")!!
+            val raw = getPageOrder()
+            val idx = prefs.getInt("defaultTab", 1).coerceIn(0, (raw.size - 1).coerceAtLeast(0))
+            val pageId = raw.getOrElse(idx) { "favorites" }
+            prefs.edit().putString("defaultTabPageId", pageId).apply()
+            return pageId
+        }
+        set(v) = prefs.edit().putString("defaultTabPageId", v).apply()
+
+    /** Filtered page order (excludes hidden All/Frequent). */
+    fun getFilteredPageOrder(): List<String> =
+        getPageOrder().filter { pid -> if (pid == "all") !hideAllPage else if (pid == "frequent") !hideFrequentPage else true }
 
     /** 0 = alphabetical, 1 = last opened, 2 = last installed, 3 = most used */
     var appSortMode: Int
@@ -275,6 +480,31 @@ class LauncherPrefs(context: Context) {
     var searchEngineLaunchInjectAlternativeWindowMs: Int
         get() = prefs.getInt("searchEngineLaunchInjectAlternativeWindowMs", 120).coerceIn(0, 500)
         set(v) = prefs.edit().putInt("searchEngineLaunchInjectAlternativeWindowMs", v.coerceIn(0, 500)).apply()
+
+    /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used by built-in search to convert letters to dial digits. */
+    var dialerNumberLayout: Int
+        get() = prefs.getInt("dialerNumberLayout", 0).coerceIn(0, 1)
+        set(v) = prefs.edit().putInt("dialerNumberLayout", v.coerceIn(0, 1)).apply()
+
+    /** When true, extended search includes contacts. */
+    var searchContactsEnabled: Boolean
+        get() = prefs.getBoolean("searchContactsEnabled", true)
+        set(v) = prefs.edit().putBoolean("searchContactsEnabled", v).apply()
+
+    /** Contact source for search: "all", "favorites", or "accountType:accountName" (e.g. "com.google:user@gmail.com"). */
+    var searchContactsSource: String?
+        get() = prefs.getString("searchContactsSource", "all")?.takeIf { it.isNotEmpty() } ?: "all"
+        set(v) = prefs.edit().putString("searchContactsSource", v ?: "all").apply()
+
+    /** Custom contact icon: drawable name in the pack. When set with contactIconPackPackage, search shows this icon for contacts. */
+    var contactIconDrawableName: String?
+        get() = prefs.getString("contactIconDrawableName", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("contactIconDrawableName", v ?: "").apply()
+
+    /** Custom contact icon: icon pack package. When set with contactIconDrawableName, search uses this icon for contacts. */
+    var contactIconPackPackage: String?
+        get() = prefs.getString("contactIconPackPackage", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("contactIconPackPackage", v ?: "").apply()
 
     // --- Key shortcuts (recorded key codes) ---
     var keyShortcutsEnabled: Boolean
@@ -394,6 +624,30 @@ class LauncherPrefs(context: Context) {
         }
         setPageApps(pageId, current)
         return added
+    }
+
+    var hideAllPage: Boolean
+        get() = prefs.getBoolean("hideAllPage", false)
+        set(v) = prefs.edit().putBoolean("hideAllPage", v).apply()
+
+    var hideFrequentPage: Boolean
+        get() = prefs.getBoolean("hideFrequentPage", false)
+        set(v) = prefs.edit().putBoolean("hideFrequentPage", v).apply()
+
+    fun getHiddenApps(): Set<String> = prefs.getStringSet("hiddenApps", null) ?: emptySet()
+
+    fun setHiddenApps(apps: Set<String>) = prefs.edit().putStringSet("hiddenApps", apps).apply()
+
+    fun hideApp(componentName: String) {
+        val current = getHiddenApps().toMutableSet()
+        current.add(componentName)
+        setHiddenApps(current)
+    }
+
+    fun unhideApp(componentName: String) {
+        val current = getHiddenApps().toMutableSet()
+        current.remove(componentName)
+        setHiddenApps(current)
     }
 
     /** Ordered list of favorite app component names (for drag-to-reorder on Favorites tab). */
@@ -527,19 +781,25 @@ class LauncherPrefs(context: Context) {
 
     /** Set of keys that have fixed names (not dynamic like pageApps_*). Export explicitly includes these so defaults are captured. */
     private val fixedExportKeys: Set<String> = setOf(
-        "mainBackgroundAlpha", "statusBarAlpha", "headerAlpha", "tabBarAlpha", "dockAlpha", "dockBackgroundColor", "accentColor",
+        "mainBackgroundAlpha", "statusBarAlpha", "headerAlpha", "headerVisible", "headerShowDate", "headerShowClock", "headerLayout",
+        "headerDateAction", "headerDateActionPackage", "headerDateActionIntentUri", "headerDateActionName",
+        "headerClockAction", "headerClockActionPackage", "headerClockActionIntentUri", "headerClockActionName",
+        "tabBarAlpha", "tabBarHighlightAlpha", "tabBarHighlightUseAccent", "tabBarHighlightCustomColor", "dockAlpha", "dockBackgroundColor", "accentColor",
+        "clickHighlightAlpha", "clickHighlightUseAccent", "clickHighlightCustomColor",
         "gridColumns", "iconSizeIndex", "appViewMode", "appViewModeAllOnly", "listViewPages", "listViewColumns", "listViewBgAlpha",
         "listViewUseAccent", "listViewCustomColor", "listViewIconBarAlpha", "listViewNameBarAlpha",
-        "iconPackPackage", "allPageIconPackPackage", "dockIconPackPackage", "iconFallbackShape",
+        "iconPackPackage", "allPageIconPackPackage", "dockIconPackPackage", "iconFallbackShape", "iconGlobalShape",
         "statusBarVisible", "statusBarShowClock", "statusBarShowBattery", "statusBarShowNetwork", "statusBarShowBluetooth",
         "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
-        "actionBarAlpha", "notificationHubAlpha", "searchOverlayAlpha", "notificationAppWhitelist",
-        "swipeMode", "defaultTab", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
+        "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
+        "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape",
+        "swipeMode", "defaultTab", "defaultTabPageId", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
         "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
         "searchEngineLaunchInjectWaitForFocus", "searchEngineLaunchInjectUseRoot", "searchEngineLaunchInjectAlternativeListener",
-        "searchEngineLaunchInjectAlternativeWindowMs", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
+        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsSource", "contactIconDrawableName", "contactIconPackPackage", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
         "customIcons", "customLabels", "customPages", "pageOrder", "favoriteOrder", "verticalScrollEnabled",
+        "hideAllPage", "hideFrequentPage", "hiddenApps",
         "widgetData", "widgetHeights"
     )
 
@@ -567,7 +827,25 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "mainBackgroundAlpha", "i", mainBackgroundAlpha)
         putEntry(arr, "statusBarAlpha", "i", statusBarAlpha)
         putEntry(arr, "headerAlpha", "i", headerAlpha)
+        putEntry(arr, "headerVisible", "b", headerVisible)
+        putEntry(arr, "headerShowDate", "b", headerShowDate)
+        putEntry(arr, "headerShowClock", "b", headerShowClock)
+        putEntry(arr, "headerLayout", "i", headerLayout)
+        putEntry(arr, "headerDateAction", "i", headerDateAction)
+        putEntry(arr, "headerDateActionPackage", "s", headerDateActionPackage)
+        putEntry(arr, "headerDateActionIntentUri", "s", headerDateActionIntentUri)
+        putEntry(arr, "headerDateActionName", "s", headerDateActionName)
+        putEntry(arr, "headerClockAction", "i", headerClockAction)
+        putEntry(arr, "headerClockActionPackage", "s", headerClockActionPackage)
+        putEntry(arr, "headerClockActionIntentUri", "s", headerClockActionIntentUri)
+        putEntry(arr, "headerClockActionName", "s", headerClockActionName)
         putEntry(arr, "tabBarAlpha", "i", tabBarAlpha)
+        putEntry(arr, "tabBarHighlightAlpha", "i", tabBarHighlightAlpha)
+        putEntry(arr, "tabBarHighlightUseAccent", "b", tabBarHighlightUseAccent)
+        putEntry(arr, "tabBarHighlightCustomColor", "i", tabBarHighlightCustomColor)
+        putEntry(arr, "clickHighlightAlpha", "i", clickHighlightAlpha)
+        putEntry(arr, "clickHighlightUseAccent", "b", clickHighlightUseAccent)
+        putEntry(arr, "clickHighlightCustomColor", "i", clickHighlightCustomColor)
         putEntry(arr, "dockAlpha", "i", dockAlpha)
         putEntry(arr, "dockBackgroundColor", "i", dockBackgroundColor)
         putEntry(arr, "accentColor", "i", accentColor)
@@ -586,6 +864,7 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "allPageIconPackPackage", "s", allPageIconPackPackage)
         putEntry(arr, "dockIconPackPackage", "s", dockIconPackPackage)
         putEntry(arr, "iconFallbackShape", "i", iconFallbackShape)
+        putEntry(arr, "iconGlobalShape", "i", iconGlobalShape)
         putEntry(arr, "statusBarVisible", "b", statusBarVisible)
         putEntry(arr, "statusBarShowClock", "b", statusBarShowClock)
         putEntry(arr, "statusBarShowBattery", "b", statusBarShowBattery)
@@ -597,11 +876,26 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "systemStatusBarAlpha", "i", systemStatusBarAlpha)
         putEntry(arr, "navigationBarVisible", "b", navigationBarVisible)
         putEntry(arr, "actionBarAlpha", "i", actionBarAlpha)
+        putEntry(arr, "actionBarCenterAction", "i", actionBarCenterAction)
+        putEntry(arr, "actionBarCenterActionPackage", "s", actionBarCenterActionPackage)
+        putEntry(arr, "actionBarCenterActionIntentUri", "s", actionBarCenterActionIntentUri)
+        putEntry(arr, "actionBarCenterActionName", "s", actionBarCenterActionName)
         putEntry(arr, "notificationHubAlpha", "i", notificationHubAlpha)
         putEntry(arr, "searchOverlayAlpha", "i", searchOverlayAlpha)
+        putEntry(arr, "soundProfileOverlayAlpha", "i", soundProfileOverlayAlpha)
+        putEntry(arr, "soundProfileHighlightAlpha", "i", soundProfileHighlightAlpha)
+        putEntry(arr, "soundProfileHighlightUseAccent", "b", soundProfileHighlightUseAccent)
+        putEntry(arr, "soundProfileHighlightCustomColor", "i", soundProfileHighlightCustomColor)
         putEntry(arr, "notificationAppWhitelist", "set", getNotificationAppWhitelist())
+        putEntry(arr, "useNotificationApplets", "b", useNotificationApplets)
+        putEntry(arr, "notificationAppletsAutoHide", "b", notificationAppletsAutoHide)
+        putEntry(arr, "notificationApplets", "s", prefs.getString("notificationApplets", null))
+        putEntry(arr, "appletCustomIcons", "s", prefs.getString("appletCustomIcons", null))
+        putEntry(arr, "appletCustomIconPacks", "s", prefs.getString("appletCustomIconPacks", null))
+        putEntry(arr, "appletIconShape", "i", appletIconShape)
         putEntry(arr, "swipeMode", "i", swipeMode)
         putEntry(arr, "defaultTab", "i", defaultTab)
+        putEntry(arr, "defaultTabPageId", "s", defaultTabPageId)
         putEntry(arr, "appSortMode", "i", appSortMode)
         putEntry(arr, "sortApplyPages", "set", getSortApplyPages())
         putEntry(arr, "doubleTapAction", "i", doubleTapAction)
@@ -618,6 +912,11 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "searchEngineLaunchInjectUseRoot", "b", searchEngineLaunchInjectUseRoot)
         putEntry(arr, "searchEngineLaunchInjectAlternativeListener", "b", searchEngineLaunchInjectAlternativeListener)
         putEntry(arr, "searchEngineLaunchInjectAlternativeWindowMs", "i", searchEngineLaunchInjectAlternativeWindowMs)
+        putEntry(arr, "dialerNumberLayout", "i", dialerNumberLayout)
+        putEntry(arr, "searchContactsEnabled", "b", searchContactsEnabled)
+        putEntry(arr, "searchContactsSource", "s", searchContactsSource)
+        putEntry(arr, "contactIconDrawableName", "s", contactIconDrawableName)
+        putEntry(arr, "contactIconPackPackage", "s", contactIconPackPackage)
         putEntry(arr, "keyShortcutsEnabled", "b", keyShortcutsEnabled)
         putEntry(arr, "keyCodeHome", "i", keyCodeHome)
         putEntry(arr, "keyCodeBack", "i", keyCodeBack)
@@ -627,6 +926,9 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "customPages", "s", customPages)
         putEntry(arr, "pageOrder", "s", prefs.getString("pageOrder", null))
         putEntry(arr, "favoriteOrder", "s", prefs.getString("favoriteOrder", null))
+        putEntry(arr, "hideAllPage", "b", hideAllPage)
+        putEntry(arr, "hideFrequentPage", "b", hideFrequentPage)
+        putEntry(arr, "hiddenApps", "set", getHiddenApps())
         putEntry(arr, "verticalScrollEnabled", "b", verticalScrollEnabled)
         putEntry(arr, "widgetData", "s", prefs.getString("widgetData", null))
         putEntry(arr, "widgetHeights", "s", prefs.getString("widgetHeights", null))
