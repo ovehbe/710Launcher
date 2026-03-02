@@ -325,6 +325,12 @@ class SettingsActivity : AppCompatActivity() {
         addSection("Notifications")
         addSlider("Notification hub opacity", prefs.notificationHubAlpha) { prefs.notificationHubAlpha = it }
         addSlider("Search overlay opacity", prefs.searchOverlayAlpha) { prefs.searchOverlayAlpha = it }
+        addSlider("Sound profile overlay opacity", prefs.soundProfileOverlayAlpha) { prefs.soundProfileOverlayAlpha = it }
+        addChoice("Sound profile highlight color", listOf("Use accent", "Choose color…"), if (prefs.soundProfileHighlightUseAccent) 0 else 1) {
+            prefs.soundProfileHighlightUseAccent = (it == 0)
+            if (it == 1) showColorPicker(prefs.soundProfileHighlightCustomColor) { prefs.soundProfileHighlightCustomColor = it }
+        }
+        addSlider("Sound profile highlight opacity", prefs.soundProfileHighlightAlpha) { prefs.soundProfileHighlightAlpha = it }
         addButton("Apps in notification hub: ${getNotificationAppsLabel()}") { showNotificationAppsPicker() }
 
         addSection("Notification Applets")
@@ -482,7 +488,10 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         addSection("About")
-        addInfo("Version", "1.0")
+        addInfo("Version", run {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown"
+        })
         addButton("Reset All Settings") {
             AlertDialog.Builder(this)
                 .setTitle("Reset Settings?")

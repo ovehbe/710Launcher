@@ -37,7 +37,7 @@ import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
-import com.meowgi.launcher710.ui.dialogs.SoundProfileDialog
+import com.meowgi.launcher710.ui.dialogs.SoundProfileOverlay
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.ui.notifications.NotificationHub
 import com.meowgi.launcher710.ui.search.SearchOverlay
@@ -83,6 +83,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var appPager: ViewPager2
     private lateinit var searchOverlay: SearchOverlay
     private lateinit var notificationHub: NotificationHub
+    private lateinit var soundProfileOverlay: SoundProfileOverlay
     private lateinit var dockBar: DockBar
     private lateinit var tabBarContainer: android.widget.LinearLayout
     private lateinit var actionBar: View
@@ -216,11 +217,11 @@ class LauncherActivity : AppCompatActivity() {
         } else false
 
         val iconRes = when {
-            isDnd && am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_alerts_off
+            isDnd && am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_alerts_off_custom
             isDnd -> R.drawable.ic_sound_dnd
-            am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent
-            am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate
-            else -> R.drawable.ic_sound_normal
+            am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent_custom
+            am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate_custom
+            else -> R.drawable.ic_sound_normal_custom
         }
         btnSoundProfile.setImageResource(iconRes)
     }
@@ -264,6 +265,7 @@ class LauncherActivity : AppCompatActivity() {
         appPager = findViewById(R.id.appPager)
         searchOverlay = findViewById(R.id.searchOverlay)
         notificationHub = findViewById(R.id.notificationHub)
+        soundProfileOverlay = findViewById(R.id.soundProfileOverlay)
         dockBar = findViewById(R.id.dockBar)
         tabBarContainer = findViewById(R.id.tabBar)
         actionBar = findViewById(R.id.actionBar)
@@ -280,7 +282,10 @@ class LauncherActivity : AppCompatActivity() {
             when (prefs.actionBarCenterAction) {
                 0 -> {
                     if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-                    else notificationHub.show(prefs.getNotificationAppWhitelist())
+                    else {
+                        dismissOtherOverlays()
+                        notificationHub.show(prefs.getNotificationAppWhitelist())
+                    }
                 }
                 1, 2 -> launchHeaderAction(
                     prefs.actionBarCenterAction,
@@ -478,6 +483,7 @@ class LauncherActivity : AppCompatActivity() {
         dockBar.applyOpacity()
         notificationHub.applyOpacity(prefs.notificationHubAlpha)
         searchOverlay.applyOpacity(prefs.searchOverlayAlpha)
+        soundProfileOverlay.applyOpacity(prefs.soundProfileOverlayAlpha)
     }
 
     private fun setupPager() {
@@ -756,9 +762,18 @@ class LauncherActivity : AppCompatActivity() {
         if (s.isNotEmpty()) injectTextViaRoot(s)
     }
 
+    /** Close all overlays so only one can be visible at a time. Call before showing any overlay. */
+    private fun dismissOtherOverlays() {
+        if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
+        if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
+        if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
+    }
+
     private fun showSearchPageAware(initialChar: Char? = null, preserveText: Boolean = false) {
         searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
         searchApplyRunnable = null
+
+        dismissOtherOverlays()
 
         val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else null
         searchOverlay.setSearchContextLabel(
@@ -789,8 +804,9 @@ class LauncherActivity : AppCompatActivity() {
         } else if (!preserveText) {
             searchInputInBar.setText("")
         }
-        searchInputInBar.requestFocus()
+        // Post focus so it works when opening by touch (not only trackpad)
         searchInputInBar.post {
+            searchInputInBar.requestFocus()
             if (searchOverlay.visibility == View.VISIBLE) {
                 searchOverlay.applyQuery(searchInputInBar.text.toString())
             }
@@ -1009,9 +1025,9 @@ class LauncherActivity : AppCompatActivity() {
     private fun setupActionBar() {
         applyClickHighlight(findViewById(R.id.btnSoundProfile))
         findViewById<View>(R.id.btnSoundProfile).setOnClickListener {
-            val dlg = SoundProfileDialog(this)
-            dlg.onDismissed = { updateSoundProfileIcon() }
-            dlg.show()
+            dismissOtherOverlays()
+            soundProfileOverlay.onDismissed = { updateSoundProfileIcon() }
+            soundProfileOverlay.show()
         }
         applyClickHighlight(findViewById(R.id.btnSearch))
         findViewById<View>(R.id.btnSearch).setOnClickListener { showSearchPageAware() }
@@ -1027,7 +1043,10 @@ class LauncherActivity : AppCompatActivity() {
                     1 -> lockScreen()
                     2 -> {
                         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                        else {
+                            dismissOtherOverlays()
+                            notificationHub.show(prefs.getNotificationAppWhitelist())
+                        }
                     }
                     else -> { /* 0 = None */ }
                 }
@@ -1907,6 +1926,7 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun doBackAction() {
         when {
+            soundProfileOverlay.visibility == View.VISIBLE -> soundProfileOverlay.hide()
             searchOverlay.visibility == View.VISIBLE -> searchOverlay.dismiss()
             notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
             ::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition() ->
@@ -2057,7 +2077,10 @@ class LauncherActivity : AppCompatActivity() {
                     KEY_ROLE_BACK -> if (count >= 2) openQuickSettings() else doBackAction()
                     KEY_ROLE_RECENTS -> if (count >= 2) {
                         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-                        else notificationHub.show(prefs.getNotificationAppWhitelist())
+                        else {
+                            dismissOtherOverlays()
+                            notificationHub.show(prefs.getNotificationAppWhitelist())
+                        }
                     }
                     else -> {}
                 }
@@ -2091,6 +2114,7 @@ class LauncherActivity : AppCompatActivity() {
             intent.removeExtra(OPEN_HOME_MENU_EXTRA)
             return
         }
+        if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
         if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
         if (::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition()) {

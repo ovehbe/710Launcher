@@ -10,6 +10,7 @@ import android.util.AttributeSet
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
@@ -53,6 +54,8 @@ class SearchOverlay @JvmOverloads constructor(
         orientation = VERTICAL
         setBackgroundColor(0xE6000000.toInt())
         setPadding(dp(12), dp(8), dp(12), dp(8))
+        isFocusable = false
+        descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
 
         dialRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -80,6 +83,8 @@ class SearchOverlay @JvmOverloads constructor(
             typeface = font
             gravity = Gravity.CENTER
             setPadding(0, dp(10), 0, dp(6))
+            isFocusable = true
+            isFocusableInTouchMode = false
             setOnClickListener { performExtendedSearch() }
         }
         addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -88,6 +93,8 @@ class SearchOverlay @JvmOverloads constructor(
             layoutManager = GridLayoutManager(context, 4)
             clipToPadding = false
             setPadding(0, dp(4), 0, dp(4))
+            isFocusable = true
+            isFocusableInTouchMode = false
         }
         adapter = AppAdapter(
             context,

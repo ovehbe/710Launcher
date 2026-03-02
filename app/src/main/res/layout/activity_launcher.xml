@@ -47,14 +47,16 @@
                 android:id="@+id/btnSoundProfile"
                 android:layout_width="44dp"
                 android:layout_height="match_parent"
-                android:src="@drawable/ic_sound_normal"
+                android:src="@drawable/ic_sound_normal_custom"
                 android:contentDescription="Sound Profile"
                 android:scaleType="fitCenter"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
                 android:paddingTop="6dp"
                 android:paddingBottom="6dp"
-                android:alpha="0.7" />
+                android:alpha="0.7"
+                android:scaleX="1.08"
+                android:scaleY="1.08" />
 
             <FrameLayout
                 android:id="@+id/actionBarCenter"
@@ -139,13 +141,16 @@
                 android:id="@+id/btnSearch"
                 android:layout_width="44dp"
                 android:layout_height="match_parent"
-                android:src="@android:drawable/ic_menu_search"
+                android:src="@drawable/ic_search_custom"
                 android:contentDescription="Search"
                 android:scaleType="fitCenter"
                 android:paddingStart="8dp"
                 android:paddingEnd="8dp"
                 android:paddingTop="4dp"
-                android:paddingBottom="4dp" />
+                android:paddingBottom="4dp"
+                android:alpha="0.7"
+                android:scaleX="0.9"
+                android:scaleY="0.9" />
         </LinearLayout>
 
         <View
@@ -174,6 +179,12 @@
 
             <com.meowgi.launcher710.ui.search.SearchOverlay
                 android:id="@+id/searchOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+            <com.meowgi.launcher710.ui.dialogs.SoundProfileOverlay
+                android:id="@+id/soundProfileOverlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:visibility="gone" />

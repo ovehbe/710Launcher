@@ -296,6 +296,26 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("searchOverlayAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("searchOverlayAlpha", v).apply()
 
+    /** Opacity (0–255) for the sound profile overlay background. */
+    var soundProfileOverlayAlpha: Int
+        get() = prefs.getInt("soundProfileOverlayAlpha", 179) // 70%
+        set(v) = prefs.edit().putInt("soundProfileOverlayAlpha", v).apply()
+
+    /** Opacity (0–255) for the sound profile selected row highlight. Default 92 = 36%. */
+    var soundProfileHighlightAlpha: Int
+        get() = prefs.getInt("soundProfileHighlightAlpha", 92)
+        set(v) = prefs.edit().putInt("soundProfileHighlightAlpha", v.coerceIn(0, 255)).apply()
+
+    /** true = use accent color for sound profile highlight; false = use soundProfileHighlightCustomColor */
+    var soundProfileHighlightUseAccent: Boolean
+        get() = prefs.getBoolean("soundProfileHighlightUseAccent", false)
+        set(v) = prefs.edit().putBoolean("soundProfileHighlightUseAccent", v).apply()
+
+    /** Sound profile row highlight color when not using accent. Default black. */
+    var soundProfileHighlightCustomColor: Int
+        get() = prefs.getInt("soundProfileHighlightCustomColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("soundProfileHighlightCustomColor", v).apply()
+
     /** Package names to show in hub/ticker; empty = all. */
     fun getNotificationAppWhitelist(): Set<String> =
         prefs.getStringSet("notificationAppWhitelist", null) ?: emptySet()
@@ -761,7 +781,7 @@ class LauncherPrefs(context: Context) {
         "iconPackPackage", "allPageIconPackPackage", "dockIconPackPackage", "iconFallbackShape", "iconGlobalShape",
         "statusBarVisible", "statusBarShowClock", "statusBarShowBattery", "statusBarShowNetwork", "statusBarShowBluetooth",
         "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
-        "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName", "notificationHubAlpha", "searchOverlayAlpha", "notificationAppWhitelist",
+        "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
         "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape",
         "swipeMode", "defaultTab", "defaultTabPageId", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
@@ -852,6 +872,10 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "actionBarCenterActionName", "s", actionBarCenterActionName)
         putEntry(arr, "notificationHubAlpha", "i", notificationHubAlpha)
         putEntry(arr, "searchOverlayAlpha", "i", searchOverlayAlpha)
+        putEntry(arr, "soundProfileOverlayAlpha", "i", soundProfileOverlayAlpha)
+        putEntry(arr, "soundProfileHighlightAlpha", "i", soundProfileHighlightAlpha)
+        putEntry(arr, "soundProfileHighlightUseAccent", "b", soundProfileHighlightUseAccent)
+        putEntry(arr, "soundProfileHighlightCustomColor", "i", soundProfileHighlightCustomColor)
         putEntry(arr, "notificationAppWhitelist", "set", getNotificationAppWhitelist())
         putEntry(arr, "useNotificationApplets", "b", useNotificationApplets)
         putEntry(arr, "notificationAppletsAutoHide", "b", notificationAppletsAutoHide)

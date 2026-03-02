@@ -40,34 +40,34 @@ class SoundProfileDialog(context: Context) : Dialog(context, R.style.BBDialogThe
 
         // Figure out which single volume row to highlight
         val activeVolume = if (currentMode == AudioManager.RINGER_MODE_NORMAL) {
-            listOf(1.0f to "Loud", 0.7f to "Normal", 0.5f to "Medium")
+            listOf(1.0f to "Loud", 0.7f to "Normal", 0.2f to "Low")
                 .minByOrNull { kotlin.math.abs(it.first - curPct) }?.second
         } else null
 
         // --- Volume section ---
         layout.addView(makeRow("Loud", activeVolume == "Loud",
-            R.drawable.ic_sound_normal) { applyVolume(1.0f) })
+            R.drawable.ic_sound_loud_custom) { applyVolume(1.0f) })
         layout.addView(makeRow("Normal", activeVolume == "Normal",
-            R.drawable.ic_sound_normal) { applyVolume(0.7f) })
-        layout.addView(makeRow("Medium", activeVolume == "Medium",
-            R.drawable.ic_sound_normal) { applyVolume(0.5f) })
+            R.drawable.ic_sound_normal_custom) { applyVolume(0.7f) })
+        layout.addView(makeRow("Low", activeVolume == "Low",
+            R.drawable.ic_sound_low_custom) { applyVolume(0.2f) })
 
         layout.addView(makeDivider())
 
         // --- Silent / Vibrate ---
         layout.addView(makeRow("Silent",
             currentMode == AudioManager.RINGER_MODE_SILENT && !isDnd,
-            R.drawable.ic_sound_silent) { applySilent() })
+            R.drawable.ic_sound_silent_custom) { applySilent() })
         layout.addView(makeRow("Vibrate Only",
             currentMode == AudioManager.RINGER_MODE_VIBRATE,
-            R.drawable.ic_sound_vibrate) { applyVibrate() })
+            R.drawable.ic_sound_vibrate_custom) { applyVibrate() })
 
         layout.addView(makeDivider())
 
         // --- All Alerts Off / Do Not Disturb ---
         layout.addView(makeRow("All Alerts Off",
             currentMode == AudioManager.RINGER_MODE_SILENT && isDnd,
-            R.drawable.ic_sound_alerts_off) { applyAlertsOff() })
+            R.drawable.ic_sound_alerts_off_custom) { applyAlertsOff() })
 
         layout.addView(makeDivider())
 

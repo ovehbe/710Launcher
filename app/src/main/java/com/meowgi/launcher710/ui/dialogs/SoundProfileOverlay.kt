@@ -1,0 +1,241 @@
+package com.meowgi.launcher710.ui.dialogs
+
+import android.app.NotificationManager
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.media.AudioManager
+import android.os.Build
+import android.util.AttributeSet
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import androidx.core.content.res.ResourcesCompat
+import com.meowgi.launcher710.R
+import com.meowgi.launcher710.util.LauncherPrefs
+
+class SoundProfileOverlay @JvmOverloads constructor(
+    context: Context, attrs: AttributeSet? = null
+) : FrameLayout(context, attrs) {
+
+    var onDismissed: (() -> Unit)? = null
+
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    private val prefs = LauncherPrefs(context)
+    private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
+
+    private val container: LinearLayout
+
+    init {
+        setBackgroundColor(Color.argb(prefs.soundProfileOverlayAlpha, 0, 0, 0))
+        isFocusable = false
+        descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        setOnClickListener { hide() }
+
+        container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        addView(container)
+    }
+
+    fun show() {
+        visibility = VISIBLE
+        refresh()
+        // Focus first row (post so it works when opened by touch or trackpad)
+        container.post { container.getChildAt(0)?.requestFocus() }
+    }
+
+    fun hide() {
+        visibility = GONE
+        onDismissed?.invoke()
+    }
+
+    fun applyOpacity(alpha: Int) {
+        setBackgroundColor(Color.argb(alpha, 0, 0, 0))
+    }
+
+    private fun refresh() {
+        container.removeAllViews()
+
+        val currentMode = audioManager.ringerMode
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+        val curVol = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+        val curPct = if (maxVol > 0) curVol.toFloat() / maxVol else 0f
+        val isDnd = isDndActive()
+
+        val activeVolume = if (currentMode == AudioManager.RINGER_MODE_NORMAL) {
+            listOf(1.0f to "Loud", 0.7f to "Normal", 0.2f to "Low")
+                .minByOrNull { kotlin.math.abs(it.first - curPct) }?.second
+        } else null
+
+        val rowParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        )
+
+        container.addView(makeRow("Loud", activeVolume == "Loud", R.drawable.ic_sound_loud_custom) { applyVolume(1.0f) }, rowParams)
+        container.addView(makeDivider())
+        container.addView(makeRow("Normal", activeVolume == "Normal", R.drawable.ic_sound_normal_custom) { applyVolume(0.7f) }, rowParams)
+        container.addView(makeDivider())
+        container.addView(makeRow("Low", activeVolume == "Low", R.drawable.ic_sound_low_custom) { applyVolume(0.2f) }, rowParams)
+        container.addView(makeDivider())
+        container.addView(makeRow("Silent", currentMode == AudioManager.RINGER_MODE_SILENT && !isDnd, R.drawable.ic_sound_silent_custom) { applySilent() }, rowParams)
+        container.addView(makeDivider())
+        container.addView(makeRow("Vibrate Only", currentMode == AudioManager.RINGER_MODE_VIBRATE, R.drawable.ic_sound_vibrate_custom) { applyVibrate() }, rowParams)
+        container.addView(makeDivider())
+        container.addView(makeRow("All Alerts Off", currentMode == AudioManager.RINGER_MODE_SILENT && isDnd, R.drawable.ic_sound_alerts_off_custom) { applyAlertsOff() }, rowParams)
+
+        // Chain focus between rows so trackpad moves highlight per profile
+        for (i in 0 until container.childCount step 2) {
+            val row = container.getChildAt(i)
+            row.id = View.generateViewId()
+            row.isFocusable = true
+            row.isFocusableInTouchMode = false
+            if (i >= 2) row.nextFocusUpId = container.getChildAt(i - 2).id
+            if (i + 2 < container.childCount) row.nextFocusDownId = container.getChildAt(i + 2).id
+        }
+    }
+
+    private fun makeRow(label: String, isSelected: Boolean, iconRes: Int, onClick: () -> Unit): LinearLayout {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            // Focus and ID set in refresh() after all rows added
+            if (isSelected) {
+                val baseColor = if (prefs.soundProfileHighlightUseAccent) prefs.accentColor else prefs.soundProfileHighlightCustomColor
+                val alpha = prefs.soundProfileHighlightAlpha
+                val lighter = Color.argb(
+                    alpha,
+                    kotlin.math.min(255, (Color.red(baseColor) * 1.15).toInt()),
+                    kotlin.math.min(255, (Color.green(baseColor) * 1.15).toInt()),
+                    kotlin.math.min(255, (Color.blue(baseColor) * 1.15).toInt())
+                )
+                val darker = Color.argb(
+                    alpha,
+                    (Color.red(baseColor) * 0.78).toInt(),
+                    (Color.green(baseColor) * 0.78).toInt(),
+                    (Color.blue(baseColor) * 0.78).toInt()
+                )
+                background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(lighter, darker)
+                )
+            }
+            setOnClickListener {
+                onClick()
+            }
+        }
+
+        val icon = ImageView(context).apply {
+            setImageResource(iconRes)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(2), dp(2), dp(8), dp(2))
+        }
+        row.addView(icon, LinearLayout.LayoutParams(dp(32), dp(28)))
+
+        val tv = TextView(context).apply {
+            text = label
+            textSize = 14f
+            setTextColor(context.getColor(R.color.bb_text_primary))
+            typeface = font
+        }
+        row.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        if (isSelected) {
+            val check = TextView(context).apply {
+                text = "✓"
+                textSize = 18f
+                setTextColor(context.getColor(R.color.bb_text_primary))
+            }
+            row.addView(check)
+        }
+
+        return row
+    }
+
+    private fun makeDivider(): View {
+        val d = View(context).apply {
+            setBackgroundColor(context.getColor(R.color.bb_divider))
+        }
+        d.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+        ).apply {
+            topMargin = dp(4)
+            bottomMargin = dp(4)
+        }
+        return d
+    }
+
+    private fun isDndActive(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return try {
+            val filter = notificationManager?.currentInterruptionFilter
+                ?: NotificationManager.INTERRUPTION_FILTER_ALL
+            filter != NotificationManager.INTERRUPTION_FILTER_ALL
+        } catch (_: Exception) { false }
+    }
+
+    private fun applyVolume(pct: Float) {
+        try {
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+            audioManager.setStreamVolume(
+                AudioManager.STREAM_RING, (max * pct).toInt().coerceAtLeast(1), 0
+            )
+        } catch (_: Exception) {}
+        hide()
+    }
+
+    private fun applySilent() {
+        try {
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        } catch (_: Exception) {}
+        hide()
+    }
+
+    private fun applyVibrate() {
+        try {
+            disableDndIfActive()
+            audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+        } catch (_: Exception) {}
+        hide()
+    }
+
+    private fun applyAlertsOff() {
+        try {
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        } catch (_: Exception) {}
+        enableDnd()
+        hide()
+    }
+
+    private fun enableDnd() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val nm = notificationManager ?: return
+        if (!nm.isNotificationPolicyAccessGranted) {
+            try {
+                context.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                })
+            } catch (_: Exception) {}
+            return
+        }
+        try { nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE) } catch (_: Exception) {}
+    }
+
+    private fun disableDndIfActive() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (!isDndActive()) return
+        val nm = notificationManager ?: return
+        if (!nm.isNotificationPolicyAccessGranted) return
+        try { nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL) } catch (_: Exception) {}
+    }
+
+    private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
+}
