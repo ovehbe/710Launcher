@@ -119,7 +119,7 @@ class BBStatusBar @JvmOverloads constructor(
 
     fun applyOpacity() {
         val alpha = prefs.statusBarAlpha
-        background?.alpha = alpha
+        background?.mutate()?.alpha = alpha
     }
 
     private fun updateBatteryVisibility() {

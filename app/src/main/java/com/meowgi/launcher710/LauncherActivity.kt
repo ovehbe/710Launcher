@@ -498,7 +498,7 @@ class LauncherActivity : AppCompatActivity() {
         headerView.visibility = if (prefs.headerVisible) View.VISIBLE else View.GONE
         headerView.refresh(prefs)
         actionBar.setBackgroundColor(Color.argb(prefs.actionBarAlpha, 0, 0, 0))
-        tabBarContainer.background?.alpha = prefs.tabBarAlpha
+        tabBarContainer.background?.mutate()?.alpha = prefs.tabBarAlpha
         dockBar.applyOpacity()
         notificationHub.applyOpacity(prefs.notificationHubAlpha)
         searchOverlay.applyOpacity(prefs.searchOverlayAlpha)
