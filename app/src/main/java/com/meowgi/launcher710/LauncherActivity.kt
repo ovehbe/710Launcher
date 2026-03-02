@@ -302,7 +302,7 @@ class LauncherActivity : AppCompatActivity() {
         findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
             isClickable = true
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener { onActionBarCenterClick() }
@@ -524,7 +524,7 @@ class LauncherActivity : AppCompatActivity() {
                 setPadding(dp(12), 0, dp(12), 0)
                 isClickable = true
                 isFocusable = true
-                isFocusableInTouchMode = true
+                isFocusableInTouchMode = false
                 defaultFocusHighlightEnabled = false
                 foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
                 setOnClickListener { appPager.setCurrentItem(i, true) }
@@ -551,13 +551,13 @@ class LauncherActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.btnSearch).apply {
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             nextFocusForwardId = R.id.btnSoundProfile
             nextFocusDownId = R.id.tabBar
         }
         findViewById<View>(R.id.btnSoundProfile).apply {
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             nextFocusDownId = R.id.tabBar
         }
         for (i in tabViews.indices) {
@@ -804,7 +804,7 @@ class LauncherActivity : AppCompatActivity() {
         headerView.dateText.apply {
             isClickable = true
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
@@ -814,7 +814,7 @@ class LauncherActivity : AppCompatActivity() {
         headerView.clockText.apply {
             isClickable = true
             isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             defaultFocusHighlightEnabled = false
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
@@ -2110,6 +2110,7 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        window.decorView.post { clearHighlightTraces() }
         NotifListenerService.onNotificationsChanged = {
             runOnUiThread {
                 notificationHub.refresh(prefs.getNotificationAppWhitelist())

@@ -122,7 +122,7 @@ class DockBar @JvmOverloads constructor(
             tag = viewIndex
             isFocusable = true
             isClickable = true
-            isFocusableInTouchMode = true
+            isFocusableInTouchMode = false
             defaultFocusHighlightEnabled = false
             launcherPrefs?.let { foreground = it.getClickHighlightRipple(context) }
             setOnClickListener { onClick() }
