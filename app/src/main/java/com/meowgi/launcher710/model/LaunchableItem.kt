@@ -34,4 +34,16 @@ sealed class LaunchableItem {
 
     /** Built-in shortcut to open Launcher settings. Shown on All apps page and in search. */
     data class LauncherSettings(override val label: CharSequence, override val icon: Drawable) : LaunchableItem()
+
+    /** User-defined search command: trigger + name maps to app or shortcut. Shown when query starts with command trigger. */
+    data class SearchCommand(
+        val commandName: String,
+        val actionType: Int,
+        val actionPackage: String?,
+        val intentUri: String?,
+        val actionName: String?,
+        override val icon: Drawable
+    ) : LaunchableItem() {
+        override val label: CharSequence get() = commandName
+    }
 }

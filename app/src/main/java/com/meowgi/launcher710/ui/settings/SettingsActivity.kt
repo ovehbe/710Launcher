@@ -24,6 +24,7 @@ import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.SearchCommandData
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -153,6 +154,35 @@ class SettingsActivity : AppCompatActivity() {
         prefs.actionBarCenterLongPressActionPackage = null
         prefs.actionBarCenterLongPressActionIntentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
         prefs.actionBarCenterLongPressActionName = name
+        rebuildSettings()
+    }
+
+    private var pendingCommandIndexForShortcut: Int? = null
+    private var onCommandShortcutSet: (() -> Unit)? = null
+
+    private val commandShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val idx = pendingCommandIndexForShortcut ?: return@registerForActivityResult
+        pendingCommandIndexForShortcut = null
+        if (result.resultCode != RESULT_OK || result.data == null) {
+            onCommandShortcutSet = null
+            return@registerForActivityResult
+        }
+        val data = result.data!!
+        @Suppress("DEPRECATION")
+        val shortcutIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT, Intent::class.java)
+        } else {
+            data.getParcelableExtra(Intent.EXTRA_SHORTCUT_INTENT)
+        } ?: run { onCommandShortcutSet = null; return@registerForActivityResult }
+        val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
+        val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
+        val commands = prefs.getSearchCommands().toMutableList()
+        if (idx in commands.indices) {
+            commands[idx] = commands[idx].copy(actionType = 1, actionPackage = null, intentUri = intentUri, actionName = name)
+            prefs.setSearchCommands(commands)
+        }
+        onCommandShortcutSet?.invoke()
+        onCommandShortcutSet = null
         rebuildSettings()
     }
 
@@ -343,8 +373,20 @@ class SettingsActivity : AppCompatActivity() {
 
         addSection("Notifications")
         addSlider("Notification hub opacity", prefs.notificationHubAlpha) { prefs.notificationHubAlpha = it }
+        addChoice("Notification hub background", listOf("Default (black)", "Choose color…"), if (prefs.notificationHubUseDefaultBackground) 0 else 1) {
+            prefs.notificationHubUseDefaultBackground = (it == 0)
+            if (it == 1) showColorPicker(prefs.notificationHubCustomBackgroundColor) { prefs.notificationHubCustomBackgroundColor = it }
+        }
         addSlider("Search overlay opacity", prefs.searchOverlayAlpha) { prefs.searchOverlayAlpha = it }
+        addChoice("Search overlay background", listOf("Default (black)", "Choose color…"), if (prefs.searchOverlayUseDefaultBackground) 0 else 1) {
+            prefs.searchOverlayUseDefaultBackground = (it == 0)
+            if (it == 1) showColorPicker(prefs.searchOverlayCustomBackgroundColor) { prefs.searchOverlayCustomBackgroundColor = it }
+        }
         addSlider("Sound profile overlay opacity", prefs.soundProfileOverlayAlpha) { prefs.soundProfileOverlayAlpha = it }
+        addChoice("Sound profile overlay background", listOf("Default (black)", "Choose color…"), if (prefs.soundProfileOverlayUseDefaultBackground) 0 else 1) {
+            prefs.soundProfileOverlayUseDefaultBackground = (it == 0)
+            if (it == 1) showColorPicker(prefs.soundProfileOverlayCustomBackgroundColor) { prefs.soundProfileOverlayCustomBackgroundColor = it }
+        }
         addChoice("Sound profile highlight color", listOf("Use accent", "Choose color…"), if (prefs.soundProfileHighlightUseAccent) 0 else 1) {
             prefs.soundProfileHighlightUseAccent = (it == 0)
             if (it == 1) showColorPicker(prefs.soundProfileHighlightCustomColor) { prefs.soundProfileHighlightCustomColor = it }
@@ -475,7 +517,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
         addChoice(getString(R.string.dialer_number_layout), listOf(getString(R.string.dialer_layout_qwerty), getString(R.string.dialer_layout_t9)), prefs.dialerNumberLayout) { prefs.dialerNumberLayout = it }
-        addToggle(getString(R.string.search_contacts), prefs.searchContactsEnabled) { prefs.searchContactsEnabled = it }
+        addChoice(getString(R.string.search_contacts), listOf("Enabled", "Disabled", "Enable only with @"), prefs.searchContactsMode.coerceIn(0, 2)) {
+            prefs.searchContactsMode = it
+            rebuildSettings()
+        }
         run {
             val sourceOptions = ContactSearchHelper.getContactSourceOptions(this)
             val sourceLabels = sourceOptions.map { it.first }
@@ -485,6 +530,17 @@ class SettingsActivity : AppCompatActivity() {
             addChoice(getString(R.string.contact_source), sourceLabels, sourceSelected) { prefs.searchContactsSource = sourceValues.getOrElse(it) { "all" } }
         }
         addButton(getString(R.string.contact_icon) + ": " + getContactIconLabel()) { showContactIconPicker() }
+
+        addSection("Search Commands")
+        addButton("Command trigger: ${prefs.searchCommandTrigger?.takeIf { it.isNotEmpty() }?.let { "\"$it\"" } ?: "Not set"}") { showCommandTriggerDialog() }
+        addButton("Command icon: ${getCommandIconLabel()}") { showCommandIconPicker() }
+        addButton("Manage commands (${prefs.getSearchCommands().size})") { showSearchCommandsManager() }
+        if (!prefs.searchCommandTrigger.isNullOrEmpty()) {
+            addButton("Clear command trigger") {
+                prefs.searchCommandTrigger = null
+                rebuildSettings()
+            }
+        }
 
         // Key map settings hidden for now; enable key shortcuts stays off by default
         if (KEY_MAP_SETTINGS_VISIBLE) {
@@ -756,6 +812,257 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
+    }
+
+    private fun getCommandIconLabel(): String =
+        if (!prefs.commandIconDrawableName.isNullOrBlank() && !prefs.commandIconPackPackage.isNullOrBlank())
+            "Custom"
+        else
+            "Default"
+
+    private fun showCommandIconPicker() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Command icon")
+            .setItems(arrayOf("Default", "Choose from icon pack")) { _, which ->
+                when (which) {
+                    0 -> {
+                        prefs.commandIconDrawableName = null
+                        prefs.commandIconPackPackage = null
+                        rebuildSettings()
+                    }
+                    1 -> {
+                        val picker = IconPickerDialog(this,
+                            onIconSelected = { drawableName, packPackage ->
+                                prefs.commandIconDrawableName = drawableName
+                                prefs.commandIconPackPackage = packPackage
+                                rebuildSettings()
+                            },
+                            onReset = {
+                                prefs.commandIconDrawableName = null
+                                prefs.commandIconPackPackage = null
+                                rebuildSettings()
+                            }
+                        )
+                        picker.showPackPicker()
+                    }
+                }
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
+    }
+
+    private fun showCommandTriggerDialog() {
+        val input = EditText(this).apply {
+            setText(prefs.searchCommandTrigger ?: "")
+            hint = "e.g. ./ or ~"
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Command trigger")
+            .setMessage("Symbols only (no letters/numbers). Not allowed: * # + @")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                val raw = input.text.toString().trim()
+                if (raw.isEmpty()) {
+                    prefs.searchCommandTrigger = null
+                    rebuildSettings()
+                    return@setPositiveButton
+                }
+                if (!prefs.isValidCommandTrigger(raw)) {
+                    Toast.makeText(this, "Use only symbols. * # + @ are not allowed.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                prefs.searchCommandTrigger = raw
+                rebuildSettings()
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
+    }
+
+    private fun showSearchCommandsManager() {
+        val commands = prefs.getSearchCommands().toMutableList()
+        val maxHeightPx = (resources.displayMetrics.heightPixels * 0.6).toInt().coerceAtLeast(dp(240))
+        val wrapper = MaxHeightFrameLayout(this, maxHeightPx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val scroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isFillViewport = true
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        layout.addView(rowsContainer)
+
+        fun getActionLabel(cmd: SearchCommandData): String {
+            return when (cmd.actionType) {
+                0 -> cmd.actionPackage?.let { pkg ->
+                    try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+                } ?: "Set action"
+                1 -> cmd.actionName ?: (if (!cmd.intentUri.isNullOrEmpty()) "Shortcut" else "Set action")
+                else -> "Set action"
+            }
+        }
+
+        fun refreshList() {
+            rowsContainer.removeAllViews()
+            for ((index, cmd) in commands.withIndex()) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(4), 0, dp(4))
+                }
+                val labelView = TextView(this).apply {
+                    text = cmd.name
+                    setPadding(dp(8), 0, dp(8), 0)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    setTextColor(getColor(R.color.bb_text_primary))
+                    textSize = 14f
+                    typeface = font
+                }
+                val actionLabel = TextView(this).apply {
+                    text = getActionLabel(cmd)
+                    setTextColor(getColor(R.color.bb_text_secondary))
+                    textSize = 12f
+                    typeface = font
+                }
+                val actionBtn = Button(this).apply {
+                    text = "Action"
+                    setOnClickListener {
+                        AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
+                            .setTitle("Action for \"${cmd.name}\"")
+                            .setItems(arrayOf("App", "Shortcut")) { _, which ->
+                                when (which) {
+                                    0 -> {
+                                        val pkgList = packageManager.getInstalledApplications(0)
+                                            .mapNotNull { info ->
+                                                val lbl = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                                                if (lbl.isBlank()) null else (info.packageName to lbl)
+                                            }
+                                            .sortedBy { it.second.lowercase() }
+                                        val items = pkgList.map { it.first to it.second }
+                                        AppPickerWithSearchDialog.show(this@SettingsActivity, "Choose app", items, onSelected = { pkg, name ->
+                                            val updated = commands.toMutableList()
+                                            if (index in updated.indices) {
+                                                updated[index] = cmd.copy(actionType = 0, actionPackage = pkg, intentUri = null, actionName = name)
+                                                prefs.setSearchCommands(updated)
+                                                commands.clear()
+                                                commands.addAll(updated)
+                                                refreshList()
+                                            }
+                                        })
+                                    }
+                                    1 -> {
+                                        onCommandShortcutSet = { refreshList() }
+                                        pendingCommandIndexForShortcut = index
+                                        try {
+                                            commandShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                                        } catch (_: Exception) {
+                                            Toast.makeText(this@SettingsActivity, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                                            pendingCommandIndexForShortcut = null
+                                            onCommandShortcutSet = null
+                                        }
+                                    }
+                                }
+                            }
+                            .setNegativeButton(getString(android.R.string.cancel), null)
+                            .show()
+                    }
+                }
+                val removeBtn = Button(this).apply {
+                    text = "Remove"
+                    setOnClickListener {
+                        commands.removeAt(index)
+                        prefs.setSearchCommands(commands)
+                        refreshList()
+                    }
+                }
+                row.addView(labelView)
+                row.addView(actionLabel)
+                row.addView(actionBtn)
+                row.addView(removeBtn)
+                rowsContainer.addView(row)
+            }
+        }
+
+        val addBtn = Button(this).apply {
+            text = "Add command"
+            setOnClickListener {
+                val input = EditText(this@SettingsActivity).apply {
+                    hint = "Command name (e.g. myMacro)"
+                    setPadding(dp(16), dp(12), dp(16), dp(12))
+                }
+                AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
+                    .setTitle("New command")
+                    .setView(input)
+                    .setPositiveButton("Add") { _, _ ->
+                        val name = input.text.toString().trim()
+                        if (name.isEmpty()) {
+                            Toast.makeText(this@SettingsActivity, "Enter a name", Toast.LENGTH_SHORT).show()
+                            return@setPositiveButton
+                        }
+                        commands.add(SearchCommandData(name = name, actionType = 0, actionPackage = null, intentUri = null, actionName = null))
+                        prefs.setSearchCommands(commands)
+                        refreshList()
+                        Toast.makeText(this@SettingsActivity, "Now set the action for \"$name\"", Toast.LENGTH_SHORT).show()
+                        AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
+                            .setTitle("Action for \"$name\"")
+                            .setItems(arrayOf("App", "Shortcut")) { _, which ->
+                                when (which) {
+                                    0 -> {
+                                        val pkgList = packageManager.getInstalledApplications(0)
+                                            .mapNotNull { info ->
+                                                val lbl = try { packageManager.getApplicationLabel(info).toString() } catch (_: Exception) { null } ?: return@mapNotNull null
+                                                if (lbl.isBlank()) null else (info.packageName to lbl)
+                                            }
+                                            .sortedBy { it.second.lowercase() }
+                                        val items = pkgList.map { it.first to it.second }
+                                        val newIdx = commands.size - 1
+                                        AppPickerWithSearchDialog.show(this@SettingsActivity, "Choose app", items, onSelected = { pkg, appName ->
+                                            if (newIdx in commands.indices) {
+                                                commands[newIdx] = commands[newIdx].copy(actionType = 0, actionPackage = pkg, actionName = appName)
+                                                prefs.setSearchCommands(commands)
+                                                refreshList()
+                                            }
+                                        })
+                                    }
+                                    1 -> {
+                                        onCommandShortcutSet = { refreshList() }
+                                        pendingCommandIndexForShortcut = commands.size - 1
+                                        try {
+                                            commandShortcutLauncher.launch(Intent(Intent.ACTION_CREATE_SHORTCUT))
+                                        } catch (_: Exception) {
+                                            Toast.makeText(this@SettingsActivity, "No shortcut handler found", Toast.LENGTH_SHORT).show()
+                                            pendingCommandIndexForShortcut = null
+                                            onCommandShortcutSet = null
+                                        }
+                                    }
+                                }
+                            }
+                            .setNegativeButton(getString(android.R.string.cancel), null)
+                            .show()
+                    }
+                    .setNegativeButton(getString(android.R.string.cancel), null)
+                    .show()
+            }
+        }
+        layout.addView(addBtn)
+        refreshList()
+        scroll.addView(layout)
+        wrapper.addView(scroll)
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Search commands")
+            .setView(wrapper)
+            .setNegativeButton("Done") { _, _ -> rebuildSettings() }
             .show()
     }
 

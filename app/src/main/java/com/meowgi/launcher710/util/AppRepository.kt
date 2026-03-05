@@ -372,6 +372,29 @@ class AppRepository(private val context: Context) {
         }
     }
 
+    /** Icon for search command results: custom from icon pack, or search page pack (e.g. code icon), or system default. */
+    fun getCommandIconForSearch(): android.graphics.drawable.Drawable {
+        val customName = prefs.commandIconDrawableName
+        val customPack = prefs.commandIconPackPackage
+        if (!customName.isNullOrBlank() && !customPack.isNullOrBlank()) {
+            val tempMgr = IconPackManager(context)
+            if (tempMgr.loadIconPack(customPack)) {
+                tempMgr.getIconByName(customName)?.let { return applyGlobalShape(it) }
+            }
+        }
+        val packManager = getPackManagerForPage("search")
+        if (packManager?.isLoaded() == true) {
+            val codeIcon = packManager.getIconByName("terminal")
+                ?: packManager.getIconByName("code")
+                ?: packManager.getIconByName("ic_code")
+                ?: packManager.getIconByName("console")
+            if (codeIcon != null) return applyGlobalShape(codeIcon)
+        }
+        return applyGlobalShape(
+            context.resources.getDrawable(android.R.drawable.ic_menu_manage, context.theme)
+        )
+    }
+
     /** Built-in shortcut to open Launcher settings. Uses icon pack settings icon when available. */
     fun createLauncherSettingsItem(): LaunchableItem.LauncherSettings {
         val label = context.getString(R.string.launcher_settings_label)

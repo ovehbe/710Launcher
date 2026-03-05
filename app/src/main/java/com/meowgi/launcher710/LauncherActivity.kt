@@ -222,6 +222,23 @@ class LauncherActivity : AppCompatActivity() {
             isDnd -> R.drawable.ic_sound_dnd
             am.ringerMode == AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_sound_silent_custom
             am.ringerMode == AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_sound_vibrate_custom
+            am.ringerMode == AudioManager.RINGER_MODE_NORMAL -> {
+                val ringMuted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                    am.isStreamMute(AudioManager.STREAM_RING)
+                when {
+                    ringMuted -> R.drawable.ic_sound_silent_custom
+                    else -> {
+                        val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_RING)
+                        val curVol = am.getStreamVolume(AudioManager.STREAM_RING)
+                        val curPct = if (maxVol > 0) curVol.toFloat() / maxVol else 0f
+                        when {
+                            curPct <= 0.45f -> R.drawable.ic_sound_low_custom
+                            curPct <= 0.85f -> R.drawable.ic_sound_normal_custom
+                            else -> R.drawable.ic_sound_loud_custom
+                        }
+                    }
+                }
+            }
             else -> R.drawable.ic_sound_normal_custom
         }
         btnSoundProfile.setImageResource(iconRes)
@@ -366,6 +383,16 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.Contact -> item.phoneNumbers.firstOrNull()?.let { num ->
                     try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch (_: Exception) {}
                 }
+                is LaunchableItem.SearchCommand -> {
+                    when (item.actionType) {
+                        0 -> item.actionPackage?.let { pkg ->
+                            packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        }
+                        1 -> item.intentUri?.let { uri ->
+                            try { startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                        }
+                    }
+                }
                 else -> {}
             }
         }
@@ -380,9 +407,12 @@ class LauncherActivity : AppCompatActivity() {
             }
         }
         searchOverlay.dialerLayoutProvider = { prefs.dialerNumberLayout }
-        searchOverlay.contactSearchEnabledProvider = { prefs.searchContactsEnabled }
+        searchOverlay.contactModeProvider = { prefs.searchContactsMode }
         searchOverlay.contactSourceProvider = { prefs.searchContactsSource ?: "all" }
         searchOverlay.contactIconProvider = { repository.getContactIconForSearch() }
+        searchOverlay.commandTriggerProvider = { prefs.searchCommandTrigger }
+        searchOverlay.commandsProvider = { prefs.getSearchCommands() }
+        searchOverlay.commandIconProvider = { repository.getCommandIconForSearch() }
 
         dockBar.repository = repository
         dockBar.launcherPrefs = prefs
@@ -518,6 +548,7 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
                     is LaunchableItem.LauncherSettings -> { /* no context menu */ }
                     is LaunchableItem.Contact -> { }
+                    is LaunchableItem.SearchCommand -> { /* no context menu */ }
                 }
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
