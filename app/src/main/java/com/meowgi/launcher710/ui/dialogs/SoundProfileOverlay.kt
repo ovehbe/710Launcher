@@ -31,7 +31,7 @@ class SoundProfileOverlay @JvmOverloads constructor(
     private val container: LinearLayout
 
     init {
-        setBackgroundColor(Color.argb(prefs.soundProfileOverlayAlpha, 0, 0, 0))
+        updateBackground()
         isFocusable = true
         isFocusableInTouchMode = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
@@ -86,7 +86,17 @@ class SoundProfileOverlay @JvmOverloads constructor(
     }
 
     fun applyOpacity(alpha: Int) {
-        setBackgroundColor(Color.argb(alpha, 0, 0, 0))
+        updateBackground(alpha)
+    }
+
+    private fun updateBackground(alpha: Int = prefs.soundProfileOverlayAlpha) {
+        val color = if (prefs.soundProfileOverlayUseDefaultBackground) {
+            Color.argb(alpha, 0, 0, 0)
+        } else {
+            val c = prefs.soundProfileOverlayCustomBackgroundColor
+            Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c))
+        }
+        setBackgroundColor(color)
     }
 
     private fun refresh() {
@@ -98,10 +108,15 @@ class SoundProfileOverlay @JvmOverloads constructor(
         val curPct = if (maxVol > 0) curVol.toFloat() / maxVol else 0f
         val isDnd = isDndActive()
 
-        val activeVolume = if (currentMode == AudioManager.RINGER_MODE_NORMAL) {
+        val isRingMuted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            audioManager.isStreamMute(AudioManager.STREAM_RING)
+        val activeVolume = if (currentMode == AudioManager.RINGER_MODE_NORMAL && !isRingMuted) {
             listOf(1.0f to "Loud", 0.7f to "Normal", 0.2f to "Low")
                 .minByOrNull { kotlin.math.abs(it.first - curPct) }?.second
         } else null
+
+        val isSilent = (currentMode == AudioManager.RINGER_MODE_NORMAL && isRingMuted) ||
+            (currentMode == AudioManager.RINGER_MODE_SILENT && !isDnd)
 
         val rowParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
@@ -113,7 +128,7 @@ class SoundProfileOverlay @JvmOverloads constructor(
         container.addView(makeDivider())
         container.addView(makeRow("Low", activeVolume == "Low", R.drawable.ic_sound_low_custom) { applyVolume(0.2f) }, rowParams)
         container.addView(makeDivider())
-        container.addView(makeRow("Silent", currentMode == AudioManager.RINGER_MODE_SILENT && !isDnd, R.drawable.ic_sound_silent_custom) { applySilent() }, rowParams)
+        container.addView(makeRow("Silent", isSilent, R.drawable.ic_sound_silent_custom) { applySilent() }, rowParams)
         container.addView(makeDivider())
         container.addView(makeRow("Vibrate Only", currentMode == AudioManager.RINGER_MODE_VIBRATE, R.drawable.ic_sound_vibrate_custom) { applyVibrate() }, rowParams)
         container.addView(makeDivider())
@@ -223,6 +238,9 @@ class SoundProfileOverlay @JvmOverloads constructor(
         try {
             disableDndIfActive()
             audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
+            }
             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
             audioManager.setStreamVolume(
                 AudioManager.STREAM_RING, (max * pct).toInt().coerceAtLeast(1), 0
@@ -231,10 +249,16 @@ class SoundProfileOverlay @JvmOverloads constructor(
         hide()
     }
 
+    /** Silent = mute ring stream only; does not use RINGER_MODE_SILENT so DND is not triggered. */
     private fun applySilent() {
         try {
             disableDndIfActive()
-            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+            audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, 0)
+            } else {
+                audioManager.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+            }
         } catch (_: Exception) {}
         hide()
     }

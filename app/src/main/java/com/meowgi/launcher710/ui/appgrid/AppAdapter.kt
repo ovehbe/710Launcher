@@ -33,6 +33,7 @@ class AppAdapter(
             is LaunchableItem.IntentShortcut -> item.info.shortcutKey
             is LaunchableItem.LauncherSettings -> "launcher_settings_710"
             is LaunchableItem.Contact -> item.displayName.toString()
+            is LaunchableItem.SearchCommand -> "search_cmd_${item.commandName}"
         }
     }
 

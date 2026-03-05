@@ -141,6 +141,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
                     is LaunchableItem.LauncherSettings -> startActivity(Intent(requireContext(), SettingsActivity::class.java))
                     is LaunchableItem.Contact -> { }
+                    is LaunchableItem.SearchCommand -> { }
                 }
             },
             onLongClick = if (tab == TAB_FAVORITES) null else { item, view -> onItemLongClick?.invoke(item, view) },
@@ -153,6 +154,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.IntentShortcut -> repository!!.getIconForIntentShortcut(item.info, pageId)
                         is LaunchableItem.LauncherSettings -> item.icon
                         is LaunchableItem.Contact -> item.icon
+                        is LaunchableItem.SearchCommand -> item.icon
                     }
                 }
             } else { null },
@@ -165,6 +167,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.IntentShortcut -> prefs.getCustomLabel(item.info.shortcutKey, pageId) ?: item.info.label
                         is LaunchableItem.LauncherSettings -> item.label
                         is LaunchableItem.Contact -> item.displayName
+                        is LaunchableItem.SearchCommand -> item.label
                     }
                 })
             } else null,

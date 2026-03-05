@@ -20,12 +20,15 @@ import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.ContactSearchHelper
+import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.SearchCommandData
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
+    private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val extendedSearchBtn: TextView
@@ -40,10 +43,17 @@ class SearchOverlay @JvmOverloads constructor(
     var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
     /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used to convert letters to dial digits. */
     var dialerLayoutProvider: () -> Int = { 0 }
-    var contactSearchEnabledProvider: () -> Boolean = { true }
+    /** 0 = always, 1 = disabled, 2 = @ prefix only */
+    var contactModeProvider: () -> Int = { 0 }
     var contactSourceProvider: () -> String = { "all" }
     /** When set, provides the icon used for contact results in search (e.g. from Contacts app icon pack or custom). */
     var contactIconProvider: (() -> Drawable)? = null
+    /** When set, search enters command mode when query starts with this trigger (e.g. "./"). */
+    var commandTriggerProvider: (() -> String?)? = null
+    /** When in command mode, provides the list of user-defined commands. */
+    var commandsProvider: (() -> List<SearchCommandData>)? = null
+    /** Icon shown for command results in search. */
+    var commandIconProvider: (() -> Drawable)? = null
 
     private var filterItems: List<LaunchableItem>? = null
     private var lastQuery: String = ""
@@ -54,7 +64,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(0xE6000000.toInt())
+        updateBackground()
         setPadding(dp(12), dp(8), dp(12), dp(8))
         isFocusable = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
@@ -126,6 +136,19 @@ class SearchOverlay @JvmOverloads constructor(
                             dismiss()
                         }
                         is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
+                        is LaunchableItem.SearchCommand -> {
+                            when (item.actionType) {
+                                0 -> item.actionPackage?.let { pkg ->
+                                    context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                                }
+                                1 -> item.intentUri?.let { uri ->
+                                    try {
+                                        context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    } catch (_: Exception) { }
+                                }
+                            }
+                            dismiss()
+                        }
                     }
                 }
             },
@@ -171,8 +194,28 @@ class SearchOverlay @JvmOverloads constructor(
         onSearch(query)
     }
 
-    /** On Enter / Extended search: launch first result if any, otherwise search on web. */
+    /** On Enter / Extended search: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
     fun performExtendedSearch() {
+        val trigger = commandTriggerProvider?.invoke()
+        if (!trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)) {
+            val commandPart = lastQuery.removePrefix(trigger).trim()
+            val commands = commandsProvider?.invoke() ?: emptyList()
+            val exact = commands.find { it.name.equals(commandPart, ignoreCase = true) }
+            if (exact != null) {
+                val icon = commandIconProvider?.invoke() ?: defaultContactIcon
+                val item = LaunchableItem.SearchCommand(
+                    commandName = exact.name,
+                    actionType = exact.actionType,
+                    actionPackage = exact.actionPackage,
+                    intentUri = exact.intentUri,
+                    actionName = exact.actionName,
+                    icon = icon
+                )
+                onLaunchItem?.invoke(item)
+                dismiss()
+                return
+            }
+        }
         val first = currentResults.firstOrNull()
         if (first != null) {
             val handler = onLaunchItem
@@ -187,6 +230,18 @@ class SearchOverlay @JvmOverloads constructor(
                 }
                 is LaunchableItem.LauncherSettings -> context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
                 is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
+                is LaunchableItem.SearchCommand -> {
+                    when (first.actionType) {
+                        0 -> first.actionPackage?.let { pkg ->
+                            context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        }
+                        1 -> first.intentUri?.let { uri ->
+                            try {
+                                context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            } catch (_: Exception) { }
+                        }
+                    }
+                }
             }
             dismiss()
         } else {
@@ -210,6 +265,16 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun onSearch(query: String) {
+        val trigger = commandTriggerProvider?.invoke()
+        if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
+            handleCommandSearch(query.removePrefix(trigger))
+            return
+        }
+        val contactMode = contactModeProvider()
+        if (contactMode == 2 && query.startsWith("@")) {
+            handleAtContactSearch(query.removePrefix("@").trimStart())
+            return
+        }
         val layout = dialerLayoutProvider().coerceIn(0, 1)
         val dialDigits = convertToDialDigits(query, layout)
         val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
@@ -236,7 +301,7 @@ class SearchOverlay @JvmOverloads constructor(
             val baseResults = if (settingsMatches) appResults + settingsItem else appResults
             currentResults = baseResults
             adapter.submitList(baseResults)
-            if (contactSearchEnabledProvider()) {
+            if (contactMode == 0) {
                 val queryForContact = query
                 val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
                 ContactSearchHelper.searchAsync(
@@ -244,7 +309,7 @@ class SearchOverlay @JvmOverloads constructor(
                     queryForContact,
                     dialDigitsForAppSearch,
                     contactIcon,
-                    enabled = contactSearchEnabledProvider(),
+                    enabled = true,
                     sourceFilter = contactSourceProvider()
                 ) { contactResults ->
                     if (lastQuery != queryForContact) return@searchAsync
@@ -259,7 +324,9 @@ class SearchOverlay @JvmOverloads constructor(
             dialText.text = "${context.getString(R.string.dial_prefix)} $dialDigits"
             dialRow.setOnClickListener {
                 try {
-                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$dialDigits")).apply {
+                    // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
+                    val telUri = "tel:" + dialDigits.replace("#", "%23")
+                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
@@ -273,10 +340,63 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
+    private fun handleAtContactSearch(contactQuery: String) {
+        dialRow.visibility = GONE
+        val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
+        if (contactQuery.isEmpty()) {
+            currentResults = emptyList()
+            adapter.submitList(emptyList())
+            return
+        }
+        val snapshotQuery = lastQuery
+        val layout = dialerLayoutProvider().coerceIn(0, 1)
+        val dialDigits = convertToDialDigits(contactQuery, layout)
+        val dialDigitsForContact = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+        ContactSearchHelper.searchAsync(
+            context,
+            contactQuery,
+            dialDigitsForContact,
+            contactIcon,
+            enabled = true,
+            sourceFilter = contactSourceProvider()
+        ) { contactResults ->
+            if (lastQuery != snapshotQuery) return@searchAsync
+            currentResults = contactResults
+            adapter.submitList(contactResults)
+        }
+    }
+
+    private fun handleCommandSearch(commandQuery: String) {
+        dialRow.visibility = GONE
+        val commands = commandsProvider?.invoke() ?: emptyList()
+        val icon = commandIconProvider?.invoke() ?: defaultContactIcon
+        val raw = commandQuery.trim().lowercase()
+        val q = raw.replace(Regex("[^a-z0-9]"), "")
+        val filtered = if (q.isEmpty()) {
+            commands
+        } else {
+            commands.filter { cmd ->
+                cmd.name.lowercase().replace(Regex("[^a-z0-9]"), "").contains(q)
+            }
+        }
+        val items = filtered.map { cmd ->
+            LaunchableItem.SearchCommand(
+                commandName = cmd.name,
+                actionType = cmd.actionType,
+                actionPackage = cmd.actionPackage,
+                intentUri = cmd.intentUri,
+                actionName = cmd.actionName,
+                icon = icon
+            )
+        }
+        currentResults = items
+        adapter.submitList(items)
+    }
+
     /**
      * Converts search query to dial digits using the selected layout.
-     * Layout 0 = Qwerty (w→1, e→2, r→3, s→4, d→5, f→6, z→7, x→8, c→9; 0→0; digits and +*# pass through).
-     * Layout 1 = T9 (abc→2, def→3, ghi→4, jkl→5, mno→6, pqrs→7, tuv→8, wxyz→9; 0/space→0, . or 1→1; digits and +*# pass through).
+     * Layout 0 = Qwerty: w→1, e→2, r→3, s→4, d→5, f→6, z→7, x→8, c→9; a→*, q→#, o→+; digits and +*# pass through.
+     * Layout 1 = T9: abc→2, def→3, ghi→4, jkl→5, mno→6, pqrs→7, tuv→8, wxyz→9; 0/space→0, . or 1→1; digits and +*# pass through.
      */
     private fun convertToDialDigits(query: String, layout: Int): String {
         if (query.isEmpty()) return ""
@@ -298,11 +418,14 @@ class SearchOverlay @JvmOverloads constructor(
                     }
                 }
             }
-            else -> { // 0 = Qwerty
+            else -> { // 0 = Qwerty (a→*, q→#, o→+; w/e/r/s/d/f/z/x/c→1–9)
                 for (ch in query) {
                     when (ch) {
                         '+', '*', '#' -> sb.append(ch)
                         in '0'..'9' -> sb.append(ch)
+                        in "aA" -> sb.append('*')
+                        in "qQ" -> sb.append('#')
+                        in "oO" -> sb.append('+')
                         in "wWeErRsSdDfFzZxXcC" -> sb.append(qwertyLetterToDigit(ch.lowercaseChar()))
                         else -> { /* skip unmapped letters */ }
                     }
@@ -333,7 +456,17 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     fun applyOpacity(alpha: Int) {
-        setBackgroundColor(Color.argb(alpha, 0, 0, 0))
+        updateBackground(alpha)
+    }
+
+    private fun updateBackground(alpha: Int = prefs.searchOverlayAlpha) {
+        val color = if (prefs.searchOverlayUseDefaultBackground) {
+            Color.argb(alpha, 0, 0, 0)
+        } else {
+            val c = prefs.searchOverlayCustomBackgroundColor
+            Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c))
+        }
+        setBackgroundColor(color)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

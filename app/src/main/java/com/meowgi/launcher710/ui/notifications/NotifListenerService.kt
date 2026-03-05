@@ -48,6 +48,13 @@ class NotifListenerService : NotificationListenerService() {
         }
     }
 
+    /** Dismiss a single notification by its key. */
+    fun dismissNotification(key: String) {
+        try {
+            cancelNotification(key)
+        } catch (_: Exception) { }
+    }
+
     /** Dismiss all notifications. Uses system clear-all when available; otherwise cancels each by key. */
     fun dismissAllNotifications() {
         try {

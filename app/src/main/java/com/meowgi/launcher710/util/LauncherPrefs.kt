@@ -8,6 +8,15 @@ import android.graphics.drawable.RippleDrawable
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** One search command: name + action (app or shortcut). */
+data class SearchCommandData(
+    val name: String,
+    val actionType: Int,
+    val actionPackage: String?,
+    val intentUri: String?,
+    val actionName: String?
+)
+
 class LauncherPrefs(context: Context) {
 
     private val prefs: SharedPreferences =
@@ -308,15 +317,40 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("notificationHubAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("notificationHubAlpha", v).apply()
 
+    /** true = black background; false = use notificationHubCustomBackgroundColor (with alpha). */
+    var notificationHubUseDefaultBackground: Boolean
+        get() = prefs.getBoolean("notificationHubUseDefaultBackground", true)
+        set(v) = prefs.edit().putBoolean("notificationHubUseDefaultBackground", v).apply()
+
+    var notificationHubCustomBackgroundColor: Int
+        get() = prefs.getInt("notificationHubCustomBackgroundColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("notificationHubCustomBackgroundColor", v).apply()
+
     /** Opacity (0–255) for the search overlay. */
     var searchOverlayAlpha: Int
         get() = prefs.getInt("searchOverlayAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("searchOverlayAlpha", v).apply()
 
+    var searchOverlayUseDefaultBackground: Boolean
+        get() = prefs.getBoolean("searchOverlayUseDefaultBackground", true)
+        set(v) = prefs.edit().putBoolean("searchOverlayUseDefaultBackground", v).apply()
+
+    var searchOverlayCustomBackgroundColor: Int
+        get() = prefs.getInt("searchOverlayCustomBackgroundColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("searchOverlayCustomBackgroundColor", v).apply()
+
     /** Opacity (0–255) for the sound profile overlay background. */
     var soundProfileOverlayAlpha: Int
         get() = prefs.getInt("soundProfileOverlayAlpha", 179) // 70%
         set(v) = prefs.edit().putInt("soundProfileOverlayAlpha", v).apply()
+
+    var soundProfileOverlayUseDefaultBackground: Boolean
+        get() = prefs.getBoolean("soundProfileOverlayUseDefaultBackground", true)
+        set(v) = prefs.edit().putBoolean("soundProfileOverlayUseDefaultBackground", v).apply()
+
+    var soundProfileOverlayCustomBackgroundColor: Int
+        get() = prefs.getInt("soundProfileOverlayCustomBackgroundColor", 0xFF000000.toInt())
+        set(v) = prefs.edit().putInt("soundProfileOverlayCustomBackgroundColor", v).apply()
 
     /** Opacity (0–255) for the sound profile selected row highlight. Default 92 = 36%. */
     var soundProfileHighlightAlpha: Int
@@ -516,10 +550,24 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("dialerNumberLayout", 0).coerceIn(0, 1)
         set(v) = prefs.edit().putInt("dialerNumberLayout", v.coerceIn(0, 1)).apply()
 
-    /** When true, extended search includes contacts. */
+    /** When true, extended search includes contacts. Kept for backward compat; prefer searchContactsMode. */
     var searchContactsEnabled: Boolean
         get() = prefs.getBoolean("searchContactsEnabled", true)
         set(v) = prefs.edit().putBoolean("searchContactsEnabled", v).apply()
+
+    /** 0 = enabled (always), 1 = disabled, 2 = @ prefix only. Migrates from old boolean on first read. */
+    var searchContactsMode: Int
+        get() {
+            if (prefs.contains("searchContactsMode")) return prefs.getInt("searchContactsMode", 0)
+            val legacy = prefs.getBoolean("searchContactsEnabled", true)
+            val mode = if (legacy) 0 else 1
+            prefs.edit().putInt("searchContactsMode", mode).apply()
+            return mode
+        }
+        set(v) {
+            prefs.edit().putInt("searchContactsMode", v.coerceIn(0, 2)).apply()
+            prefs.edit().putBoolean("searchContactsEnabled", v != 1).apply()
+        }
 
     /** Contact source for search: "all", "favorites", or "accountType:accountName" (e.g. "com.google:user@gmail.com"). */
     var searchContactsSource: String?
@@ -535,6 +583,69 @@ class LauncherPrefs(context: Context) {
     var contactIconPackPackage: String?
         get() = prefs.getString("contactIconPackPackage", null)?.takeIf { it.isNotEmpty() }
         set(v) = prefs.edit().putString("contactIconPackPackage", v ?: "").apply()
+
+    // --- Search commands (trigger + list of commands; trigger disallows * # + @) ---
+    /** Symbol(s) that start command mode in search (e.g. "./", "~"). Only symbols allowed; *, #, +, @ disallowed. */
+    var searchCommandTrigger: String?
+        get() = prefs.getString("searchCommandTrigger", null)?.takeIf { it.isNotEmpty() }
+        set(v) {
+            val toSave = when {
+                v.isNullOrEmpty() -> ""
+                isValidCommandTrigger(v) -> v
+                else -> return
+            }
+            prefs.edit().putString("searchCommandTrigger", toSave).apply()
+        }
+
+    /** Returns true if trigger is valid: non-empty, only symbols, no * # + @. */
+    fun isValidCommandTrigger(trigger: String): Boolean {
+        if (trigger.isEmpty()) return false
+        val disallowed = setOf('*', '#', '+', '@')
+        return trigger.all { c ->
+            !c.isLetterOrDigit() && !c.isWhitespace() && c !in disallowed
+        }
+    }
+
+    fun getSearchCommands(): List<SearchCommandData> {
+        val data = prefs.getString("searchCommands", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(data)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                SearchCommandData(
+                    name = o.optString("name", ""),
+                    actionType = o.optInt("actionType", 0),
+                    actionPackage = o.optString("actionPackage", "").takeIf { it.isNotEmpty() },
+                    intentUri = o.optString("intentUri", "").takeIf { it.isNotEmpty() },
+                    actionName = o.optString("actionName", "").takeIf { it.isNotEmpty() }
+                )
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun setSearchCommands(commands: List<SearchCommandData>) {
+        val arr = org.json.JSONArray()
+        commands.forEach { c ->
+            arr.put(org.json.JSONObject().apply {
+                put("name", c.name)
+                put("actionType", c.actionType)
+                put("actionPackage", c.actionPackage ?: "")
+                put("intentUri", c.intentUri ?: "")
+                put("actionName", c.actionName ?: "")
+            })
+        }
+        prefs.edit().putString("searchCommands", arr.toString()).apply()
+    }
+
+    /** Custom icon for search commands: drawable name in the pack. */
+    var commandIconDrawableName: String?
+        get() = prefs.getString("commandIconDrawableName", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("commandIconDrawableName", v ?: "").apply()
+
+    /** Custom icon for search commands: icon pack package. */
+    var commandIconPackPackage: String?
+        get() = prefs.getString("commandIconPackPackage", null)?.takeIf { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("commandIconPackPackage", v ?: "").apply()
 
     // --- Key shortcuts (recorded key codes) ---
     var keyShortcutsEnabled: Boolean
@@ -843,13 +954,17 @@ class LauncherPrefs(context: Context) {
         "statusBarVisible", "statusBarShowClock", "statusBarShowBattery", "statusBarShowNetwork", "statusBarShowBluetooth",
         "statusBarShowAlarm", "statusBarShowDND", "systemStatusBarVisible", "systemStatusBarAlpha", "navigationBarVisible",
         "actionBarAlpha", "actionBarCenterAction", "actionBarCenterActionPackage", "actionBarCenterActionIntentUri", "actionBarCenterActionName",
-        "actionBarCenterLongPressAction", "actionBarCenterLongPressActionPackage", "actionBarCenterLongPressActionIntentUri", "actionBarCenterLongPressActionName", "notificationHubAlpha", "searchOverlayAlpha", "soundProfileOverlayAlpha", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
+        "actionBarCenterLongPressAction", "actionBarCenterLongPressActionPackage", "actionBarCenterLongPressActionIntentUri", "actionBarCenterLongPressActionName", "notificationHubAlpha", "notificationHubUseDefaultBackground", "notificationHubCustomBackgroundColor",
+        "searchOverlayAlpha", "searchOverlayUseDefaultBackground", "searchOverlayCustomBackgroundColor",
+        "soundProfileOverlayAlpha", "soundProfileOverlayUseDefaultBackground", "soundProfileOverlayCustomBackgroundColor", "soundProfileHighlightAlpha", "soundProfileHighlightUseAccent", "soundProfileHighlightCustomColor", "notificationAppWhitelist",
         "useNotificationApplets", "notificationAppletsAutoHide", "notificationApplets", "appletCustomIcons", "appletCustomIconPacks", "appletIconShape", "notificationAppletsSpacingDp", "notificationAppletSizeIndex",
         "swipeMode", "defaultTab", "defaultTabPageId", "appSortMode", "sortApplyPages", "doubleTapAction", "searchOnType",
         "searchEngineMode", "searchEnginePackage", "searchEngineIntentUri", "searchEngineShortcutIntentUri", "searchEngineShortcutName",
         "searchEngineLaunchInjectIntentUri", "searchEngineLaunchInjectName", "searchEngineLaunchInjectDelayMs",
         "searchEngineLaunchInjectWaitForFocus", "searchEngineLaunchInjectUseRoot", "searchEngineLaunchInjectAlternativeListener",
-        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsSource", "contactIconDrawableName", "contactIconPackPackage", "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
+        "searchEngineLaunchInjectAlternativeWindowMs", "dialerNumberLayout", "searchContactsEnabled", "searchContactsMode", "searchContactsSource", "contactIconDrawableName", "contactIconPackPackage",
+        "searchCommandTrigger", "searchCommands", "commandIconDrawableName", "commandIconPackPackage",
+        "keyShortcutsEnabled", "keyCodeHome", "keyCodeBack", "keyCodeRecents",
         "customIcons", "customLabels", "customPages", "pageOrder", "favoriteOrder", "verticalScrollEnabled",
         "hideAllPage", "hideFrequentPage", "hiddenApps",
         "widgetData", "widgetHeights"
@@ -937,8 +1052,14 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "actionBarCenterLongPressActionIntentUri", "s", actionBarCenterLongPressActionIntentUri)
         putEntry(arr, "actionBarCenterLongPressActionName", "s", actionBarCenterLongPressActionName)
         putEntry(arr, "notificationHubAlpha", "i", notificationHubAlpha)
+        putEntry(arr, "notificationHubUseDefaultBackground", "b", notificationHubUseDefaultBackground)
+        putEntry(arr, "notificationHubCustomBackgroundColor", "i", notificationHubCustomBackgroundColor)
         putEntry(arr, "searchOverlayAlpha", "i", searchOverlayAlpha)
+        putEntry(arr, "searchOverlayUseDefaultBackground", "b", searchOverlayUseDefaultBackground)
+        putEntry(arr, "searchOverlayCustomBackgroundColor", "i", searchOverlayCustomBackgroundColor)
         putEntry(arr, "soundProfileOverlayAlpha", "i", soundProfileOverlayAlpha)
+        putEntry(arr, "soundProfileOverlayUseDefaultBackground", "b", soundProfileOverlayUseDefaultBackground)
+        putEntry(arr, "soundProfileOverlayCustomBackgroundColor", "i", soundProfileOverlayCustomBackgroundColor)
         putEntry(arr, "soundProfileHighlightAlpha", "i", soundProfileHighlightAlpha)
         putEntry(arr, "soundProfileHighlightUseAccent", "b", soundProfileHighlightUseAccent)
         putEntry(arr, "soundProfileHighlightCustomColor", "i", soundProfileHighlightCustomColor)
@@ -972,9 +1093,14 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "searchEngineLaunchInjectAlternativeWindowMs", "i", searchEngineLaunchInjectAlternativeWindowMs)
         putEntry(arr, "dialerNumberLayout", "i", dialerNumberLayout)
         putEntry(arr, "searchContactsEnabled", "b", searchContactsEnabled)
+        putEntry(arr, "searchContactsMode", "i", searchContactsMode)
         putEntry(arr, "searchContactsSource", "s", searchContactsSource)
         putEntry(arr, "contactIconDrawableName", "s", contactIconDrawableName)
         putEntry(arr, "contactIconPackPackage", "s", contactIconPackPackage)
+        putEntry(arr, "searchCommandTrigger", "s", prefs.getString("searchCommandTrigger", null))
+        putEntry(arr, "searchCommands", "s", prefs.getString("searchCommands", null))
+        putEntry(arr, "commandIconDrawableName", "s", commandIconDrawableName)
+        putEntry(arr, "commandIconPackPackage", "s", commandIconPackPackage)
         putEntry(arr, "keyShortcutsEnabled", "b", keyShortcutsEnabled)
         putEntry(arr, "keyCodeHome", "i", keyCodeHome)
         putEntry(arr, "keyCodeBack", "i", keyCodeBack)

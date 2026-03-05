@@ -31,7 +31,7 @@ class NotificationHub @JvmOverloads constructor(
     private val prefs = LauncherPrefs(context)
 
     init {
-        setBackgroundColor(resources.getColor(R.color.bb_overlay_dark, null))
+        updateBackground()
         isFocusable = true
         isFocusableInTouchMode = false
         descendantFocusability = FOCUS_AFTER_DESCENDANTS
@@ -161,6 +161,7 @@ class NotificationHub @JvmOverloads constructor(
                     id = View.generateViewId()
                     setOnClickListener {
                         launchNotification(sbn)
+                        NotifListenerService.instance?.dismissNotification(sbn.key)
                         hide()
                     }
                 }
@@ -237,6 +238,7 @@ class NotificationHub @JvmOverloads constructor(
                     NotifListenerService.instance?.dismissAllNotifications()
                     refresh(appWhitelist)
                     onClearAll?.invoke()
+                    hide()
                 }
             }
             container.addView(clearBtn, LinearLayout.LayoutParams(
@@ -315,7 +317,17 @@ class NotificationHub @JvmOverloads constructor(
     }
 
     fun applyOpacity(alpha: Int) {
-        setBackgroundColor(android.graphics.Color.argb(alpha, 0, 0, 0))
+        updateBackground(alpha)
+    }
+
+    private fun updateBackground(alpha: Int = prefs.notificationHubAlpha) {
+        val color = if (prefs.notificationHubUseDefaultBackground) {
+            android.graphics.Color.argb(alpha, 0, 0, 0)
+        } else {
+            val c = prefs.notificationHubCustomBackgroundColor
+            android.graphics.Color.argb(alpha, android.graphics.Color.red(c), android.graphics.Color.green(c), android.graphics.Color.blue(c))
+        }
+        setBackgroundColor(color)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
