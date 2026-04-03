@@ -30,7 +30,7 @@ class AppRepository(private val context: Context) {
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             CoroutineScope(Dispatchers.Main).launch {
-                loadApps()
+                withContext(Dispatchers.IO) { loadApps() }
                 onAppsChanged?.invoke()
             }
         }
@@ -81,8 +81,9 @@ class AppRepository(private val context: Context) {
                 }
                 val finalIcon = applyGlobalShape(baseIcon)
 
+                val appLabel = ri.loadLabel(pm).toString()
                 AppInfo(
-                    label = ri.loadLabel(pm).toString(),
+                    label = appLabel,
                     packageName = ri.activityInfo.packageName,
                     activityName = ri.activityInfo.name,
                     icon = finalIcon,
@@ -92,7 +93,9 @@ class AppRepository(private val context: Context) {
                     firstInstallTime = try {
                         @Suppress("DEPRECATION")
                         pm.getPackageInfo(ri.activityInfo.packageName, 0).firstInstallTime
-                    } catch (_: Exception) { 0L }
+                    } catch (_: Exception) { 0L },
+                    normalizedLabel = SearchNormalizer.normalize(appLabel),
+                    initials = SearchNormalizer.initials(appLabel)
                 )
             }
             .sortedBy { it.label.lowercase() }
@@ -193,10 +196,10 @@ class AppRepository(private val context: Context) {
         if (normalizedQuery.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
 
         val filtered = filterHidden(apps.filter { app ->
-            val nameNorm = SearchNormalizer.normalize(app.label.toString())
-            val textMatch = normalizedQuery.isNotEmpty() && nameNorm.contains(normalizedQuery)
-            val digitMatch = digitsOnly != null && nameNorm.contains(digitsOnly)
-            textMatch || digitMatch
+            val textMatch = normalizedQuery.isNotEmpty() && app.normalizedLabel.contains(normalizedQuery)
+            val prefixMatch = normalizedQuery.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(normalizedQuery, app.label)
+            val digitMatch = digitsOnly != null && app.normalizedLabel.contains(digitsOnly)
+            textMatch || prefixMatch || digitMatch
         })
 
         return filtered.sortedWith(
@@ -415,5 +418,21 @@ class AppRepository(private val context: Context) {
             }
         }
         return LaunchableItem.LauncherSettings(label, applyGlobalShape(icon!!))
+    }
+
+    fun createRefreshCacheItem(): LaunchableItem.RefreshCache {
+        val label = context.getString(R.string.refresh_cache_label)
+        var icon: android.graphics.drawable.Drawable? = null
+        val packManager = getPackManagerForPage("all") ?: iconPackManager
+        if (packManager?.isLoaded() == true) {
+            icon = packManager.getIconByName("ic_refresh")
+                ?: packManager.getIconByName("refresh")
+                ?: packManager.getIconByName("ic_sync")
+                ?: packManager.getIconByName("sync")
+        }
+        if (icon == null) {
+            icon = context.resources.getDrawable(android.R.drawable.stat_notify_sync, context.theme)
+        }
+        return LaunchableItem.RefreshCache(label, applyGlobalShape(icon!!))
     }
 }

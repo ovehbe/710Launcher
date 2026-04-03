@@ -140,6 +140,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.Shortcut -> shortcutHelper?.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
                     is LaunchableItem.LauncherSettings -> startActivity(Intent(requireContext(), SettingsActivity::class.java))
+                    is LaunchableItem.RefreshCache -> { }
                     is LaunchableItem.Contact -> { }
                     is LaunchableItem.SearchCommand -> { }
                 }
@@ -153,6 +154,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.Shortcut -> repository!!.getIconForShortcut(item.shortcut, pageId)
                         is LaunchableItem.IntentShortcut -> repository!!.getIconForIntentShortcut(item.info, pageId)
                         is LaunchableItem.LauncherSettings -> item.icon
+                        is LaunchableItem.RefreshCache -> item.icon
                         is LaunchableItem.Contact -> item.icon
                         is LaunchableItem.SearchCommand -> item.icon
                     }
@@ -166,6 +168,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.Shortcut -> prefs.getCustomLabel(item.shortcut.shortcutKey, pageId) ?: item.shortcut.label
                         is LaunchableItem.IntentShortcut -> prefs.getCustomLabel(item.info.shortcutKey, pageId) ?: item.info.label
                         is LaunchableItem.LauncherSettings -> item.label
+                        is LaunchableItem.RefreshCache -> item.label
                         is LaunchableItem.Contact -> item.displayName
                         is LaunchableItem.SearchCommand -> item.label
                     }
