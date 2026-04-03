@@ -22,6 +22,7 @@ import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
+import com.meowgi.launcher710.util.SearchNormalizer
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
@@ -54,6 +55,8 @@ class SearchOverlay @JvmOverloads constructor(
     var commandsProvider: (() -> List<SearchCommandData>)? = null
     /** Icon shown for command results in search. */
     var commandIconProvider: (() -> Drawable)? = null
+    /** Called when user taps "Refresh Cache" in search results. */
+    var onRefreshCache: (() -> Unit)? = null
 
     private var filterItems: List<LaunchableItem>? = null
     private var lastQuery: String = ""
@@ -133,6 +136,10 @@ class SearchOverlay @JvmOverloads constructor(
                         }
                         is LaunchableItem.LauncherSettings -> {
                             context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                            dismiss()
+                        }
+                        is LaunchableItem.RefreshCache -> {
+                            onRefreshCache?.invoke()
                             dismiss()
                         }
                         is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
@@ -229,6 +236,7 @@ class SearchOverlay @JvmOverloads constructor(
                     } catch (_: Exception) { Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show() }
                 }
                 is LaunchableItem.LauncherSettings -> context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                is LaunchableItem.RefreshCache -> onRefreshCache?.invoke()
                 is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                 is LaunchableItem.SearchCommand -> {
                     when (first.actionType) {
@@ -281,24 +289,43 @@ class SearchOverlay @JvmOverloads constructor(
 
         val filter = filterItems
         if (filter != null) {
-            val raw = query.trim().lowercase()
-            val q = raw.replace(Regex("[^a-z0-9]"), "")
-            val filtered = if (q.isEmpty() && dialDigitsForAppSearch == null) filter else filter.filter {
-                val normalized = it.label.toString().lowercase().replace(Regex("[^a-z0-9]"), "")
-                normalized.contains(q) || (dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch))
+            val nq = SearchNormalizer.normalize(query)
+            val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) filter else filter.filter {
+                val originalLabel = it.label.toString()
+                val normalized = SearchNormalizer.normalize(originalLabel)
+                val textMatch = nq.isNotEmpty() && normalized.contains(nq)
+                val prefixMatch = nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, originalLabel)
+                val digitMatch = dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch)
+                textMatch || prefixMatch || digitMatch
             }
             currentResults = filtered
             adapter.submitList(filtered)
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
-            val raw = query.trim().lowercase()
-            val q = raw.replace(Regex("[^a-z0-9]"), "")
+            val nq = SearchNormalizer.normalize(query)
+            val builtInItems = mutableListOf<LaunchableItem>()
+
+            fun matchesBuiltIn(label: CharSequence, vararg extraAliases: String): Boolean {
+                val labelStr = label.toString()
+                val norm = SearchNormalizer.normalize(labelStr)
+                if (nq.isEmpty() && dialDigitsForAppSearch == null) return true
+                if (nq.isNotEmpty() && norm.contains(nq)) return true
+                if (nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, labelStr)) return true
+                for (alias in extraAliases) {
+                    if (nq.isNotEmpty() && alias.contains(nq)) return true
+                    if (dialDigitsForAppSearch != null && alias.contains(dialDigitsForAppSearch)) return true
+                }
+                return dialDigitsForAppSearch != null && norm.contains(dialDigitsForAppSearch)
+            }
+
             val settingsItem = repo.createLauncherSettingsItem()
-            val settingsMatches = q.isEmpty() && dialDigitsForAppSearch == null ||
-                settingsItem.label.toString().lowercase().replace(Regex("[^a-z0-9]"), "").contains(q) ||
-                (dialDigitsForAppSearch != null && "710".contains(dialDigitsForAppSearch))
-            val baseResults = if (settingsMatches) appResults + settingsItem else appResults
+            if (matchesBuiltIn(settingsItem.label, "710")) builtInItems += settingsItem
+
+            val refreshItem = repo.createRefreshCacheItem()
+            if (matchesBuiltIn(refreshItem.label)) builtInItems += refreshItem
+
+            val baseResults = appResults + builtInItems
             currentResults = baseResults
             adapter.submitList(baseResults)
             if (contactMode == 0) {

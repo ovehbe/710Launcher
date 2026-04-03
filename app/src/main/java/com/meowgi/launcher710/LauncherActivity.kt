@@ -380,6 +380,15 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
                 is LaunchableItem.LauncherSettings -> startActivity(Intent(this, SettingsActivity::class.java))
+                is LaunchableItem.RefreshCache -> {
+                    android.widget.Toast.makeText(this, "Indexing…", android.widget.Toast.LENGTH_SHORT).show()
+                    CoroutineScope(Dispatchers.Main).launch {
+                        withContext(Dispatchers.IO) { repository.loadApps() }
+                        if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+                        dockBar.loadDock()
+                        android.widget.Toast.makeText(this@LauncherActivity, "Done", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
                 is LaunchableItem.Contact -> item.phoneNumbers.firstOrNull()?.let { num ->
                     try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch (_: Exception) {}
                 }
@@ -546,9 +555,10 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.App -> showAppContextMenu(item.app, view)
                     is LaunchableItem.Shortcut -> showShortcutContextMenu(item.shortcut, view)
                     is LaunchableItem.IntentShortcut -> showIntentShortcutContextMenu(item.info, view)
-                    is LaunchableItem.LauncherSettings -> { /* no context menu */ }
+                    is LaunchableItem.LauncherSettings -> { }
+                    is LaunchableItem.RefreshCache -> { }
                     is LaunchableItem.Contact -> { }
-                    is LaunchableItem.SearchCommand -> { /* no context menu */ }
+                    is LaunchableItem.SearchCommand -> { }
                 }
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
