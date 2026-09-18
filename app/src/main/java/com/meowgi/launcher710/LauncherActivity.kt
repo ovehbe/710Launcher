@@ -32,6 +32,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
@@ -68,6 +69,8 @@ class LauncherActivity : AppCompatActivity() {
         private const val KEY_ROLE_RECENTS = 3
         private const val LONG_PRESS_MS = 500L
         private const val DOUBLE_PRESS_MS = 300L
+        /** Grace period for notification state to settle after a post or dismiss. */
+        private const val TICKER_SETTLE_MS = 600L
     }
 
     private lateinit var prefs: LauncherPrefs
@@ -75,7 +78,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var iconPackManager: IconPackManager
     private lateinit var allPageIconPackManager: IconPackManager
     private lateinit var dockIconPackManager: IconPackManager
-    private lateinit var pagerAdapter: AppPagerAdapter
+    private var pagerAdapter: AppPagerAdapter? = null
     private lateinit var widgetHost: WidgetHost
     private lateinit var shortcutHelper: ShortcutHelper
 
@@ -113,9 +116,12 @@ class LauncherActivity : AppCompatActivity() {
 
     private var tickerTypingRunnable: Runnable? = null
     private var tickerDismissRunnable: Runnable? = null
+    private var tickerRefreshRunnable: Runnable? = null
     private var currentTickerNotificationKey: String? = null
     private val tickerTypingDelayMs = 45L
     private val tickerDisplayDurationMs = 5000L
+
+    private var lastPageIconPackSignature: String? = null
 
     private var injectCaptureActive = false
     private val injectCaptureBuffer = StringBuilder()
@@ -165,7 +171,7 @@ class LauncherActivity : AppCompatActivity() {
         val data = result.data!!
         val shortcutIntent = data.getParcelableExtra<Intent>(Intent.EXTRA_SHORTCUT_INTENT) ?: return@registerForActivityResult
         val name = data.getStringExtra(Intent.EXTRA_SHORTCUT_NAME) ?: "Shortcut"
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val pageId = activePageId()
         val intentUri = shortcutIntent.toUri(Intent.URI_INTENT_SCHEME)
         var iconPath: String? = null
         val iconBmp = data.getParcelableExtra<android.graphics.Bitmap>(Intent.EXTRA_SHORTCUT_ICON)
@@ -177,7 +183,7 @@ class LauncherActivity : AppCompatActivity() {
             } catch (_: Exception) { }
         }
         prefs.addIntentShortcutToPage(pageId, name, intentUri, iconPath)
-        pagerAdapter.refreshAll()
+        pagerAdapter?.refreshAll()
     }
 
     private var pendingDockSwipeSlotIndex = -1
@@ -245,6 +251,11 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Drop any restored fragment state before the FragmentManager sees it. The home screen has
+        // no state worth restoring, and stale AppGridFragment records are half of what ViewPager2
+        // tries (and fails) to reattach after the process is killed.
+        savedInstanceState?.remove("android:support:fragments")
+        savedInstanceState?.remove("android:fragments")
         super.onCreate(savedInstanceState)
 
         prefs = LauncherPrefs(this)
@@ -348,7 +359,7 @@ class LauncherActivity : AppCompatActivity() {
             setOnClickListener { onActionBarCenterClick() }
             setOnLongClickListener { onActionBarCenterLongPress(); true }
         }
-        notificationHub.onClearAll = { keyHandler.postDelayed({ refreshNotificationTicker() }, 500) }
+        notificationHub.onClearAll = { scheduleTickerRefresh() }
 
         ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { view, insets ->
             val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
@@ -382,9 +393,9 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.LauncherSettings -> startActivity(Intent(this, SettingsActivity::class.java))
                 is LaunchableItem.RefreshCache -> {
                     android.widget.Toast.makeText(this, "Indexing…", android.widget.Toast.LENGTH_SHORT).show()
-                    CoroutineScope(Dispatchers.Main).launch {
+                    lifecycleScope.launch {
                         withContext(Dispatchers.IO) { repository.loadApps() }
-                        if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+                        pagerAdapter?.refreshAll()
                         dockBar.loadDock()
                         android.widget.Toast.makeText(this@LauncherActivity, "Done", android.widget.Toast.LENGTH_SHORT).show()
                     }
@@ -434,7 +445,7 @@ class LauncherActivity : AppCompatActivity() {
         dockBar.dockIconResolver = { app -> repository.getIconForDock(app) }
 
         repository.onAppsChanged = {
-            pagerAdapter.refreshAll()
+            pagerAdapter?.refreshAll()
             dockBar.loadDock()
         }
 
@@ -459,9 +470,14 @@ class LauncherActivity : AppCompatActivity() {
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
-        CoroutineScope(Dispatchers.Main).launch {
+        // The pager must be attached before the activity's state-restore pass, so it goes up now
+        // with whatever the repository has (nothing, on a cold start) and is refreshed once the
+        // app scan finishes.
+        setupPager()
+
+        lifecycleScope.launch {
             withContext(Dispatchers.IO) { repository.loadApps() }
-            setupPager()
+            pagerAdapter?.refreshAll()
             dockBar.loadDock()
             setupFocusOrder()
         }
@@ -494,37 +510,33 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadPageIconPacks() {
-        repository.pageIconPackManagers.clear()
-        for (pageId in prefs.getPageOrder()) {
+    /** Every page slot that can carry its own icon pack, including the pseudo-pages. */
+    private fun iconPackSlots(): List<String> =
+        prefs.getPageOrder() + listOf("dock", "search", "applets")
+
+    /**
+     * Cheap prefs-only fingerprint of the per-page icon pack assignment. Comparing this lets
+     * [onResume] skip [buildPageIconPacks], which parses appfilter.xml out of every assigned pack.
+     */
+    private fun pageIconPackSignature(): String =
+        iconPackSlots().joinToString("|") { "$it=${prefs.getPageIconPackPackage(it) ?: ""}" }
+
+    /** Parses the assigned icon packs. Expensive — call off the main thread. */
+    private fun buildPageIconPacks(): Map<String, IconPackManager> {
+        val managers = mutableMapOf<String, IconPackManager>()
+        for (pageId in iconPackSlots()) {
+            if (managers.containsKey(pageId)) continue
             val pkg = prefs.getPageIconPackPackage(pageId) ?: continue
             val mgr = IconPackManager(this)
-            if (mgr.loadIconPack(pkg)) {
-                repository.pageIconPackManagers[pageId] = mgr
-            }
+            if (mgr.loadIconPack(pkg)) managers[pageId] = mgr
         }
-        // Also load dock and search page packs if set via per-page system
-        val dockPkg = prefs.getPageIconPackPackage("dock")
-        if (dockPkg != null) {
-            val mgr = IconPackManager(this)
-            if (mgr.loadIconPack(dockPkg)) {
-                repository.pageIconPackManagers["dock"] = mgr
-            }
-        }
-        val searchPkg = prefs.getPageIconPackPackage("search")
-        if (searchPkg != null) {
-            val mgr = IconPackManager(this)
-            if (mgr.loadIconPack(searchPkg)) {
-                repository.pageIconPackManagers["search"] = mgr
-            }
-        }
-        val appletsPkg = prefs.getPageIconPackPackage("applets")
-        if (appletsPkg != null) {
-            val mgr = IconPackManager(this)
-            if (mgr.loadIconPack(appletsPkg)) {
-                repository.pageIconPackManagers["applets"] = mgr
-            }
-        }
+        return managers
+    }
+
+    private fun loadPageIconPacks() {
+        repository.pageIconPackManagers.clear()
+        repository.pageIconPackManagers.putAll(buildPageIconPacks())
+        lastPageIconPackSignature = pageIconPackSignature()
     }
 
     private fun refreshWallpaper() {
@@ -547,8 +559,19 @@ class LauncherActivity : AppCompatActivity() {
         soundProfileOverlay.applyOpacity(prefs.soundProfileOverlayAlpha)
     }
 
+    /** Page ID of the visible page, or the Favorites fallback before the pager exists. */
+    private fun activePageId(): String =
+        pagerAdapter?.getPageId(appPager.currentItem) ?: "favorites"
+
+    /**
+     * Attaches the pager adapter. Must run synchronously from [onCreate] — never from a coroutine
+     * that waits on the app scan first. ViewPager2 replays any restored state into the adapter at
+     * attach time, and deferring that past the activity's state-restore pass makes it look up
+     * fragments the FragmentManager has already let go of ("Fragment no longer exists for key f#N").
+     * Pages render empty for the moment before [AppRepository.loadApps] returns.
+     */
     private fun setupPager() {
-        pagerAdapter = AppPagerAdapter(
+        val adapter = AppPagerAdapter(
             this, repository, shortcutHelper, widgetHost,
             onItemLongClick = { item, view ->
                 when (item) {
@@ -563,12 +586,16 @@ class LauncherActivity : AppCompatActivity() {
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }
         )
-        appPager.adapter = pagerAdapter
+        pagerAdapter = adapter
+        // A home screen has nothing worth restoring, and persisting ViewPager2's fragment state is
+        // what produced the "Fragment no longer exists" crashes after the process was killed.
+        appPager.isSaveEnabled = false
+        appPager.adapter = adapter
         appPager.isUserInputEnabled = false
         buildTabBar()
         setupFocusOrder()
         setupBottomSwipe()
-        val startTab = pagerAdapter.getPositionForPageId(prefs.defaultTabPageId)
+        val startTab = adapter.getPositionForPageId(prefs.defaultTabPageId)
         appPager.setCurrentItem(startTab, false)
         updateTabHighlight(startTab)
 
@@ -580,13 +607,14 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun buildTabBar() {
+        val adapter = pagerAdapter ?: return
         tabBarContainer.removeAllViews()
         tabViews.clear()
         val font = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bbalphas)
-        for (i in 0 until pagerAdapter.itemCount) {
+        for (i in 0 until adapter.itemCount) {
             val tv = TextView(this).apply {
                 id = View.generateViewId()
-                text = pagerAdapter.getPageName(i)
+                text = adapter.getPageName(i)
                 setTextColor(getColor(R.color.bb_text_secondary))
                 textSize = 13f
                 typeface = font
@@ -710,8 +738,8 @@ class LauncherActivity : AppCompatActivity() {
                 foreground = ripple
             }
         }
-        if (::pagerAdapter.isInitialized) {
-            pagerAdapter.notifyDataSetChanged()
+        pagerAdapter?.let {
+            it.notifyDataSetChanged()
             setupFocusOrder()
         }
     }
@@ -766,7 +794,8 @@ class LauncherActivity : AppCompatActivity() {
                     val dx = ev.rawX - bottomSwipeStartX
                     val dy = ev.rawY - bottomSwipeStartY
                     if (kotlin.math.abs(dx) > dp(70) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 2f) {
-                        if (dx < 0 && appPager.currentItem < pagerAdapter.itemCount - 1) {
+                        val pageCount = pagerAdapter?.itemCount ?: 0
+                        if (dx < 0 && appPager.currentItem < pageCount - 1) {
                             appPager.setCurrentItem(appPager.currentItem + 1, true)
                             bottomSwipeTracking = false
                             return true
@@ -799,7 +828,7 @@ class LauncherActivity : AppCompatActivity() {
 
     /** Injects a key event via root shell "input keyevent". Requires root. Runs on background thread. */
     private fun injectKeyViaRoot(keyCode: Int) {
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent $keyCode")).waitFor()
             } catch (_: Exception) { }
@@ -809,7 +838,7 @@ class LauncherActivity : AppCompatActivity() {
     /** Injects text via root shell "input text". Requires root. Escapes space as %s and shell single-quotes. */
     private fun injectTextViaRoot(text: String) {
         if (text.isEmpty()) return
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val forInput = text.replace(" ", "%s").replace("'", "'\\''")
                 Runtime.getRuntime().exec(arrayOf("su", "-c", "input text '$forInput'")).waitFor()
@@ -839,7 +868,8 @@ class LauncherActivity : AppCompatActivity() {
 
         dismissOtherOverlays()
 
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else null
+        val adapter = pagerAdapter
+        val pageId = adapter?.getPageId(appPager.currentItem)
         searchOverlay.setSearchContextLabel(
             when (pageId) {
                 "frequent" -> "Frequents"
@@ -847,11 +877,11 @@ class LauncherActivity : AppCompatActivity() {
                 else -> "Extended"
             }
         )
-        if (!::pagerAdapter.isInitialized) {
+        if (adapter == null) {
             searchOverlay.show()
         } else {
             if (pageId == "all" || pageId == "frequent") {
-                val frag = pagerAdapter.getFragment(appPager.currentItem)
+                val frag = adapter.getFragment(appPager.currentItem)
                 val items = frag?.getCurrentItems() ?: emptyList()
                 if (items.isNotEmpty()) searchOverlay.showFilter(items) else searchOverlay.show()
             } else {
@@ -1122,7 +1152,7 @@ class LauncherActivity : AppCompatActivity() {
 
     private fun showHomeContextMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val pageId = activePageId()
         val supportsWidgets = pageId == "favorites" || pageId.startsWith("custom_")
         popup.menu.add(getString(R.string.add_widget))
         if (supportsWidgets) {
@@ -1144,10 +1174,10 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title.startsWith("Widget position: ") -> {
-                    val pageIdForWidget = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    val pageIdForWidget = activePageId()
                     val currentlyBelow = prefs.isPageWidgetsBelowApps(pageIdForWidget)
                     prefs.setPageWidgetsBelowApps(pageIdForWidget, !currentlyBelow)
-                    pagerAdapter.refreshAll()
+                    pagerAdapter?.refreshAll()
                     true
                 }
                 title == getString(R.string.add_app_shortcut) -> {
@@ -1180,7 +1210,7 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun showAppShortcutPicker() {
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val pageId = activePageId()
         // Apps that have at least one shortcut (manifest/dynamic/pinned)
         val appsWithShortcuts = repository.apps
             .filter { shortcutHelper.getShortcutsForPackage(it.packageName).isNotEmpty() }
@@ -1200,7 +1230,7 @@ class LauncherActivity : AppCompatActivity() {
                 .setItems(shortcutLabels) { _, idx ->
                     val info = shortcuts[idx]
                     prefs.addShortcutToPage(pageId, app.packageName, info.id)
-                    pagerAdapter.refreshAll()
+                    pagerAdapter?.refreshAll()
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -1208,7 +1238,7 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun showShortcutContextMenu(shortcut: ShortcutDisplayInfo, anchor: View) {
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val pageId = activePageId()
         val popup = PopupMenu(this, anchor)
         popup.menu.add("Remove from page")
         popup.menu.add("Change Name")
@@ -1217,7 +1247,7 @@ class LauncherActivity : AppCompatActivity() {
             when (item.title) {
                 "Remove from page" -> {
                     prefs.removeShortcutFromPage(pageId, shortcut.packageName, shortcut.shortcutId)
-                    pagerAdapter.refreshAll()
+                    pagerAdapter?.refreshAll()
                     true
                 }
                 "Change Name" -> {
@@ -1237,7 +1267,7 @@ class LauncherActivity : AppCompatActivity() {
                                 .setPositiveButton("OK") { _, _ ->
                                     val name = input.text.toString().trim()
                                     prefs.setCustomLabel(shortcut.shortcutKey, if (name.isEmpty()) null else name, pageIdForName)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 }
                                 .setNegativeButton("Cancel", null)
                                 .show()
@@ -1255,11 +1285,11 @@ class LauncherActivity : AppCompatActivity() {
                             val pickerDialog = IconPickerDialog(this,
                                 onIconSelected = { drawableName, _ ->
                                     prefs.setCustomIcon(shortcut.shortcutKey, drawableName, pageIdForIcon)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 },
                                 onReset = {
                                     prefs.setCustomIcon(shortcut.shortcutKey, null, pageIdForIcon)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 }
                             )
                             pickerDialog.showPackPicker()
@@ -1275,7 +1305,7 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun showIntentShortcutContextMenu(info: IntentShortcutInfo, anchor: View) {
-        val pageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+        val pageId = activePageId()
         val inDock = dockBar.getDockIntentShortcutsList().any { it.intentUri == info.intentUri }
         val popup = PopupMenu(this, anchor)
         popup.menu.add("Remove from page")
@@ -1287,7 +1317,7 @@ class LauncherActivity : AppCompatActivity() {
             when (item.title) {
                 "Remove from page" -> {
                     prefs.removeIntentShortcutFromPage(pageId, info.intentUri)
-                    pagerAdapter.refreshAll()
+                    pagerAdapter?.refreshAll()
                     true
                 }
                 getString(R.string.pin_to_dock) -> {
@@ -1315,7 +1345,7 @@ class LauncherActivity : AppCompatActivity() {
                                 .setPositiveButton("OK") { _, _ ->
                                     val name = input.text.toString().trim()
                                     prefs.setCustomLabel(info.shortcutKey, if (name.isEmpty()) null else name, pageIdForName)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 }
                                 .setNegativeButton("Cancel", null)
                                 .show()
@@ -1333,11 +1363,11 @@ class LauncherActivity : AppCompatActivity() {
                             val pickerDialog = IconPickerDialog(this,
                                 onIconSelected = { drawableName, _ ->
                                     prefs.setCustomIcon(info.shortcutKey, drawableName, pageIdForIcon)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 },
                                 onReset = {
                                     prefs.setCustomIcon(info.shortcutKey, null, pageIdForIcon)
-                                    pagerAdapter.refreshAll()
+                                    pagerAdapter?.refreshAll()
                                 }
                             )
                             pickerDialog.showPackPicker()
@@ -1459,20 +1489,11 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun addWidgetToCurrentPage(widgetId: Int, info: android.appwidget.AppWidgetProviderInfo) {
-        val frag = pagerAdapter.getFragment(appPager.currentItem)
-        frag?.addWidgetToPage(widgetId, info)
+        pagerAdapter?.getFragment(appPager.currentItem)?.addWidgetToPage(widgetId, info)
     }
 
+    /** The change callback itself is registered in [onStart]; see the leak note there. */
     private fun setupNotifications() {
-        NotifListenerService.onNotificationsChanged = {
-            runOnUiThread {
-                notificationHub.refresh(prefs.getNotificationAppWhitelist())
-                refreshNotificationTicker()
-                listOf(150L, 400L, 1000L, 2000L).forEach { delay ->
-                    keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
-                }
-            }
-        }
         refreshNotificationTicker()
     }
 
@@ -1706,9 +1727,9 @@ class LauncherActivity : AppCompatActivity() {
             val title = item.title?.toString() ?: return@setOnMenuItemClickListener false
             when {
                 title == "Add to Favorites" || title == "Remove from Favorites" -> {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        repository.toggleFavorite(app)
-                        withContext(Dispatchers.Main) { pagerAdapter.refreshAll() }
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { repository.toggleFavorite(app) }
+                        pagerAdapter?.refreshAll()
                     }
                     true
                 }
@@ -1719,7 +1740,7 @@ class LauncherActivity : AppCompatActivity() {
                     val pid = assignablePages.find { getPageDisplayName(it) == pageName }
                     if (pid != null) {
                         prefs.toggleAppOnPage(cn, pid)
-                        pagerAdapter.refreshAll()
+                        pagerAdapter?.refreshAll()
                     }
                     true
                 }
@@ -1732,7 +1753,7 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title == "Change Name" -> {
-                    val currentPageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    val currentPageId = activePageId()
                     AlertDialog.Builder(this, R.style.BBDialogTheme)
                         .setTitle("Change name for...")
                         .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
@@ -1759,11 +1780,7 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title == "Change Icon" -> {
-                    val currentPageId = if (::pagerAdapter.isInitialized) {
-                        pagerAdapter.getPageId(appPager.currentItem)
-                    } else {
-                        "favorites"
-                    }
+                    val currentPageId = activePageId()
                     AlertDialog.Builder(this, R.style.BBDialogTheme)
                         .setTitle("Change icon for...")
                         .setItems(arrayOf("This page only", "Everywhere (global)")) { _, which ->
@@ -1792,7 +1809,7 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title == "Hide app" -> {
-                    val currentPageId = if (::pagerAdapter.isInitialized) pagerAdapter.getPageId(appPager.currentItem) else "favorites"
+                    val currentPageId = activePageId()
                     val canHideFromPageOnly = currentPageId in listOf("favorites") || currentPageId.startsWith("custom_")
                     val options = if (canHideFromPageOnly) arrayOf("Hide everywhere", "Hide from this page only") else arrayOf("Hide everywhere")
                     AlertDialog.Builder(this, R.style.BBDialogTheme)
@@ -1820,9 +1837,11 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun reloadAppsAndRefresh() {
-        CoroutineScope(Dispatchers.Main).launch {
+        lifecycleScope.launch {
+            // Callers get here after changing a custom icon or label, so the rendered cache is stale.
+            repository.clearIconCache()
             withContext(Dispatchers.IO) { repository.loadApps() }
-            if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+            pagerAdapter?.refreshAll()
             dockBar.loadDock()
         }
     }
@@ -1971,13 +1990,13 @@ class LauncherActivity : AppCompatActivity() {
             soundProfileOverlay.visibility == View.VISIBLE -> soundProfileOverlay.hide()
             searchOverlay.visibility == View.VISIBLE -> searchOverlay.dismiss()
             notificationHub.visibility == View.VISIBLE -> notificationHub.hide()
-            ::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition() ->
+            pagerAdapter != null && appPager.currentItem != getDefaultTabPosition() ->
                 appPager.setCurrentItem(getDefaultTabPosition(), true)
         }
     }
 
     private fun getDefaultTabPosition(): Int =
-        if (::pagerAdapter.isInitialized) pagerAdapter.getPositionForPageId(prefs.defaultTabPageId) else 0
+        pagerAdapter?.getPositionForPageId(prefs.defaultTabPageId) ?: 0
 
     private fun lockScreen() {
         val a11y = KeyCaptureAccessibilityService.instance
@@ -2045,9 +2064,9 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun refreshLauncher() {
-        CoroutineScope(Dispatchers.Main).launch {
+        lifecycleScope.launch {
             withContext(Dispatchers.IO) { repository.loadApps() }
-            if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
+            pagerAdapter?.refreshAll()
             dockBar.loadDock()
             loadPageIconPacks()
             recreate()
@@ -2148,8 +2167,9 @@ class LauncherActivity : AppCompatActivity() {
                 when (capturedRole) {
                     KEY_ROLE_HOME -> {
                         val defPos = getDefaultTabPosition()
-                        if (::pagerAdapter.isInitialized && appPager.currentItem == defPos) lockScreen()
-                        else if (::pagerAdapter.isInitialized) appPager.setCurrentItem(defPos, true)
+                        if (pagerAdapter == null) { /* pager not ready yet */ }
+                        else if (appPager.currentItem == defPos) lockScreen()
+                        else appPager.setCurrentItem(defPos, true)
                     }
                     KEY_ROLE_BACK -> if (count >= 2) openQuickSettings() else doBackAction()
                     KEY_ROLE_RECENTS -> if (count >= 2) {
@@ -2176,11 +2196,36 @@ class LauncherActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         widgetHost.startListening()
+        // Held in a static on the service, so it must be cleared in onStop or it keeps this
+        // activity alive for as long as the notification listener runs.
+        NotifListenerService.onNotificationsChanged = {
+            runOnUiThread {
+                notificationHub.refresh(prefs.getNotificationAppWhitelist())
+                scheduleTickerRefresh()
+            }
+        }
     }
 
     override fun onStop() {
         super.onStop()
         widgetHost.stopListening()
+        NotifListenerService.onNotificationsChanged = null
+    }
+
+    /**
+     * Coalesces ticker refreshes. Notification state settles asynchronously after a post or
+     * dismiss, so we refresh immediately and then once more after a short settle delay, rather
+     * than firing the seven staggered refreshes this used to queue per change.
+     */
+    private fun scheduleTickerRefresh() {
+        tickerRefreshRunnable?.let { keyHandler.removeCallbacks(it) }
+        refreshNotificationTicker()
+        val settle = Runnable {
+            tickerRefreshRunnable = null
+            refreshNotificationTicker()
+        }
+        tickerRefreshRunnable = settle
+        keyHandler.postDelayed(settle, TICKER_SETTLE_MS)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -2194,7 +2239,7 @@ class LauncherActivity : AppCompatActivity() {
         if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
         if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
-        if (::pagerAdapter.isInitialized && appPager.currentItem != getDefaultTabPosition()) {
+        if (pagerAdapter != null && appPager.currentItem != getDefaultTabPosition()) {
             appPager.setCurrentItem(getDefaultTabPosition(), true)
         }
     }
@@ -2212,67 +2257,66 @@ class LauncherActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         window.decorView.post { clearHighlightTraces() }
-        NotifListenerService.onNotificationsChanged = {
-            runOnUiThread {
-                notificationHub.refresh(prefs.getNotificationAppWhitelist())
-                refreshNotificationTicker()
-                listOf(150L, 400L, 1000L, 2000L).forEach { delay ->
-                    keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
-                }
-            }
-        }
         updateSoundProfileIcon()
         refreshWallpaper()
         applySystemUI()
         statusBar.refresh()
-        refreshNotificationTicker()
-        listOf(300L, 800L, 1800L).forEach { delay ->
-            keyHandler.postDelayed({ refreshNotificationTicker() }, delay)
-        }
+        scheduleTickerRefresh()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.refresh(prefs.getNotificationAppWhitelist())
         applyOpacitySettings()
 
-        // Reload icon packs if changed
         val savedPack = prefs.iconPackPackage
         val savedAllPagePack = prefs.allPageIconPackPackage
         val savedDockPack = prefs.dockIconPackPackage
-        val packChanged = savedPack != iconPackManager.currentPackage
-        val allPagePackChanged = savedAllPagePack != allPageIconPackManager.currentPackage
-        val dockPackChanged = savedDockPack != dockIconPackManager.currentPackage
+        val packChanged = savedPack != iconPackManager.currentPackage ||
+            savedAllPagePack != allPageIconPackManager.currentPackage ||
+            savedDockPack != dockIconPackManager.currentPackage
 
-        if (packChanged) {
-            if (savedPack != null) iconPackManager.loadIconPack(savedPack)
-            else iconPackManager.clearIconPack()
-        }
-        if (allPagePackChanged) {
-            if (savedAllPagePack != null) allPageIconPackManager.loadIconPack(savedAllPagePack)
-            else allPageIconPackManager.clearIconPack()
-        }
-        if (dockPackChanged) {
-            if (savedDockPack != null) dockIconPackManager.loadIconPack(savedDockPack)
-            else dockIconPackManager.clearIconPack()
-        }
-
-        // Always reload per-page packs (cheap check)
-        loadPageIconPacks()
-
-        if (packChanged || allPagePackChanged || dockPackChanged) {
-            CoroutineScope(Dispatchers.Main).launch {
-                withContext(Dispatchers.IO) { repository.loadApps() }
-                if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
-                dockBar.loadDock()
-            }
-        } else {
-            if (::pagerAdapter.isInitialized) pagerAdapter.refreshAll()
-            dockBar.loadDock()
-        }
-        if (::pagerAdapter.isInitialized) {
-            pagerAdapter.reloadPageOrder()
-            pagerAdapter.notifyDataSetChanged()
+        if (pagerAdapter?.reloadPageOrder() == true) {
+            pagerAdapter?.notifyDataSetChanged()
             buildTabBar()
             updateTabHighlight(appPager.currentItem)
         }
-        reloadAppsAndRefresh()
+
+        // Icon pack parsing reads and parses appfilter.xml out of another APK — far too expensive
+        // to do on the main thread on every resume, which is what "cheap check" used to mean here.
+        // Only touch it when the user actually picked a different pack.
+        val pageSignature = pageIconPackSignature()
+        if (packChanged || pageSignature != lastPageIconPackSignature) {
+            lastPageIconPackSignature = pageSignature
+            lifecycleScope.launch {
+                val pagePacks = withContext(Dispatchers.IO) {
+                    if (savedPack != iconPackManager.currentPackage) {
+                        if (savedPack != null) iconPackManager.loadIconPack(savedPack)
+                        else iconPackManager.clearIconPack()
+                    }
+                    if (savedAllPagePack != allPageIconPackManager.currentPackage) {
+                        if (savedAllPagePack != null) allPageIconPackManager.loadIconPack(savedAllPagePack)
+                        else allPageIconPackManager.clearIconPack()
+                    }
+                    if (savedDockPack != dockIconPackManager.currentPackage) {
+                        if (savedDockPack != null) dockIconPackManager.loadIconPack(savedDockPack)
+                        else dockIconPackManager.clearIconPack()
+                    }
+                    buildPageIconPacks()
+                }
+                // Swapped on the main thread: getIconForPage reads this map during layout.
+                repository.pageIconPackManagers.clear()
+                repository.pageIconPackManagers.putAll(pagePacks)
+                repository.clearIconCache()
+                withContext(Dispatchers.IO) { repository.loadApps() }
+                pagerAdapter?.refreshAll()
+                dockBar.loadDock()
+            }
+        } else {
+            // Nothing structural changed — pick up launch counts and favourites so the Frequent
+            // page stays current, then re-render from the icon cache.
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { repository.refreshStats() }
+                pagerAdapter?.refreshAll()
+                dockBar.loadDock()
+            }
+        }
         refreshClickHighlights()
         window.decorView.post { clearHighlightTraces() }
     }
@@ -2281,6 +2325,8 @@ class LauncherActivity : AppCompatActivity() {
         super.onDestroy()
         repository.unregister()
         NotifListenerService.onNotificationsChanged = null
+        keyHandler.removeCallbacksAndMessages(null)
+        pagerAdapter = null
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
     }

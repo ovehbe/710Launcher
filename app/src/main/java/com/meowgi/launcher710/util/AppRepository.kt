@@ -10,6 +10,7 @@ import com.meowgi.launcher710.model.IntentShortcutInfo
 import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withLock
 
 class AppRepository(private val context: Context) {
 
@@ -21,17 +22,58 @@ class AppRepository(private val context: Context) {
     val pageIconPackManagers = mutableMapOf<String, IconPackManager>()
     private val prefs = LauncherPrefs(context)
 
+    /** Holds no pack state; exists only so shape rendering doesn't allocate a manager per call. */
+    private val shapeRenderer = IconPackManager(context)
+
+    /**
+     * Rendered icons, keyed by component + page + shape + size. Without this, every RecyclerView
+     * bind ran the icon through [applyGlobalShape], which allocates two bitmaps — scrolling the
+     * All Apps page churned tens of megabytes a second and kept the process a prime LMK target.
+     * Invalidated explicitly via [clearIconCache] whenever packs, custom icons, or shapes change.
+     */
+    private val iconCache = object : android.util.LruCache<String, android.graphics.drawable.Drawable>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceIn(2L * 1024 * 1024, 16L * 1024 * 1024).toInt()
+    ) {
+        override fun sizeOf(key: String, value: android.graphics.drawable.Drawable): Int {
+            val bmp = (value as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            return bmp?.byteCount ?: (value.intrinsicWidth * value.intrinsicHeight * 4).coerceAtLeast(1024)
+        }
+    }
+
+    /** Icon packs referenced only by per-item custom icons, parsed once and reused. */
+    private val adHocPacks = mutableMapOf<String, IconPackManager?>()
+
+    /** Serializes [loadApps] so overlapping triggers can't run two full re-index passes at once. */
+    private val loadMutex = kotlinx.coroutines.sync.Mutex()
+
+    fun clearIconCache() {
+        iconCache.evictAll()
+        adHocPacks.clear()
+    }
+
+    private fun adHocPack(packageName: String): IconPackManager? =
+        adHocPacks.getOrPut(packageName) {
+            IconPackManager(context).takeIf { it.loadIconPack(packageName) }
+        }
+
     var apps: List<AppInfo> = emptyList()
         private set
     /** Cached for search/sort by frequency and last opened. */
     private var statsMap: Map<String, AppStats> = emptyMap()
     var onAppsChanged: (() -> Unit)? = null
 
+    /** Cancelled in [unregister] so a torn-down activity's callbacks stop firing. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            CoroutineScope(Dispatchers.Main).launch {
-                withContext(Dispatchers.IO) { loadApps() }
-                onAppsChanged?.invoke()
+            appScope.launch {
+                loadApps()
+                // Cache invalidation touches main-thread-owned state, so it stays on main.
+                withContext(Dispatchers.Main) {
+                    clearIconCache()
+                    onAppsChanged?.invoke()
+                }
             }
         }
     }
@@ -51,9 +93,29 @@ class AppRepository(private val context: Context) {
 
     fun unregister() {
         try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+        appScope.cancel()
+        onAppsChanged = null
+        clearIconCache()
     }
 
-    suspend fun loadApps() {
+    suspend fun loadApps() = loadMutex.withLock { loadAppsLocked() }
+
+    /**
+     * Re-reads launch counts and favourites from the database, reusing the already-loaded icons and
+     * labels. This is what keeps the Frequent page current on resume now that the full re-index
+     * (PackageManager query plus an icon load per app) no longer runs there.
+     */
+    suspend fun refreshStats() = loadMutex.withLock {
+        val stats = dao.getAll().associateBy { it.componentName }
+        statsMap = stats
+        for (app in apps) {
+            val stat = stats[app.componentName.flattenToString()]
+            app.launchCount = stat?.launchCount ?: 0
+            app.isFavorite = stat?.isFavorite ?: false
+        }
+    }
+
+    private suspend fun loadAppsLocked() {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = pm.queryIntentActivities(intent, 0)
         val stats = dao.getAll().associateBy { it.componentName }
@@ -128,9 +190,10 @@ class AppRepository(private val context: Context) {
             4 -> LauncherPrefs.SHAPE_SQUIRCLE
             else -> return icon
         }
-        val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
-        return IconPackManager(context).applyFallbackShape(icon, shapeMapped, sizePx)
+        return shapeRenderer.applyFallbackShape(icon, shapeMapped, iconSizePx())
     }
+
+    private fun iconSizePx() = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
 
     private fun sortAppliesToPage(pageId: String): Boolean {
         val pages = prefs.getSortApplyPages()
@@ -238,7 +301,7 @@ class AppRepository(private val context: Context) {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
         }
         context.startActivity(intent)
-        CoroutineScope(Dispatchers.IO).launch { recordLaunch(app) }
+        appScope.launch { recordLaunch(app) }
     }
 
     private fun resolveCustomIconFromAnyPack(drawableName: String): android.graphics.drawable.Drawable? {
@@ -270,8 +333,21 @@ class AppRepository(private val context: Context) {
     fun getIconForPage(app: AppInfo, pageId: String): android.graphics.drawable.Drawable {
         val component = app.componentName
         val cn = component.flattenToString()
-        val rawIcon = app.rawIcon ?: app.icon
+        val cacheKey = "$cn|$pageId|${prefs.iconGlobalShape}|${prefs.iconFallbackShape}|${iconSizePx()}"
+        iconCache.get(cacheKey)?.let { return it }
 
+        val rawIcon = app.rawIcon ?: app.icon
+        val resolved = resolveIconForPage(component, cn, pageId, rawIcon)
+        iconCache.put(cacheKey, resolved)
+        return resolved
+    }
+
+    private fun resolveIconForPage(
+        component: ComponentName,
+        cn: String,
+        pageId: String,
+        rawIcon: android.graphics.drawable.Drawable
+    ): android.graphics.drawable.Drawable {
         val customDrawableName = prefs.getCustomIcon(cn, pageId)
         if (customDrawableName != null) {
             val customIcon = resolveCustomIconFromAnyPack(customDrawableName)
@@ -284,8 +360,7 @@ class AppRepository(private val context: Context) {
         if (themedIcon != null) return applyGlobalShape(themedIcon)
 
         if (packManager?.isLoaded() == true) {
-            val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
-            return applyGlobalShape(packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, sizePx))
+            return applyGlobalShape(packManager.applyFallbackShape(rawIcon, prefs.iconFallbackShape, iconSizePx()))
         }
 
         return applyGlobalShape(rawIcon)
@@ -323,12 +398,7 @@ class AppRepository(private val context: Context) {
         val customName = prefs.getAppletCustomIcon(packageName)
         if (customName != null) {
             val customPack = prefs.getAppletCustomIconPack(packageName)
-            if (customPack != null) {
-                val tempMgr = IconPackManager(context)
-                if (tempMgr.loadIconPack(customPack)) {
-                    icon = tempMgr.getIconByName(customName)
-                }
-            }
+            if (customPack != null) icon = adHocPack(customPack)?.getIconByName(customName)
             if (icon == null) icon = resolveCustomIconFromAnyPack(customName)
         }
         if (icon == null) {
@@ -341,7 +411,7 @@ class AppRepository(private val context: Context) {
         val shape = prefs.appletIconShape
         return if (shape > 0 && icon != null) {
             val shapeMapped = when (shape) { 1 -> LauncherPrefs.SHAPE_CIRCLE; 2 -> LauncherPrefs.SHAPE_ROUNDED_SQUARE; 3 -> LauncherPrefs.SHAPE_SQUARE; 4 -> LauncherPrefs.SHAPE_SQUIRCLE; else -> LauncherPrefs.SHAPE_SQUARE }
-            IconPackManager(context).applyFallbackShape(icon, shapeMapped, iconSizePx)
+            shapeRenderer.applyFallbackShape(icon, shapeMapped, iconSizePx)
         } else icon!!
     }
 
@@ -350,10 +420,7 @@ class AppRepository(private val context: Context) {
         val customName = prefs.contactIconDrawableName
         val customPack = prefs.contactIconPackPackage
         if (!customName.isNullOrBlank() && !customPack.isNullOrBlank()) {
-            val tempMgr = IconPackManager(context)
-            if (tempMgr.loadIconPack(customPack)) {
-                tempMgr.getIconByName(customName)?.let { return applyGlobalShape(it) }
-            }
+            adHocPack(customPack)?.getIconByName(customName)?.let { return applyGlobalShape(it) }
         }
         val contactsComponent = pm.getLaunchIntentForPackage("com.android.contacts")?.component
         if (contactsComponent != null) {
@@ -380,10 +447,7 @@ class AppRepository(private val context: Context) {
         val customName = prefs.commandIconDrawableName
         val customPack = prefs.commandIconPackPackage
         if (!customName.isNullOrBlank() && !customPack.isNullOrBlank()) {
-            val tempMgr = IconPackManager(context)
-            if (tempMgr.loadIconPack(customPack)) {
-                tempMgr.getIconByName(customName)?.let { return applyGlobalShape(it) }
-            }
+            adHocPack(customPack)?.getIconByName(customName)?.let { return applyGlobalShape(it) }
         }
         val packManager = getPackManagerForPage("search")
         if (packManager?.isLoaded() == true) {

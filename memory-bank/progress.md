@@ -20,10 +20,12 @@
 - **Planned (from backlog):** Call/contact search; notification hub items selectable (and trackpad selection for hub).
 
 ## Current status
-- App version 1.4.1 (versionCode 5). Dev branch at tag v1.4.2. Main branch stable.
+- App version 1.5.0 (versionCode 13).
+- Stability pass (Phases 1–3) implemented and compiling; on-device verification on the Q25 still pending.
 - Memory bank initialized; `.cursor/rules` and `memory-bank/` should be committed and pushed so pull brings full context.
 
 ## Known issues
+- **Fixed, pending device verification:** crash on restore (`Fragment no longer exists for key f#N`) and `lateinit pagerAdapter` crash; launcher being killed in the background from icon-bitmap churn and per-resume full re-index. See `activeContext.md` for the root cause and the changes.
 - Ticker and count can stay visible or stale after clearing notifications until launcher restart.
 - Hiding Frequent or All can appear inconsistent (initially still there, after menu gone, etc.); should be persistently hidden.
 - Notification applet icons can look pixelated or worse with custom icons.

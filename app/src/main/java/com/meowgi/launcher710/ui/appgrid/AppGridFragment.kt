@@ -305,6 +305,10 @@ class AppGridFragment : Fragment() {
 
     fun refreshList() {
         if (!::adapter.isInitialized) return
+        // Refreshes arrive from the activity and from posted callbacks, so the fragment may already
+        // be detached by the time one lands. requireContext() would throw here — see the
+        // "Fragment not attached to a context" crashes.
+        val ctx = context ?: return
         val repo = repository ?: return
         val appList = when (tab) {
             TAB_FREQUENT -> repo.getFrequentApps()
@@ -315,7 +319,7 @@ class AppGridFragment : Fragment() {
         }
         val items = appList.map { LaunchableItem.App(it) }.toMutableList<LaunchableItem>()
         if (supportsWidgets) {
-            val prefs = LauncherPrefs(requireContext())
+            val prefs = LauncherPrefs(ctx)
             shortcutHelper?.getShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.Shortcut(it)) }
             shortcutHelper?.getIntentShortcutsForPage(pageId, prefs)?.forEach { items.add(LaunchableItem.IntentShortcut(it)) }
         }
@@ -323,7 +327,7 @@ class AppGridFragment : Fragment() {
             repository?.createLauncherSettingsItem()?.let { items.add(it) }
         }
         if (isSparseGrid) {
-            val prefs = LauncherPrefs(requireContext())
+            val prefs = LauncherPrefs(ctx)
             val positions = prefs.getPageGridPositions(pageId)
             adapter.submitSparseList(buildSparseList(items, positions, currentColumns))
         } else {
@@ -472,9 +476,10 @@ class AppGridFragment : Fragment() {
             ): Int = 0
             override fun clearView(rv: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
                 super.clearView(rv, viewHolder)
+                val ctx = context ?: return
                 val sparseList = adapter.getSparseList()
                 // Persist the new cell positions for every real item.
-                val prefs = LauncherPrefs(requireContext())
+                val prefs = LauncherPrefs(ctx)
                 val positions = mutableMapOf<String, Int>()
                 for (i in sparseList.indices) {
                     val item = sparseList[i] ?: continue
@@ -544,10 +549,11 @@ class AppGridFragment : Fragment() {
             }
             override fun clearView(rv: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
                 super.clearView(rv, viewHolder)
+                val ctx = context ?: return
                 val list = adapter.getCurrentList()
                 val componentNames = list.mapNotNull { (it as? LaunchableItem.App)?.app?.componentName?.flattenToString() }
                 if (componentNames.isNotEmpty()) {
-                    val prefs = LauncherPrefs(requireContext())
+                    val prefs = LauncherPrefs(ctx)
                     if (tab == TAB_FAVORITES) prefs.setFavoriteOrder(componentNames)
                     else if (tab == TAB_CUSTOM) prefs.setPageAppOrder(pageId, componentNames)
                 }

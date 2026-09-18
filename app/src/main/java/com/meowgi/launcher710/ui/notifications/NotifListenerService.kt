@@ -8,10 +8,13 @@ import android.service.notification.StatusBarNotification
 class NotifListenerService : NotificationListenerService() {
 
     companion object {
+        private const val DEBOUNCE_MS = 120L
+
         var instance: NotifListenerService? = null
             private set
         var onNotificationsChanged: (() -> Unit)? = null
         private val mainHandler = Handler(Looper.getMainLooper())
+        private val dispatchChange = Runnable { onNotificationsChanged?.invoke() }
     }
 
     override fun onCreate() {
@@ -22,14 +25,16 @@ class NotifListenerService : NotificationListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        mainHandler.removeCallbacks(dispatchChange)
     }
 
+    /**
+     * Coalesces bursts of notification changes into a single callback. A busy app can post a dozen
+     * updates in a row, and each one used to fan out into four separate UI rebuilds.
+     */
     private fun notifyChange() {
-        val cb = onNotificationsChanged ?: return
-        mainHandler.post { cb() }
-        listOf(300L, 800L, 1800L).forEach { delay ->
-            mainHandler.postDelayed({ cb() }, delay)
-        }
+        mainHandler.removeCallbacks(dispatchChange)
+        mainHandler.postDelayed(dispatchChange, DEBOUNCE_MS)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {

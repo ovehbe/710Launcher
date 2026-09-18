@@ -10,6 +10,16 @@
 - **Default home tab:** Stored as `defaultTabPageId` (e.g. `"favorites"`) not index, so it survives hiding All/Frequent. `getFilteredPageOrder()` used by `AppPagerAdapter`.
 - **Notification applets:** Optional; when enabled, per-app icons + counts in action bar; when disabled, fallback “N Notifications”. Applets hide when ticker is showing; optional auto-hide when count 0.
 
+## Stability invariants (do not regress)
+- **Attach the pager synchronously.** `setupPager()` must run inside `onCreate`, never behind an `await` on `loadApps()`. ViewPager2 replays restored state into the adapter at attach time; deferring it caused the `Fragment no longer exists for key f#N` crashes.
+- **No state restore on the home screen.** `appPager.isSaveEnabled = false` and fragment state is stripped from `savedInstanceState`. Don't reintroduce either.
+- **Fragment identity is the page ID.** `AppPagerAdapter.getItemId`/`containsItem` hash the page ID, because positions shift when All/Frequent are hidden.
+- **Never hold fragments in a map.** Resolve through `FragmentManager.findFragmentByTag("f$itemId")`; a local map leaks destroyed fragments and goes stale on reorder.
+- **Icons come from the cache.** `getIconForPage` is called per RecyclerView bind — it must hit `AppRepository`'s LruCache, not re-render. Call `clearIconCache()` whenever packs, custom icons, or shapes change.
+- **`onResume` stays cheap.** No full `loadApps()` and no icon-pack parsing unless the pack signature actually changed; use `refreshStats()` for the common case.
+- **Coroutines are scoped.** `lifecycleScope` in the activity, the cancellable `appScope` in `AppRepository`. No ad-hoc `CoroutineScope(...)`.
+- **Static callbacks are paired.** `NotifListenerService.onNotificationsChanged` is set in `onStart` and cleared in `onStop`; it holds the activity.
+
 ## Design patterns
 - **Callbacks:** `onAppsChanged`, `onNotificationsChanged` used to refresh UI after data changes. Ticker/count and applets should update when notifications change without requiring launcher restart.
 - **Prefs:** One `LauncherPrefs(context)`; all keys in one file; fixed keys in `fixedExportKeys` and in `exportToJson()` for backup.
