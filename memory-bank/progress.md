@@ -20,6 +20,7 @@
 - **Planned (from backlog):** Call/contact search; notification hub items selectable (and trackpad selection for hub).
 
 ## Current status
+- Two search fixes landed on `cursor/fix-google-fallback-recents-and-package-search-78fc`: the empty-search Google fallback now launches with `NEW_TASK | RESET_TASK_IF_NEEDED` (it was inheriting the launcher's home task, which Android keeps out of Recents), and app search matches package names via a new pre-computed `AppInfo.normalizedPackage`. Package-only matches rank after name matches. Both the repository search and `SearchOverlay`'s page-scoped `filterItems` path needed the package change — searching from All/Frequent never reaches `AppRepository.searchApps`.
 - App version 1.5.0 (versionCode 13).
 - Stability pass (Phases 1–3) implemented and compiling; on-device verification on the Q25 still pending.
 - Memory bank initialized; `.cursor/rules` and `memory-bank/` should be committed and pushed so pull brings full context.
