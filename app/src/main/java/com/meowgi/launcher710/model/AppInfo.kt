@@ -15,6 +15,8 @@ data class AppInfo(
     val firstInstallTime: Long = 0L,
     /** Pre-computed normalized label for search (avoids per-query normalization). */
     val normalizedLabel: String = "",
+    /** Pre-computed normalized package name for search, e.g. "com.whatsapp" → "comwhatsapp". */
+    val normalizedPackage: String = "",
     /** Pre-computed first-letter-of-each-word for prefix-per-word search (e.g. "Trendyol Go" → "tg"). */
     val initials: String = ""
 ) {

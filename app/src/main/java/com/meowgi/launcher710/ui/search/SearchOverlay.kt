@@ -295,13 +295,24 @@ class SearchOverlay @JvmOverloads constructor(
         val filter = filterItems
         if (filter != null) {
             val nq = SearchNormalizer.normalize(query)
-            val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) filter else filter.filter {
-                val originalLabel = it.label.toString()
-                val normalized = SearchNormalizer.normalize(originalLabel)
-                val textMatch = nq.isNotEmpty() && normalized.contains(nq)
-                val prefixMatch = nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, originalLabel)
-                val digitMatch = dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch)
-                textMatch || prefixMatch || digitMatch
+            val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) {
+                filter
+            } else {
+                val nameMatches = mutableListOf<LaunchableItem>()
+                val packageOnlyMatches = mutableListOf<LaunchableItem>()
+                for (item in filter) {
+                    val originalLabel = item.label.toString()
+                    val normalized = SearchNormalizer.normalize(originalLabel)
+                    val textMatch = nq.isNotEmpty() && normalized.contains(nq)
+                    val prefixMatch = nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, originalLabel)
+                    val digitMatch = dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch)
+                    if (textMatch || prefixMatch || digitMatch) {
+                        nameMatches += item
+                    } else if (nq.isNotEmpty() && (item as? LaunchableItem.App)?.app?.normalizedPackage?.contains(nq) == true) {
+                        packageOnlyMatches += item
+                    }
+                }
+                nameMatches + packageOnlyMatches
             }
             currentResults = filtered
             adapter.submitList(filtered)

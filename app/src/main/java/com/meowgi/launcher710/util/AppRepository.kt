@@ -157,6 +157,7 @@ class AppRepository(private val context: Context) {
                         pm.getPackageInfo(ri.activityInfo.packageName, 0).firstInstallTime
                     } catch (_: Exception) { 0L },
                     normalizedLabel = SearchNormalizer.normalize(appLabel),
+                    normalizedPackage = SearchNormalizer.normalize(ri.activityInfo.packageName),
                     initials = SearchNormalizer.initials(appLabel)
                 )
             }
@@ -246,6 +247,9 @@ class AppRepository(private val context: Context) {
     }
 
     /**
+     * Matches app names and package names, so "com.whatsapp" or "whatsapp" both find WhatsApp.
+     * Apps matched only by package name are ranked after the name matches.
+     *
      * @param alsoMatchDialDigits If non-empty, apps whose label contains this digit string are also included (e.g. "710" so "zw0" finds "710 Launcher").
      */
     fun searchApps(query: String, alsoMatchDialDigits: String? = null): List<AppInfo> {
@@ -258,18 +262,25 @@ class AppRepository(private val context: Context) {
 
         if (normalizedQuery.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
 
-        val filtered = filterHidden(apps.filter { app ->
+        val nameMatches = mutableListOf<AppInfo>()
+        val packageOnlyMatches = mutableListOf<AppInfo>()
+        for (app in apps) {
             val textMatch = normalizedQuery.isNotEmpty() && app.normalizedLabel.contains(normalizedQuery)
             val prefixMatch = normalizedQuery.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(normalizedQuery, app.label)
             val digitMatch = digitsOnly != null && app.normalizedLabel.contains(digitsOnly)
-            textMatch || prefixMatch || digitMatch
-        })
+            if (textMatch || prefixMatch || digitMatch) {
+                nameMatches += app
+            } else if (normalizedQuery.isNotEmpty() && app.normalizedPackage.contains(normalizedQuery)) {
+                packageOnlyMatches += app
+            }
+        }
 
-        return filtered.sortedWith(
-            compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
-                .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
-                .thenBy { it.label.lowercase() }
-        )
+        val byFrequency = compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
+            .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
+            .thenBy { it.label.lowercase() }
+
+        return filterHidden(nameMatches).sortedWith(byFrequency) +
+            filterHidden(packageOnlyMatches).sortedWith(byFrequency)
     }
 
     suspend fun recordLaunch(app: AppInfo) {
