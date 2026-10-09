@@ -259,19 +259,20 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun openWebSearchWithQuery(query: String) {
         if (query.isNotBlank()) {
-            // Without NEW_TASK the search app starts inside the launcher's own task, and the home
-            // task is never listed in Recents — so Google came up as if it were excluded from it.
-            // These are the same flags AppRepository.launchApp uses for a normal app launch.
-            val normalLaunchFlags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            // NEW_TASK keeps the search app out of the launcher's own task, because the home task
+            // is never listed in Recents. CLEAR_TASK then finishes whatever task a previous
+            // fallback left behind, so the search app is recreated with this query rather than the
+            // stale task being brought forward with its old results.
+            val searchLaunchFlags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
                 putExtra("query", query)
-                addFlags(normalLaunchFlags)
+                addFlags(searchLaunchFlags)
             }
             try {
                 context.startActivity(intent)
             } catch (_: Exception) {
                 val uri = Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(normalLaunchFlags))
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(searchLaunchFlags))
             }
             dismiss()
         }
