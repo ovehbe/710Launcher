@@ -20,8 +20,9 @@
 - **Planned (from backlog):** Call/contact search; notification hub items selectable (and trackpad selection for hub).
 
 ## Current status
-- Two search fixes landed on `cursor/fix-google-fallback-recents-and-package-search-78fc`: the empty-search Google fallback now launches with `NEW_TASK | RESET_TASK_IF_NEEDED` (it was inheriting the launcher's home task, which Android keeps out of Recents), and app search matches package names via a new pre-computed `AppInfo.normalizedPackage`. Package-only matches rank after name matches. Both the repository search and `SearchOverlay`'s page-scoped `filterItems` path needed the package change — searching from All/Frequent never reaches `AppRepository.searchApps`.
-- App version 1.5.2 (versionCode 15).
+- Two search fixes shipped in v1.5.2: the empty-search Google fallback launches in its own task so it shows up in Recents (it was inheriting the launcher's home task, which Android keeps out of Recents), and app search matches package names via a new pre-computed `AppInfo.normalizedPackage`. Package-only matches rank after name matches. Both the repository search and `SearchOverlay`'s page-scoped `filterItems` path needed the package change — searching from All/Frequent never reaches `AppRepository.searchApps`.
+- v1.5.3 follow-up: the fallback flags are now `NEW_TASK | CLEAR_TASK`. `RESET_TASK_IF_NEEDED` only brought an existing search task forward, so a second fallback search reused the stale task and dropped the new query. `CLEAR_TASK` finishes that task first, which still yields a normal Recents entry.
+- App version 1.5.3 (versionCode 16).
 - Stability pass (Phases 1–3) implemented and compiling; on-device verification on the Q25 still pending.
 - Memory bank initialized; `.cursor/rules` and `memory-bank/` should be committed and pushed so pull brings full context.
 
