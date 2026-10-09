@@ -8,6 +8,7 @@
 - **No global focus on search field when overlay closed:** Search `EditText` is GONE when overlay is dismissed so trackpad doesn’t get stuck and action bar stays tappable. Type-to-search starts via `onKeyDown` and then shows overlay.
 - **Click highlights:** Ripple from `LauncherPrefs.getClickHighlightRipple(context)`; `defaultFocusHighlightEnabled = false` on interactive views to avoid stuck focus ring with trackpad. `refreshClickHighlights()` in `onResume()` so accent/color changes apply.
 - **Default home tab:** Stored as `defaultTabPageId` (e.g. `"favorites"`) not index, so it survives hiding All/Frequent. `getFilteredPageOrder()` used by `AppPagerAdapter`.
+- **Web-search fallback flags:** `SearchOverlay.openWebSearchWithQuery` must start with `FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_CLEAR_TASK`. Both halves matter and each has already been got wrong once: without `NEW_TASK` the search app joins the launcher's home task and never appears in Recents; with `RESET_TASK_IF_NEEDED` instead of `CLEAR_TASK` a leftover search task is merely brought forward and the new query is dropped.
 - **Notification applets:** Optional; when enabled, per-app icons + counts in action bar; when disabled, fallback “N Notifications”. Applets hide when ticker is showing; optional auto-hide when count 0.
 
 ## Stability invariants (do not regress)
