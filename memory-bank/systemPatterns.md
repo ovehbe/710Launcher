@@ -18,7 +18,10 @@
 - **Never hold fragments in a map.** Resolve through `FragmentManager.findFragmentByTag("f$itemId")`; a local map leaks destroyed fragments and goes stale on reorder.
 - **Icons come from the cache.** `getIconForPage` is called per RecyclerView bind — it must hit `AppRepository`'s LruCache, not re-render. Call `clearIconCache()` whenever packs, custom icons, or shapes change.
 - **`onResume` stays cheap.** No full `loadApps()` and no icon-pack parsing unless the pack signature actually changed; use `refreshStats()` for the common case.
-- **Coroutines are scoped.** `lifecycleScope` in the activity, the cancellable `appScope` in `AppRepository`. No ad-hoc `CoroutineScope(...)`.
+- **`AppRepository` is process-wide.** Get it with `AppRepository.get(context)` (application context); never construct one per activity. Density/resolution/font/locale changes recreate `LauncherActivity`, and a fresh repository is what made icons vanish for 2–3 s while a full scan ran. The recreated activity must render the existing `apps` synchronously and call `reloadInBackground()` only when `needsReload()` (cold start, density changed since icons were decoded, or `invalidate()`d). A reload never clears `apps` first.
+- **Icon packs live in the repository.** `onCreate` re-parses a pack only when its prefs assignment differs from the manager's `currentPackage` (`syncIconPack`) or the page-pack signature changed. Explicit `recreate()` paths call `repository.invalidate()` first (Settings return) and also `forgetIconPacks()` for "Refresh launcher".
+- **Activity attach is identity-checked.** `repository.attach(activity, onAppsChanged)` in `onCreate`, `repository.detach(this)` in `onDestroy`; `detach` ignores a stale activity so it can't null the callback of its replacement.
+- **Coroutines are scoped.** `lifecycleScope` in the activity, the process-lifetime `appScope` in `AppRepository`. No ad-hoc `CoroutineScope(...)`.
 - **Static callbacks are paired.** `NotifListenerService.onNotificationsChanged` is set in `onStart` and cleared in `onStop`; it holds the activity.
 
 ## Design patterns

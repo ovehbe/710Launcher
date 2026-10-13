@@ -121,8 +121,6 @@ class LauncherActivity : AppCompatActivity() {
     private val tickerTypingDelayMs = 45L
     private val tickerDisplayDurationMs = 5000L
 
-    private var lastPageIconPackSignature: String? = null
-
     private var injectCaptureActive = false
     private val injectCaptureBuffer = StringBuilder()
     private var injectCaptureRunnable: Runnable? = null
@@ -161,7 +159,10 @@ class LauncherActivity : AppCompatActivity() {
     private val settingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) recreate()
+        if (result.resultCode == Activity.RESULT_OK) {
+            repository.invalidate()
+            recreate()
+        }
     }
 
     private val createShortcutLauncher = registerForActivityResult(
@@ -264,25 +265,21 @@ class LauncherActivity : AppCompatActivity() {
         setContentView(R.layout.activity_launcher)
         refreshWallpaper()
 
-        iconPackManager = IconPackManager(this)
-        val savedPack = prefs.iconPackPackage
-        if (savedPack != null) iconPackManager.loadIconPack(savedPack)
-
-        allPageIconPackManager = IconPackManager(this)
-        val savedAllPagePack = prefs.allPageIconPackPackage
-        if (savedAllPagePack != null) allPageIconPackManager.loadIconPack(savedAllPagePack)
-
-        dockIconPackManager = IconPackManager(this)
-        val savedDockPack = prefs.dockIconPackPackage
-        if (savedDockPack != null) dockIconPackManager.loadIconPack(savedDockPack)
-
-        repository = AppRepository(this)
-        repository.iconPackManager = iconPackManager
-        repository.allPageIconPackManager = allPageIconPackManager
-        repository.dockIconPackManager = dockIconPackManager
-        repository.register()
-
-        loadPageIconPacks()
+        // The repository outlives this activity, so after a config-change recreate its app list,
+        // parsed packs and rendered icons are all still warm. Only packs whose assignment changed
+        // (e.g. on return from Settings) are parsed again.
+        repository = AppRepository.get(this)
+        iconPackManager = repository.iconPackManager
+        allPageIconPackManager = repository.allPageIconPackManager
+        dockIconPackManager = repository.dockIconPackManager
+        var packsChanged = syncIconPack(iconPackManager, prefs.iconPackPackage)
+        packsChanged = syncIconPack(allPageIconPackManager, prefs.allPageIconPackPackage) || packsChanged
+        packsChanged = syncIconPack(dockIconPackManager, prefs.dockIconPackPackage) || packsChanged
+        if (repository.pageIconPackSignature != pageIconPackSignature()) {
+            loadPageIconPacks()
+            packsChanged = true
+        }
+        if (packsChanged) repository.invalidate()
 
         widgetHost = WidgetHost(this)
         shortcutHelper = ShortcutHelper(this)
@@ -444,9 +441,10 @@ class LauncherActivity : AppCompatActivity() {
         dockBar.onDockSwipeUp = { slotIndex -> launchDockSwipeAction(slotIndex) }
         dockBar.dockIconResolver = { app -> repository.getIconForDock(app) }
 
-        repository.onAppsChanged = {
+        repository.attach(this) {
             pagerAdapter?.refreshAll()
             dockBar.loadDock()
+            setupFocusOrder()
         }
 
         setupActionBar()
@@ -471,16 +469,19 @@ class LauncherActivity : AppCompatActivity() {
         )
 
         // The pager must be attached before the activity's state-restore pass, so it goes up now
-        // with whatever the repository has (nothing, on a cold start) and is refreshed once the
-        // app scan finishes.
+        // with whatever the repository has — empty only on a cold start; after a config change the
+        // previous app list renders in the first frame. A needed rescan runs in the background and
+        // swaps in via onAppsChanged without blanking anything.
         setupPager()
+        dockBar.loadDock()
+        if (repository.needsReload()) repository.reloadInBackground()
+    }
 
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { repository.loadApps() }
-            pagerAdapter?.refreshAll()
-            dockBar.loadDock()
-            setupFocusOrder()
-        }
+    /** Brings [mgr] in line with the saved pack. @return true if it had to be (re)parsed or cleared. */
+    private fun syncIconPack(mgr: IconPackManager, pkg: String?): Boolean {
+        if (pkg == mgr.currentPackage) return false
+        if (pkg != null) mgr.loadIconPack(pkg) else mgr.clearIconPack()
+        return true
     }
 
     @Suppress("DEPRECATION")
@@ -536,7 +537,7 @@ class LauncherActivity : AppCompatActivity() {
     private fun loadPageIconPacks() {
         repository.pageIconPackManagers.clear()
         repository.pageIconPackManagers.putAll(buildPageIconPacks())
-        lastPageIconPackSignature = pageIconPackSignature()
+        repository.pageIconPackSignature = pageIconPackSignature()
     }
 
     private fun refreshWallpaper() {
@@ -2063,14 +2064,11 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
+    /** Full reset: the recreated activity re-parses every pack and rescans in the background. */
     private fun refreshLauncher() {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { repository.loadApps() }
-            pagerAdapter?.refreshAll()
-            dockBar.loadDock()
-            loadPageIconPacks()
-            recreate()
-        }
+        repository.forgetIconPacks()
+        repository.invalidate()
+        recreate()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
@@ -2282,8 +2280,8 @@ class LauncherActivity : AppCompatActivity() {
         // to do on the main thread on every resume, which is what "cheap check" used to mean here.
         // Only touch it when the user actually picked a different pack.
         val pageSignature = pageIconPackSignature()
-        if (packChanged || pageSignature != lastPageIconPackSignature) {
-            lastPageIconPackSignature = pageSignature
+        if (packChanged || pageSignature != repository.pageIconPackSignature) {
+            repository.pageIconPackSignature = pageSignature
             lifecycleScope.launch {
                 val pagePacks = withContext(Dispatchers.IO) {
                     if (savedPack != iconPackManager.currentPackage) {
@@ -2323,7 +2321,7 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        repository.unregister()
+        repository.detach(this)
         NotifListenerService.onNotificationsChanged = null
         keyHandler.removeCallbacksAndMessages(null)
         pagerAdapter = null

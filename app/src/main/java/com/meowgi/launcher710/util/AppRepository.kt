@@ -12,14 +12,34 @@ import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.withLock
 
-class AppRepository(private val context: Context) {
+/**
+ * Process-wide: obtain it through [get]. The launcher activity is recreated on every density,
+ * resolution, font-scale or locale change, and a per-activity repository came back empty each
+ * time — icons vanished until a full PackageManager scan and icon-pack parse finished. Holding the
+ * app list, icon packs and icon cache here lets the recreated activity render synchronously.
+ */
+class AppRepository private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile private var instance: AppRepository? = null
+
+        fun get(context: Context): AppRepository =
+            instance ?: synchronized(this) {
+                instance ?: AppRepository(context.applicationContext).also {
+                    it.register()
+                    instance = it
+                }
+            }
+    }
 
     private val pm = context.packageManager
     private val dao = AppDatabase.get(context).appStatsDao()
-    var iconPackManager: IconPackManager? = null
-    var allPageIconPackManager: IconPackManager? = null
-    var dockIconPackManager: IconPackManager? = null
+    val iconPackManager = IconPackManager(context)
+    val allPageIconPackManager = IconPackManager(context)
+    val dockIconPackManager = IconPackManager(context)
     val pageIconPackManagers = mutableMapOf<String, IconPackManager>()
+    /** Page-pack assignment that [pageIconPackManagers] was built from; null until first built. */
+    var pageIconPackSignature: String? = null
     private val prefs = LauncherPrefs(context)
 
     /** Holds no pack state; exists only so shape rendering doesn't allocate a manager per call. */
@@ -62,23 +82,28 @@ class AppRepository(private val context: Context) {
     private var statsMap: Map<String, AppStats> = emptyMap()
     var onAppsChanged: (() -> Unit)? = null
 
-    /** Cancelled in [unregister] so a torn-down activity's callbacks stop firing. */
+    /** Lives as long as the process, like the repository itself. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** The attached activity, so app launches keep starting from an activity context. */
+    private var owner: java.lang.ref.WeakReference<android.app.Activity>? = null
+
+    /** densityDpi the loaded raw icons were decoded at; 0 until the first scan completes. */
+    @Volatile private var loadedDensityDpi = 0
+    /** Set by [invalidate]; the next [needsReload] forces a rescan. */
+    @Volatile private var stale = false
+
+    /** Main-thread confined. Non-null while a background reload is scanning or publishing. */
+    private var reloadJob: Job? = null
+    private val reloadPending = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            appScope.launch {
-                loadApps()
-                // Cache invalidation touches main-thread-owned state, so it stays on main.
-                withContext(Dispatchers.Main) {
-                    clearIconCache()
-                    onAppsChanged?.invoke()
-                }
-            }
+            reloadInBackground()
         }
     }
 
-    fun register() {
+    private fun register() {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -91,11 +116,68 @@ class AppRepository(private val context: Context) {
         )
     }
 
-    fun unregister() {
-        try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
-        appScope.cancel()
+    fun attach(activity: android.app.Activity, onChanged: () -> Unit) {
+        owner = java.lang.ref.WeakReference(activity)
+        onAppsChanged = onChanged
+    }
+
+    /** No-op unless [activity] is still the attached one; a recreated activity may attach first. */
+    fun detach(activity: android.app.Activity) {
+        if (owner?.get() !== activity) return
+        owner = null
         onAppsChanged = null
+    }
+
+    private fun currentDensityDpi() = context.resources.configuration.densityDpi
+
+    /**
+     * True when [apps] can't be shown as-is for long: nothing loaded yet, the display density
+     * changed since the raw icons were decoded (they'd render scaled), or [invalidate] was called.
+     * The loaded list is still safe to render immediately while the reload runs.
+     */
+    fun needsReload() = stale || apps.isEmpty() || loadedDensityDpi != currentDensityDpi()
+
+    /**
+     * For when packs, shapes or custom icons may have changed behind the repository's back (e.g.
+     * returning from Settings): drops rendered icons and makes [needsReload] report true.
+     */
+    fun invalidate() {
         clearIconCache()
+        stale = true
+    }
+
+    /** Forces every icon pack to be re-parsed on the next sync, as "Refresh launcher" expects. */
+    fun forgetIconPacks() {
+        iconPackManager.clearIconPack()
+        allPageIconPackManager.clearIconPack()
+        dockIconPackManager.clearIconPack()
+        pageIconPackManagers.clear()
+        pageIconPackSignature = null
+    }
+
+    /**
+     * Rescans off the main thread without clearing [apps] first, then swaps in the result and
+     * notifies [onAppsChanged]. Overlapping requests are conflated into one follow-up scan.
+     * Main thread only.
+     */
+    fun reloadInBackground() {
+        reloadPending.set(true)
+        if (reloadJob == null) startReload()
+    }
+
+    private fun startReload() {
+        reloadJob = appScope.launch {
+            while (reloadPending.getAndSet(false)) loadApps()
+            // Cache invalidation touches main-thread-owned state, so it stays on main.
+            withContext(Dispatchers.Main) {
+                reloadJob = null
+                clearIconCache()
+                onAppsChanged?.invoke()
+                // Density can flip again mid-scan (toggling resolution back and forth).
+                if (loadedDensityDpi != currentDensityDpi()) reloadPending.set(true)
+                if (reloadPending.get()) startReload()
+            }
+        }
     }
 
     suspend fun loadApps() = loadMutex.withLock { loadAppsLocked() }
@@ -116,6 +198,8 @@ class AppRepository(private val context: Context) {
     }
 
     private suspend fun loadAppsLocked() {
+        stale = false
+        val densityDpi = currentDensityDpi()
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = pm.queryIntentActivities(intent, 0)
         val stats = dao.getAll().associateBy { it.componentName }
@@ -129,15 +213,15 @@ class AppRepository(private val context: Context) {
                 val component = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name)
                 val rawIconDrawable = ri.loadIcon(pm) // Store the raw system icon
                 val customDrawableName = prefs.getCustomIcon(cn)
-                val customIcon = if (customDrawableName != null) iconPackManager?.getIconByName(customDrawableName) else null
-                val themedIcon = customIcon ?: iconPackManager?.getIconForApp(component)
+                val customIcon = if (customDrawableName != null) iconPackManager.getIconByName(customDrawableName) else null
+                val themedIcon = customIcon ?: iconPackManager.getIconForApp(component)
                 val baseIcon = if (customIcon != null) {
                     customIcon
                 } else if (themedIcon != null) {
                     themedIcon
-                } else if (iconPackManager?.isLoaded() == true) {
+                } else if (iconPackManager.isLoaded()) {
                     val sizePx = (prefs.iconSizeDp * context.resources.displayMetrics.density).toInt()
-                    iconPackManager!!.applyFallbackShape(rawIconDrawable, prefs.iconFallbackShape, sizePx)
+                    iconPackManager.applyFallbackShape(rawIconDrawable, prefs.iconFallbackShape, sizePx)
                 } else {
                     rawIconDrawable
                 }
@@ -162,6 +246,7 @@ class AppRepository(private val context: Context) {
                 )
             }
             .sortedBy { it.label.lowercase() }
+        loadedDensityDpi = densityDpi
     }
 
     private fun sortApps(apps: List<AppInfo>, mode: Int): List<AppInfo> {
@@ -311,15 +396,12 @@ class AppRepository(private val context: Context) {
             component = app.componentName
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
         }
-        context.startActivity(intent)
+        (owner?.get() ?: context).startActivity(intent)
         appScope.launch { recordLaunch(app) }
     }
 
     private fun resolveCustomIconFromAnyPack(drawableName: String): android.graphics.drawable.Drawable? {
-        val managers = mutableListOf<IconPackManager>()
-        iconPackManager?.let { managers.add(it) }
-        allPageIconPackManager?.let { managers.add(it) }
-        dockIconPackManager?.let { managers.add(it) }
+        val managers = mutableListOf(iconPackManager, allPageIconPackManager, dockIconPackManager)
         managers.addAll(pageIconPackManagers.values)
         for (mgr in managers) {
             if (mgr.isLoaded()) {
@@ -334,10 +416,10 @@ class AppRepository(private val context: Context) {
         val pageMgr = pageIconPackManagers[pageId]
         if (pageMgr?.isLoaded() == true) return pageMgr
         // Legacy fallback for "all" and "dock"
-        if (pageId == "all" && allPageIconPackManager?.isLoaded() == true) return allPageIconPackManager
-        if (pageId == "dock" && dockIconPackManager?.isLoaded() == true) return dockIconPackManager
+        if (pageId == "all" && allPageIconPackManager.isLoaded()) return allPageIconPackManager
+        if (pageId == "dock" && dockIconPackManager.isLoaded()) return dockIconPackManager
         // Fall back to global
-        if (iconPackManager?.isLoaded() == true) return iconPackManager
+        if (iconPackManager.isLoaded()) return iconPackManager
         return null
     }
 
