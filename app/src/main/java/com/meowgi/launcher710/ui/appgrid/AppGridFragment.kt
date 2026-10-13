@@ -68,8 +68,10 @@ class AppGridFragment : Fragment() {
      * the first layout pass via the OnLayoutChangeListener in onCreateView.
      */
     private var maxGridRows = 6
-    /** Becomes true once maxGridRows has been measured from a real layout; prevents re-measuring. */
+    /** Becomes true once maxGridRows has been measured from a real layout. */
     private var gridRowsMeasured = false
+    /** RecyclerView content height maxGridRows was measured at; a change triggers a re-measure. */
+    private var measuredGridHeight = 0
 
     private val supportsWidgets: Boolean
         get() = tab == TAB_FAVORITES || tab == TAB_CUSTOM
@@ -182,24 +184,26 @@ class AppGridFragment : Fragment() {
         // after the first layout pass, then rebuild so the grid fills the visible area precisely.
         // We never estimate — we wait until at least one child is actually laid out so the
         // measurement is always from real pixel dimensions, not guesses.
+        // Re-measured whenever the height changes: screenSize/screenLayout changes are handled
+        // in-activity (no recreate), so the visible area can grow or shrink under a live grid.
         if (isSparseGrid && !scrollable) {
-            recycler.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
-                override fun onLayoutChange(v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or2: Int, ob: Int) {
-                    if (gridRowsMeasured) { recycler.removeOnLayoutChangeListener(this); return }
-                    val rvH = (b - t - recycler.paddingTop - recycler.paddingBottom).takeIf { it > 0 } ?: return
-                    // Use the first child's measured height. With empty cells now sized the same as
-                    // real cells (icon + label dimensions set in AppAdapter), any child gives the
-                    // correct row height. If there are no children yet, return and wait.
-                    val cellH = recycler.getChildAt(0)?.height?.takeIf { it > 0 } ?: return
-                    val measured = maxOf(1, rvH / cellH)
-                    gridRowsMeasured = true
-                    recycler.removeOnLayoutChangeListener(this)
-                    if (measured != maxGridRows) {
-                        maxGridRows = measured
-                        recycler.post { if (isAdded) refreshList() }
-                    }
+            recycler.addOnLayoutChangeListener { _, _, t, _, b, _, _, _, _ ->
+                val rvH = (b - t - recycler.paddingTop - recycler.paddingBottom).takeIf { it > 0 }
+                    ?: return@addOnLayoutChangeListener
+                if (gridRowsMeasured && rvH == measuredGridHeight) return@addOnLayoutChangeListener
+                // Use the first child's measured height. With empty cells now sized the same as
+                // real cells (icon + label dimensions set in AppAdapter), any child gives the
+                // correct row height. If there are no children yet, return and wait.
+                val cellH = recycler.getChildAt(0)?.height?.takeIf { it > 0 }
+                    ?: return@addOnLayoutChangeListener
+                val measured = maxOf(1, rvH / cellH)
+                gridRowsMeasured = true
+                measuredGridHeight = rvH
+                if (measured != maxGridRows) {
+                    maxGridRows = measured
+                    recycler.post { if (isAdded) refreshList() }
                 }
-            })
+            }
         }
 
         setupEmptySpaceLongClick()

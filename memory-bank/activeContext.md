@@ -4,7 +4,14 @@
 - **Stability hardening (in progress):** Eliminating the crash-on-restore class and the memory pressure that gets the launcher killed in the background. Phases 1–3 of the stability pass are implemented; on-device verification pending.
 - **Next after stability:** Remaining polish items (ticker/count refresh, Frequent/All persistent hide, applet icon quality) and the backlog features.
 
-## Recent changes (stability pass, v1.5.0 baseline)
+## Recent changes (v1.5.4: instant config changes)
+Symptom: changing display resolution or display size made the app icons vanish for ~2–3 s (header, tabs and wallpaper resized instantly), both ways.
+
+**Root cause:** `density` isn't in `configChanges`, so the activity is recreated (deliberately; dp-sized views must be re-inflated). But `onCreate` built a brand-new `AppRepository` with an empty app list, re-parsed every icon pack on the main thread, and attached the pager with nothing to show until a full `loadApps()` (PackageManager query + `loadIcon` per app) finished. `onDestroy` also wiped the icon cache.
+
+**Fix:** `AppRepository` is now a process singleton holding the app list, icon pack managers, page-pack signature and icon cache across recreations. `onCreate` renders the existing list synchronously (pages and dock), re-parses only packs whose assignment changed, and rescans in the background (`reloadInBackground`, conflated, never clears first) only when needed, e.g. the density changed and raw icons should be re-decoded crisp. Until the rescan, the old drawables are rendered at the new `iconSizePx` (the cache key includes size). The non-scrollable sparse grid also re-measures its row count when its height changes, for size changes handled in-activity.
+
+## Earlier changes (stability pass, v1.5.0 baseline)
 Driven by four crash logs from a Xelex Q25 (SDK 34, app 1.5.0/code 13): three `IllegalStateException: Fragment no longer exists for key f#N` from `ViewPager2.setAdapter`, and one `lateinit property pagerAdapter has not been initialized`.
 
 **Root cause:** `LauncherActivity.onCreate` created and attached the pager adapter inside a coroutine that first awaited a full `repository.loadApps()` scan. That deferred `setAdapter` past the activity's state-restore pass (so ViewPager2 replayed saved state against fragments the FragmentManager no longer held) and left a window where `repository.onAppsChanged` could hit the uninitialized `pagerAdapter`.
