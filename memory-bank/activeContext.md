@@ -4,7 +4,16 @@
 - **Stability hardening (in progress):** Eliminating the crash-on-restore class and the memory pressure that gets the launcher killed in the background. Phases 1–3 of the stability pass are implemented; on-device verification pending.
 - **Next after stability:** Remaining polish items (ticker/count refresh, Frequent/All persistent hide, applet icon quality) and the backlog features.
 
-## Recent changes (v1.5.4: instant config changes)
+## Recent changes (v1.5.5: instant search typing)
+**Root cause of the laggy search:** every keystroke waited out an 80 ms debounce, then did the following on the main thread:
+- re-normalized and regex-split every app label, compiling regexes inside `SearchNormalizer`;
+- rebuilt the Settings and Refresh items (icon-pack lookups plus bitmap shaping) and the contact icon (PackageManager IPC);
+- spawned a new uncancelled thread for the contact search, which scanned the whole phone table with a regex per row;
+- fully rebound the results with `notifyDataSetChanged`, twice when contacts arrived. With no fixed size, each of those updates relaid out the whole activity.
+
+The fix is described in `systemPatterns.md` → "Search keystroke path".
+
+## Earlier changes (v1.5.4: instant config changes)
 Symptom: changing display resolution or display size made the app icons vanish for ~2–3 s (header, tabs and wallpaper resized instantly), both ways.
 
 **Root cause:** `density` isn't in `configChanges`, so the activity is recreated (deliberately; dp-sized views must be re-inflated). But `onCreate` built a brand-new `AppRepository` with an empty app list, re-parsed every icon pack on the main thread, and attached the pager with nothing to show until a full `loadApps()` (PackageManager query + `loadIcon` per app) finished. `onDestroy` also wiped the icon cache.

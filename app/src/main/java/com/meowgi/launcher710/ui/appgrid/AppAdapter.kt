@@ -28,7 +28,7 @@ class AppAdapter(
 
         /** Stable string key used to identify an item across sessions for grid position storage. */
         fun itemKey(item: LaunchableItem): String = when (item) {
-            is LaunchableItem.App -> item.app.componentName.flattenToString()
+            is LaunchableItem.App -> item.app.componentKey
             is LaunchableItem.Shortcut -> item.shortcut.shortcutKey
             is LaunchableItem.IntentShortcut -> item.info.shortcutKey
             is LaunchableItem.LauncherSettings -> "launcher_settings_710"
@@ -64,6 +64,29 @@ class AppAdapter(
     fun submitList(list: List<LaunchableItem>) {
         sparseItems = list
         notifyDataSetChanged()
+    }
+
+    /**
+     * Replace a dense list, rebinding only rows that actually changed. Search results change on
+     * every keystroke, and a full [notifyDataSetChanged] rebinds every visible row each time.
+     * The diff runs synchronously: result lists are bounded and comparing keys is cheap, and an
+     * async diff would show each keystroke's results a frame late. No stable ids: [itemKey] isn't
+     * unique (two contacts can share a display name), and duplicate ids corrupt RecyclerView.
+     */
+    fun submitListDiffed(list: List<LaunchableItem>) {
+        val old = sparseItems
+        if (old === list) return
+        val diff = androidx.recyclerview.widget.DiffUtil.calculateDiff(object : androidx.recyclerview.widget.DiffUtil.Callback() {
+            override fun getOldListSize() = old.size
+            override fun getNewListSize() = list.size
+            override fun areItemsTheSame(o: Int, n: Int): Boolean {
+                val a = old[o] ?: return false
+                return itemKey(a) == itemKey(list[n])
+            }
+            override fun areContentsTheSame(o: Int, n: Int) = old[o] == list[n]
+        }, false)
+        sparseItems = list
+        diff.dispatchUpdatesTo(this)
     }
 
     /** Replace list with a sparse list where nulls represent empty cells. */

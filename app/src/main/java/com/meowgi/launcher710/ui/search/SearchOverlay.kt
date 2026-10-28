@@ -29,6 +29,10 @@ class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
+    private companion object {
+        val NON_COMMAND_CHARS = Regex("[^a-z0-9]")
+    }
+
     private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
@@ -58,12 +62,72 @@ class SearchOverlay @JvmOverloads constructor(
     /** Called when user taps "Refresh Cache" in search results. */
     var onRefreshCache: (() -> Unit)? = null
 
-    private var filterItems: List<LaunchableItem>? = null
+    /** A searchable item with its label pre-normalized once per session, not per keystroke. */
+    private class IndexedItem(
+        val item: LaunchableItem,
+        val normalizedLabel: String,
+        val words: List<String>,
+        val normalizedPackage: String,
+        val aliases: Array<out String> = emptyArray()
+    ) {
+        companion object {
+            fun of(item: LaunchableItem, vararg aliases: String): IndexedItem {
+                val app = (item as? LaunchableItem.App)?.app
+                return if (app != null) {
+                    IndexedItem(item, app.normalizedLabel, app.normalizedWords, app.normalizedPackage, aliases)
+                } else {
+                    val label = item.label.toString()
+                    IndexedItem(item, SearchNormalizer.normalize(label), SearchNormalizer.words(label), "", aliases)
+                }
+            }
+        }
+    }
+
+    private var filterIndex: List<IndexedItem>? = null
     private var lastQuery: String = ""
-    private val defaultContactIcon: Drawable
-        get() = ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
+    /** Query the visible results belong to; null forces the next [applyQuery] to run. */
+    private var appliedQuery: String? = null
     private var currentResults: List<LaunchableItem> = emptyList()
     private var searchContextLabel: String = "Extended"
+    private var currentDialDigits = ""
+
+    // Per-session caches, cleared in show()/showFilter(). Building these touches icon packs,
+    // bitmap shaping and PackageManager, which used to happen on every keystroke.
+    private var builtInIndex: List<IndexedItem>? = null
+    private var cachedContactIcon: Drawable? = null
+    private var cachedCommandIcon: Drawable? = null
+
+    private val defaultContactIcon: Drawable by lazy {
+        ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
+    }
+
+    private fun contactIcon(): Drawable =
+        cachedContactIcon ?: (contactIconProvider?.invoke() ?: defaultContactIcon).also { cachedContactIcon = it }
+
+    private fun commandIcon(): Drawable =
+        cachedCommandIcon ?: (commandIconProvider?.invoke() ?: defaultContactIcon).also { cachedCommandIcon = it }
+
+    private fun builtIns(repo: AppRepository): List<IndexedItem> =
+        builtInIndex ?: listOf(
+            IndexedItem.of(repo.createLauncherSettingsItem(), "710"),
+            IndexedItem.of(repo.createRefreshCacheItem())
+        ).also { builtInIndex = it }
+
+    private fun resetSession() {
+        lastQuery = ""
+        appliedQuery = null
+        currentResults = emptyList()
+        shownContacts = emptyList()
+        builtInIndex = null
+        cachedContactIcon = null
+        cachedCommandIcon = null
+        ContactSearchHelper.invalidateCache()
+    }
+
+    private fun publish(results: List<LaunchableItem>) {
+        currentResults = results
+        adapter.submitListDiffed(results)
+    }
 
     init {
         orientation = VERTICAL
@@ -89,6 +153,19 @@ class SearchOverlay @JvmOverloads constructor(
         }
         dialRow.addView(dialText)
         dialRow.addView(phoneIcon)
+        dialRow.setOnClickListener {
+            try {
+                // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
+                val telUri = "tel:" + currentDialDigits.replace("#", "%23")
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                dismiss()
+            } catch (_: Exception) {
+                Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+            }
+        }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
@@ -106,6 +183,11 @@ class SearchOverlay @JvmOverloads constructor(
 
         resultsRecycler = RecyclerView(context).apply {
             layoutManager = GridLayoutManager(context, 4)
+            // Its size comes from the weight, not the content, so result changes must not
+            // request a layout of the whole activity on every keystroke.
+            setHasFixedSize(true)
+            // Results should snap to the new query, not fade/slide over a few frames.
+            itemAnimator = null
             clipToPadding = false
             setPadding(0, dp(4), 0, dp(4))
             isFocusable = true
@@ -177,28 +259,35 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     fun show() {
-        filterItems = null
-        lastQuery = ""
-        currentResults = emptyList()
+        filterIndex = null
+        resetSession()
         visibility = VISIBLE
     }
 
     fun showFilter(items: List<LaunchableItem>) {
-        filterItems = items
-        lastQuery = ""
-        currentResults = emptyList()
+        filterIndex = items.map { IndexedItem.of(it) }
+        resetSession()
         visibility = VISIBLE
-        onSearch("")
+        applyQuery("")
     }
 
     fun dismiss() {
+        ContactSearchHelper.cancel()
         visibility = GONE
         onDismiss?.invoke()
     }
 
+    /** Synchronous and cheap enough to run on every keystroke; a repeat of the shown query is a no-op. */
     fun applyQuery(query: String) {
+        if (query == appliedQuery) return
         lastQuery = query
-        onSearch(query)
+        appliedQuery = query
+        android.os.Trace.beginSection("SearchOverlay.applyQuery")
+        try {
+            onSearch(query)
+        } finally {
+            android.os.Trace.endSection()
+        }
     }
 
     /** On Enter / Extended search: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
@@ -209,7 +298,7 @@ class SearchOverlay @JvmOverloads constructor(
             val commands = commandsProvider?.invoke() ?: emptyList()
             val exact = commands.find { it.name.equals(commandPart, ignoreCase = true) }
             if (exact != null) {
-                val icon = commandIconProvider?.invoke() ?: defaultContactIcon
+                val icon = commandIcon()
                 val item = LaunchableItem.SearchCommand(
                     commandName = exact.name,
                     actionType = exact.actionType,
@@ -278,9 +367,13 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
+    /** Contact rows currently shown, carried into the next keystroke while its own lookup runs. */
+    private var shownContacts: List<LaunchableItem.Contact> = emptyList()
+
     private fun onSearch(query: String) {
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
+            ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
         }
@@ -292,135 +385,129 @@ class SearchOverlay @JvmOverloads constructor(
         val layout = dialerLayoutProvider().coerceIn(0, 1)
         val dialDigits = convertToDialDigits(query, layout)
         val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+        val nq = SearchNormalizer.normalize(query)
 
-        val filter = filterItems
+        val filter = filterIndex
         if (filter != null) {
-            val nq = SearchNormalizer.normalize(query)
+            ContactSearchHelper.cancel()
             val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) {
-                filter
+                filter.map { it.item }
             } else {
                 val nameMatches = mutableListOf<LaunchableItem>()
                 val packageOnlyMatches = mutableListOf<LaunchableItem>()
-                for (item in filter) {
-                    val originalLabel = item.label.toString()
-                    val normalized = SearchNormalizer.normalize(originalLabel)
-                    val textMatch = nq.isNotEmpty() && normalized.contains(nq)
-                    val prefixMatch = nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, originalLabel)
-                    val digitMatch = dialDigitsForAppSearch != null && normalized.contains(dialDigitsForAppSearch)
-                    if (textMatch || prefixMatch || digitMatch) {
-                        nameMatches += item
-                    } else if (nq.isNotEmpty() && (item as? LaunchableItem.App)?.app?.normalizedPackage?.contains(nq) == true) {
-                        packageOnlyMatches += item
+                for (entry in filter) {
+                    when (SearchNormalizer.match(nq, dialDigitsForAppSearch, entry.normalizedLabel, entry.words, entry.normalizedPackage)) {
+                        SearchNormalizer.NAME_MATCH -> nameMatches += entry.item
+                        SearchNormalizer.PACKAGE_MATCH -> packageOnlyMatches += entry.item
                     }
                 }
                 nameMatches + packageOnlyMatches
             }
-            currentResults = filtered
-            adapter.submitList(filtered)
+            publish(filtered)
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
-            val nq = SearchNormalizer.normalize(query)
-            val builtInItems = mutableListOf<LaunchableItem>()
-
-            fun matchesBuiltIn(label: CharSequence, vararg extraAliases: String): Boolean {
-                val labelStr = label.toString()
-                val norm = SearchNormalizer.normalize(labelStr)
-                if (nq.isEmpty() && dialDigitsForAppSearch == null) return true
-                if (nq.isNotEmpty() && norm.contains(nq)) return true
-                if (nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, labelStr)) return true
-                for (alias in extraAliases) {
-                    if (nq.isNotEmpty() && alias.contains(nq)) return true
-                    if (dialDigitsForAppSearch != null && alias.contains(dialDigitsForAppSearch)) return true
-                }
-                return dialDigitsForAppSearch != null && norm.contains(dialDigitsForAppSearch)
-            }
-
-            val settingsItem = repo.createLauncherSettingsItem()
-            if (matchesBuiltIn(settingsItem.label, "710")) builtInItems += settingsItem
-
-            val refreshItem = repo.createRefreshCacheItem()
-            if (matchesBuiltIn(refreshItem.label)) builtInItems += refreshItem
-
+            val builtInItems = builtIns(repo).filter { matchesBuiltIn(it, nq, dialDigitsForAppSearch) }.map { it.item }
             val baseResults = appResults + builtInItems
-            currentResults = baseResults
-            adapter.submitList(baseResults)
             if (contactMode == 0) {
+                // Typing usually narrows the query, so the previous contacts that still match are
+                // shown right away instead of blinking out until this keystroke's lookup returns.
+                val carried = shownContacts.filter { contactStillMatches(it, nq, dialDigitsForAppSearch) }
+                shownContacts = carried
+                publish(baseResults + carried)
                 val queryForContact = query
-                val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
                 ContactSearchHelper.searchAsync(
                     context,
                     queryForContact,
                     dialDigitsForAppSearch,
-                    contactIcon,
+                    contactIcon(),
                     enabled = true,
                     sourceFilter = contactSourceProvider()
                 ) { contactResults ->
                     if (lastQuery != queryForContact) return@searchAsync
-                    val combined = baseResults + contactResults
-                    currentResults = combined
-                    adapter.submitList(combined)
+                    shownContacts = contactResults
+                    publish(baseResults + contactResults)
                 }
+            } else {
+                ContactSearchHelper.cancel()
+                shownContacts = emptyList()
+                publish(baseResults)
             }
         }
-        if (dialDigits.isNotEmpty()) {
-            dialRow.visibility = VISIBLE
-            dialText.text = "${context.getString(R.string.dial_prefix)} $dialDigits"
-            dialRow.setOnClickListener {
-                try {
-                    // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
-                    val telUri = "tel:" + dialDigits.replace("#", "%23")
-                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                    dismiss()
-                } catch (_: Exception) {
-                    Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
-                }
-            }
-        } else {
+        updateDialRow(dialDigits)
+    }
+
+    private fun updateDialRow(dialDigits: String) {
+        if (dialDigits.isEmpty()) {
             dialRow.visibility = GONE
+            return
         }
+        dialRow.visibility = VISIBLE
+        // setText always requests a layout, so skip it when the digits didn't change.
+        if (dialDigits != currentDialDigits) {
+            currentDialDigits = dialDigits
+            dialText.text = "${context.getString(R.string.dial_prefix)} $dialDigits"
+        }
+    }
+
+    private fun matchesBuiltIn(entry: IndexedItem, nq: String, digits: String?): Boolean {
+        if (nq.isEmpty() && digits == null) return true
+        if (nq.isNotEmpty() && entry.normalizedLabel.contains(nq)) return true
+        if (nq.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(nq, entry.words)) return true
+        for (alias in entry.aliases) {
+            if (nq.isNotEmpty() && alias.contains(nq)) return true
+            if (digits != null && alias.contains(digits)) return true
+        }
+        return digits != null && entry.normalizedLabel.contains(digits)
+    }
+
+    private fun contactStillMatches(contact: LaunchableItem.Contact, nq: String, digits: String?): Boolean {
+        if (nq.isNotEmpty() && SearchNormalizer.normalize(contact.displayName.toString()).startsWith(nq)) return true
+        return digits != null && contact.phoneNumbers.any { number -> number.filter { it in '0'..'9' }.contains(digits) }
     }
 
     private fun handleAtContactSearch(contactQuery: String) {
         dialRow.visibility = GONE
-        val contactIcon = contactIconProvider?.invoke() ?: defaultContactIcon
         if (contactQuery.isEmpty()) {
-            currentResults = emptyList()
-            adapter.submitList(emptyList())
+            ContactSearchHelper.cancel()
+            shownContacts = emptyList()
+            publish(emptyList())
             return
         }
         val snapshotQuery = lastQuery
         val layout = dialerLayoutProvider().coerceIn(0, 1)
         val dialDigits = convertToDialDigits(contactQuery, layout)
         val dialDigitsForContact = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+        val carried = shownContacts.filter {
+            contactStillMatches(it, SearchNormalizer.normalize(contactQuery), dialDigitsForContact)
+        }
+        shownContacts = carried
+        publish(carried)
         ContactSearchHelper.searchAsync(
             context,
             contactQuery,
             dialDigitsForContact,
-            contactIcon,
+            contactIcon(),
             enabled = true,
             sourceFilter = contactSourceProvider()
         ) { contactResults ->
             if (lastQuery != snapshotQuery) return@searchAsync
-            currentResults = contactResults
-            adapter.submitList(contactResults)
+            shownContacts = contactResults
+            publish(contactResults)
         }
     }
 
     private fun handleCommandSearch(commandQuery: String) {
         dialRow.visibility = GONE
+        shownContacts = emptyList()
         val commands = commandsProvider?.invoke() ?: emptyList()
-        val icon = commandIconProvider?.invoke() ?: defaultContactIcon
-        val raw = commandQuery.trim().lowercase()
-        val q = raw.replace(Regex("[^a-z0-9]"), "")
+        val icon = commandIcon()
+        val q = NON_COMMAND_CHARS.replace(commandQuery.trim().lowercase(), "")
         val filtered = if (q.isEmpty()) {
             commands
         } else {
             commands.filter { cmd ->
-                cmd.name.lowercase().replace(Regex("[^a-z0-9]"), "").contains(q)
+                NON_COMMAND_CHARS.replace(cmd.name.lowercase(), "").contains(q)
             }
         }
         val items = filtered.map { cmd ->
@@ -433,8 +520,7 @@ class SearchOverlay @JvmOverloads constructor(
                 icon = icon
             )
         }
-        currentResults = items
-        adapter.submitList(items)
+        publish(items)
     }
 
     /**
