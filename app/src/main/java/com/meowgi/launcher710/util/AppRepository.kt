@@ -242,7 +242,8 @@ class AppRepository private constructor(private val context: Context) {
                     } catch (_: Exception) { 0L },
                     normalizedLabel = SearchNormalizer.normalize(appLabel),
                     normalizedPackage = SearchNormalizer.normalize(ri.activityInfo.packageName),
-                    initials = SearchNormalizer.initials(appLabel)
+                    initials = SearchNormalizer.initials(appLabel),
+                    normalizedWords = SearchNormalizer.words(appLabel)
                 )
             }
             .sortedBy { it.label.lowercase() }
@@ -289,7 +290,7 @@ class AppRepository private constructor(private val context: Context) {
     private fun filterHidden(list: List<AppInfo>): List<AppInfo> {
         val hidden = prefs.getHiddenApps()
         if (hidden.isEmpty()) return list
-        return list.filter { it.componentName.flattenToString() !in hidden }
+        return list.filter { it.componentKey !in hidden }
     }
 
     fun getAllApps(): List<AppInfo> {
@@ -347,26 +348,36 @@ class AppRepository private constructor(private val context: Context) {
 
         if (normalizedQuery.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
 
-        val nameMatches = mutableListOf<AppInfo>()
-        val packageOnlyMatches = mutableListOf<AppInfo>()
+        val hidden = prefs.getHiddenApps()
+        val stats = statsMap
+        val nameMatches = mutableListOf<RankedApp>()
+        val packageOnlyMatches = mutableListOf<RankedApp>()
         for (app in apps) {
-            val textMatch = normalizedQuery.isNotEmpty() && app.normalizedLabel.contains(normalizedQuery)
-            val prefixMatch = normalizedQuery.isNotEmpty() && SearchNormalizer.matchesPrefixPerWord(normalizedQuery, app.label)
-            val digitMatch = digitsOnly != null && app.normalizedLabel.contains(digitsOnly)
-            if (textMatch || prefixMatch || digitMatch) {
-                nameMatches += app
-            } else if (normalizedQuery.isNotEmpty() && app.normalizedPackage.contains(normalizedQuery)) {
-                packageOnlyMatches += app
-            }
+            val kind = SearchNormalizer.match(
+                normalizedQuery, digitsOnly, app.normalizedLabel, app.normalizedWords, app.normalizedPackage
+            )
+            if (kind == SearchNormalizer.NO_MATCH || app.componentKey in hidden) continue
+            val stat = stats[app.componentKey]
+            val ranked = RankedApp(app, stat?.launchCount ?: app.launchCount, stat?.lastLaunched ?: 0L)
+            if (kind == SearchNormalizer.NAME_MATCH) nameMatches += ranked else packageOnlyMatches += ranked
         }
 
-        val byFrequency = compareByDescending<AppInfo> { statsMap[it.componentName.flattenToString()]?.launchCount ?: it.launchCount }
-            .thenByDescending { statsMap[it.componentName.flattenToString()]?.lastLaunched ?: 0L }
-            .thenBy { it.label.lowercase() }
-
-        return filterHidden(nameMatches).sortedWith(byFrequency) +
-            filterHidden(packageOnlyMatches).sortedWith(byFrequency)
+        nameMatches.sortWith(BY_FREQUENCY)
+        packageOnlyMatches.sortWith(BY_FREQUENCY)
+        val out = ArrayList<AppInfo>(nameMatches.size + packageOnlyMatches.size)
+        nameMatches.mapTo(out) { it.app }
+        packageOnlyMatches.mapTo(out) { it.app }
+        return out
     }
+
+    /** Sort keys resolved once per match, not on every comparison as the sort runs. */
+    private class RankedApp(val app: AppInfo, val launchCount: Int, val lastLaunched: Long) {
+        val sortLabel: String = app.label.lowercase()
+    }
+
+    private val BY_FREQUENCY = compareByDescending<RankedApp> { it.launchCount }
+        .thenByDescending { it.lastLaunched }
+        .thenBy { it.sortLabel }
 
     suspend fun recordLaunch(app: AppInfo) {
         val cn = app.componentName.flattenToString()

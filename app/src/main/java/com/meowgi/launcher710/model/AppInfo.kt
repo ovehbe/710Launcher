@@ -18,8 +18,13 @@ data class AppInfo(
     /** Pre-computed normalized package name for search, e.g. "com.whatsapp" → "comwhatsapp". */
     val normalizedPackage: String = "",
     /** Pre-computed first-letter-of-each-word for prefix-per-word search (e.g. "Trendyol Go" → "tg"). */
-    val initials: String = ""
+    val initials: String = "",
+    /** Pre-split normalized label words for prefix-per-word search ("Trendyol Go" → [trendyol, go]). */
+    val normalizedWords: List<String> = emptyList()
 ) {
     val componentName: ComponentName
         get() = ComponentName(packageName, activityName)
+
+    /** Same string as `componentName.flattenToString()`, built once instead of per call. */
+    val componentKey: String = "$packageName/$activityName"
 }

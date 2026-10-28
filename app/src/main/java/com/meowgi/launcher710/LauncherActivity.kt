@@ -112,7 +112,6 @@ class LauncherActivity : AppCompatActivity() {
     private var keyRoleDoublePressRunnable: Runnable? = null
 
     private var searchApplyRunnable: Runnable? = null
-    private val searchApplyDelayMs = 80L
 
     private var tickerTypingRunnable: Runnable? = null
     private var tickerDismissRunnable: Runnable? = null
@@ -899,6 +898,11 @@ class LauncherActivity : AppCompatActivity() {
         } else if (!preserveText) {
             searchInputInBar.setText("")
         }
+        // Applied now so the overlay's first frame already shows results for the first character;
+        // a posted apply lands after that frame is drawn.
+        if (searchOverlay.visibility == View.VISIBLE) {
+            searchOverlay.applyQuery(searchInputInBar.text.toString())
+        }
         // Post focus so it works when opening by touch (not only trackpad)
         searchInputInBar.post {
             searchInputInBar.requestFocus()
@@ -965,15 +969,21 @@ class LauncherActivity : AppCompatActivity() {
             override fun afterTextChanged(s: Editable?) {
                 val text = s?.toString() ?: ""
                 searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
-                searchApplyRunnable = Runnable {
-                    searchApplyRunnable = null
-                    if (searchOverlay.visibility == View.VISIBLE) {
-                        searchOverlay.applyQuery(text)
-                    } else if (prefs.searchOnType && text.isNotEmpty()) {
+                searchApplyRunnable = null
+                // Applied synchronously: filtering is cheap, and any delay here is latency the
+                // user sees on every keystroke — and Enter would act on an older query's results.
+                if (searchOverlay.visibility == View.VISIBLE) {
+                    searchOverlay.applyQuery(text)
+                } else if (prefs.searchOnType && text.isNotEmpty()) {
+                    // Posted, not run inline: onKeyDown sets this text and then opens the overlay
+                    // itself, which cancels this so the overlay isn't opened twice.
+                    val open = Runnable {
+                        searchApplyRunnable = null
                         handleTypeToSearchFromText(text)
                     }
+                    searchApplyRunnable = open
+                    keyHandler.post(open)
                 }
-                keyHandler.postDelayed(searchApplyRunnable!!, searchApplyDelayMs)
             }
         })
         searchInputInBar.setOnEditorActionListener { _, actionId, _ ->

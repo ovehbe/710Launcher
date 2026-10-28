@@ -22,6 +22,68 @@ private const val MAX_CONTACT_RESULTS = 40
  */
 object ContactSearchHelper {
 
+    private val NON_DIGITS = Regex("[^0-9]")
+
+    /**
+     * One worker for all searches. Every keystroke used to start its own thread, so fast typing
+     * ran a pile of overlapping provider queries that competed with the UI thread for CPU.
+     */
+    private val executor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            r.run()
+        }, "contact-search").apply { isDaemon = true }
+    }
+
+    /** Bumped per request; queued or finished work for an older generation is dropped. */
+    private val generation = java.util.concurrent.atomic.AtomicInteger()
+
+    /** (contactId, raw number, digits only) for every phone row; built once per search session. */
+    private class PhoneRow(val contactId: Long, val number: String, val digits: String)
+
+    @Volatile private var phoneIndex: List<PhoneRow>? = null
+    @Volatile private var accountIdsCache: Pair<String, Set<Long>?>? = null
+
+    /** Drops cached contact data so a new search session sees fresh contacts. Main thread. */
+    fun invalidateCache() {
+        generation.incrementAndGet()
+        executor.execute {
+            phoneIndex = null
+            accountIdsCache = null
+        }
+    }
+
+    /** Built lazily on first use; concurrent callers at worst build it twice. */
+    private fun phoneIndex(context: Context): List<PhoneRow> {
+        phoneIndex?.let { return it }
+        val rows = ArrayList<PhoneRow>()
+        try {
+            context.contentResolver.query(
+                Phone.CONTENT_URI,
+                arrayOf(Phone.CONTACT_ID, Phone.NUMBER),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(Phone.CONTACT_ID)
+                val numIdx = cursor.getColumnIndex(Phone.NUMBER)
+                if (idIdx >= 0 && numIdx >= 0) {
+                    while (cursor.moveToNext()) {
+                        val num = cursor.getString(numIdx)?.takeIf { it.isNotBlank() } ?: continue
+                        rows += PhoneRow(cursor.getLong(idIdx), num, NON_DIGITS.replace(num, ""))
+                    }
+                }
+            }
+        } catch (_: SecurityException) { }
+        phoneIndex = rows
+        return rows
+    }
+
+    private fun accountContactIds(context: Context, source: String, type: String, name: String): Set<Long>? {
+        accountIdsCache?.takeIf { it.first == source }?.let { return it.second }
+        return getContactIdsForAccount(context, type, name).also { accountIdsCache = source to it }
+    }
+
     /**
      * Returns contacts matching text and/or digit query. Filter out nameless. Safe to call from any thread.
      * @param enabled When false, returns empty list.
@@ -49,7 +111,7 @@ object ContactSearchHelper {
             source == "favorites" -> null
             source != "all" && source.contains(":") -> {
                 val parts = source.split(":", limit = 2)
-                if (parts.size == 2) getContactIdsForAccount(context, parts[0].trim(), parts[1].trim()) else null
+                if (parts.size == 2) accountContactIds(context, source, parts[0].trim(), parts[1].trim()) else null
             }
             else -> null
         }
@@ -85,25 +147,11 @@ object ContactSearchHelper {
         }
 
         if (digits != null && matchedIds.size < MAX_CONTACT_RESULTS) {
-            try {
-                context.contentResolver.query(
-                    Phone.CONTENT_URI,
-                    arrayOf(Phone.CONTACT_ID, Phone.NUMBER),
-                    null,
-                    null,
-                    null
-                )?.use { cursor ->
-                    val idIdx = cursor.getColumnIndex(Phone.CONTACT_ID)
-                    val numIdx = cursor.getColumnIndex(Phone.NUMBER)
-                    if (idIdx < 0 || numIdx < 0) return emptyList()
-                    while (cursor.moveToNext() && matchedIds.size < MAX_CONTACT_RESULTS) {
-                        val id = cursor.getLong(idIdx)
-                        if (accountContactIds != null && id !in accountContactIds) continue
-                        val num = cursor.getString(numIdx) ?: continue
-                        if (num.replace(Regex("[^0-9]"), "").contains(digits)) matchedIds.add(id)
-                    }
-                }
-            } catch (_: SecurityException) { }
+            for (row in phoneIndex(context)) {
+                if (matchedIds.size >= MAX_CONTACT_RESULTS) break
+                if (accountContactIds != null && row.contactId !in accountContactIds) continue
+                if (row.digits.contains(digits)) matchedIds.add(row.contactId)
+            }
         }
 
         val idsToUse = if (source == "favorites") {
@@ -152,7 +200,11 @@ object ContactSearchHelper {
             } catch (_: SecurityException) { }
         }
 
-        val idToNumbers = batchGetPhoneNumbers(context, ids)
+        val idSet = ids.toHashSet()
+        val idToNumbers = HashMap<Long, MutableList<String>>()
+        for (row in phoneIndex(context)) {
+            if (row.contactId in idSet) idToNumbers.getOrPut(row.contactId) { mutableListOf() }.add(row.number)
+        }
 
         // Client-side relevance: only keep contacts that actually match the query (provider can return loose results).
         fun norm(s: String) = SearchNormalizer.normalize(s)
@@ -171,7 +223,7 @@ object ContactSearchHelper {
                 nameNorm.startsWith(normalizedQuery) -> true
                 else -> false
             }
-            val numberMatches = digits == null || numbers.any { it.replace(Regex("[^0-9]"), "").contains(digits) }
+            val numberMatches = digits == null || numbers.any { NON_DIGITS.replace(it, "").contains(digits) }
             if (!nameMatches && !numberMatches) continue
 
             val contact = LaunchableItem.Contact(
@@ -193,33 +245,13 @@ object ContactSearchHelper {
             .map { it.second }
     }
 
-    private fun batchGetPhoneNumbers(context: Context, contactIds: List<Long>): Map<Long, List<String>> {
-        val out: MutableMap<Long, MutableList<String>> = mutableMapOf()
-        contactIds.forEach { out[it] = mutableListOf() }
-        if (contactIds.isEmpty()) return out
-        val sel = Phone.CONTACT_ID + " IN (" + contactIds.joinToString(",") { "?" } + ")"
-        try {
-            context.contentResolver.query(
-                Phone.CONTENT_URI,
-                arrayOf(Phone.CONTACT_ID, Phone.NUMBER),
-                sel,
-                contactIds.map { it.toString() }.toTypedArray(),
-                null
-            )?.use { c ->
-                val idIdx = c.getColumnIndex(Phone.CONTACT_ID)
-                val numIdx = c.getColumnIndex(Phone.NUMBER)
-                if (idIdx >= 0 && numIdx >= 0) {
-                    while (c.moveToNext()) {
-                        val n = c.getString(numIdx)?.takeIf { it.isNotBlank() } ?: continue
-                        out.getOrPut(c.getLong(idIdx)) { mutableListOf() }.add(n)
-                    }
-                }
-            }
-        } catch (_: SecurityException) { }
-        return out
-    }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** Runs contact search on a background thread and calls onResult on the main thread. Only call from main thread. */
+    /**
+     * Runs contact search on the background worker and calls onResult on the main thread — only
+     * for the most recent request. Calling again (or [cancel]) supersedes anything still queued
+     * or running, so results can never arrive out of order. Only call from main thread.
+     */
     fun searchAsync(
         context: Context,
         textQuery: String,
@@ -229,11 +261,18 @@ object ContactSearchHelper {
         sourceFilter: String = "all",
         onResult: (List<LaunchableItem.Contact>) -> Unit
     ) {
-        val main = Handler(Looper.getMainLooper())
-        Thread {
+        val gen = generation.incrementAndGet()
+        executor.execute {
+            if (gen != generation.get()) return@execute
             val list = search(context, textQuery, digitQuery, defaultIcon, enabled, sourceFilter)
-            main.post { onResult(list) }
-        }.start()
+            if (gen != generation.get()) return@execute
+            mainHandler.post { if (gen == generation.get()) onResult(list) }
+        }
+    }
+
+    /** Supersedes any pending [searchAsync] request without starting a new one. Main thread. */
+    fun cancel() {
+        generation.incrementAndGet()
     }
 
     private fun getContactIdsForAccount(context: Context, accountType: String, accountName: String): Set<Long>? {

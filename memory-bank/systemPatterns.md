@@ -11,6 +11,13 @@
 - **Web-search fallback flags:** `SearchOverlay.openWebSearchWithQuery` must start with `FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_CLEAR_TASK`. Both halves matter and each has already been got wrong once: without `NEW_TASK` the search app joins the launcher's home task and never appears in Recents; with `RESET_TASK_IF_NEEDED` instead of `CLEAR_TASK` a leftover search task is merely brought forward and the new query is dropped.
 - **Notification applets:** Optional; when enabled, per-app icons + counts in action bar; when disabled, fallback “N Notifications”. Applets hide when ticker is showing; optional auto-hide when count 0.
 
+## Search keystroke path (keep it cheap)
+- The search `TextWatcher` applies the query **synchronously** when the overlay is visible. No debounce: it was pure latency and let Enter launch an older query's first result. `SearchOverlay.applyQuery` is a no-op for the query already shown.
+- Matching is `SearchNormalizer.match` over precomputed fields (`AppInfo.normalizedLabel` / `normalizedWords` / `normalizedPackage`; `IndexedItem` for page-scoped filter lists, built once in `showFilter`). Never normalize or split labels, or compile a regex, per keystroke. `SearchNormalizerTest` pins the matcher to the legacy behaviour.
+- Built-in results (Settings, Refresh), the contact icon and the command icon are cached per overlay session (`show`/`showFilter` reset them). Building them touches icon packs, bitmap shaping and PackageManager.
+- Contacts: `ContactSearchHelper.searchAsync` runs on a single background worker, latest request only (generation counter). The phone table is indexed once per session (`invalidateCache`). Still-matching contacts carry over between keystrokes so they don't blink.
+- Results go through `AppAdapter.submitListDiffed` (synchronous DiffUtil, no stable ids because contact keys aren't unique). The results RecyclerView has `setHasFixedSize(true)` and no item animator.
+
 ## Stability invariants (do not regress)
 - **Attach the pager synchronously.** `setupPager()` must run inside `onCreate`, never behind an `await` on `loadApps()`. ViewPager2 replays restored state into the adapter at attach time; deferring it caused the `Fragment no longer exists for key f#N` crashes.
 - **No state restore on the home screen.** `appPager.isSaveEnabled = false` and fragment state is stripped from `savedInstanceState`. Don't reintroduce either.
