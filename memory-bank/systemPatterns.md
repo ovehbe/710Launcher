@@ -31,6 +31,11 @@
 - **Coroutines are scoped.** `lifecycleScope` in the activity, the process-lifetime `appScope` in `AppRepository`. No ad-hoc `CoroutineScope(...)`.
 - **Static callbacks are paired.** `NotifListenerService.onNotificationsChanged` is set in `onStart` and cleared in `onStop`; it holds the activity.
 
+## Settings structure
+- `SettingsActivity` is only the host: launchers, navigation (`showScreen`, Back returns to the category list), `rebuildSettings()` (re-renders the current screen, keeps scroll). Toolbar is outside the rebuilt container.
+- Categories are `SettingsScreen` in `SettingsScreens.kt`, one `build*()` per category; add a new setting as a row inside the right `group(...)` there. Row widgets (`toggleRow`, `choiceRow`, `colorChoiceRow`, `sliderRow`, `numberRow`, `actionRow`…) are in `SettingsRows.kt`; dialogs in `Settings*Dialogs.kt`; the four tap-action slots in `SettingsTapActions.kt`.
+- `app/src/test/resources/settings_pref_baseline.txt` is the snapshot of prefs/entry points the old screen exposed; `SettingsPrefCoverageTest` fails if one stops being reachable or a key changes. Don't edit the baseline to make it pass; add to `renamedActions` only for a deliberate replacement.
+
 ## Design patterns
 - **Callbacks:** `onAppsChanged`, `onNotificationsChanged` used to refresh UI after data changes. Ticker/count and applets should update when notifications change without requiring launcher restart.
 - **Prefs:** One `LauncherPrefs(context)`; all keys in one file; fixed keys in `fixedExportKeys` and in `exportToJson()` for backup.
