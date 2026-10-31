@@ -448,6 +448,11 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getInt("swipeMode", 0)
         set(v) = prefs.edit().putInt("swipeMode", v).apply()
 
+    /** Swipe down on the home screen expands the system notification shade. */
+    var swipeDownNotifications: Boolean
+        get() = prefs.getBoolean("swipeDownNotifications", true)
+        set(v) = prefs.edit().putBoolean("swipeDownNotifications", v).apply()
+
     var defaultTab: Int
         get() = prefs.getInt("defaultTab", 1)
         set(v) = prefs.edit().putInt("defaultTab", v).apply()
