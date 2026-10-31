@@ -20,6 +20,7 @@ import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.ContactSearchHelper
+import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
@@ -153,19 +154,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         dialRow.addView(dialText)
         dialRow.addView(phoneIcon)
-        dialRow.setOnClickListener {
-            try {
-                // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
-                val telUri = "tel:" + currentDialDigits.replace("#", "%23")
-                val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-                dismiss()
-            } catch (_: Exception) {
-                Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
-            }
-        }
+        dialRow.setOnClickListener { dial(currentDialDigits) }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
@@ -290,11 +279,30 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
-    /** On Enter / Extended search: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
+    private fun dial(number: String) {
+        try {
+            // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
+            val telUri = "tel:" + number.replace("#", "%23")
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            dismiss()
+        } catch (_: Exception) {
+            Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * On Enter / Extended search. In command mode, an exactly typed command runs. A dialable number
+     * dials, like tapping the dial row shown above the results. Otherwise the first result launches,
+     * or the query goes to web search.
+     */
     fun performExtendedSearch() {
         val trigger = commandTriggerProvider?.invoke()
-        if (!trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)) {
-            val commandPart = lastQuery.removePrefix(trigger).trim()
+        val commandMode = !trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)
+        if (commandMode) {
+            val commandPart = lastQuery.removePrefix(trigger!!).trim()
             val commands = commandsProvider?.invoke() ?: emptyList()
             val exact = commands.find { it.name.equals(commandPart, ignoreCase = true) }
             if (exact != null) {
@@ -311,6 +319,11 @@ class SearchOverlay @JvmOverloads constructor(
                 dismiss()
                 return
             }
+        }
+        val number = if (commandMode) null else DialNumber.dialable(lastQuery)
+        if (number != null) {
+            dial(number)
+            return
         }
         val first = currentResults.firstOrNull()
         if (first != null) {
@@ -383,8 +396,8 @@ class SearchOverlay @JvmOverloads constructor(
             return
         }
         val layout = dialerLayoutProvider().coerceIn(0, 1)
-        val dialDigits = convertToDialDigits(query, layout)
-        val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+        val keypadDigits = convertToDialDigits(query, layout)
+        val dialDigitsForAppSearch = keypadDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
         val nq = SearchNormalizer.normalize(query)
 
         val filter = filterIndex
@@ -434,7 +447,7 @@ class SearchOverlay @JvmOverloads constructor(
                 publish(baseResults)
             }
         }
-        updateDialRow(dialDigits)
+        updateDialRow(DialNumber.dialable(query) ?: "")
     }
 
     private fun updateDialRow(dialDigits: String) {
@@ -524,6 +537,9 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     /**
+     * Keypad digits for matching app labels and contact numbers by digits (e.g. "zw0" finds
+     * "710 Launcher"). Never shown or dialled: the dial row and Enter use [DialNumber.dialable].
+     *
      * Converts search query to dial digits using the selected layout.
      * Layout 0 = Qwerty: w→1, e→2, r→3, s→4, d→5, f→6, z→7, x→8, c→9; a→*, q→#, o→+; digits and +*# pass through.
      * Layout 1 = T9: abc→2, def→3, ghi→4, jkl→5, mno→6, pqrs→7, tuv→8, wxyz→9; 0/space→0, . or 1→1; digits and +*# pass through.
