@@ -516,6 +516,7 @@ class SettingsActivity : AppCompatActivity() {
             addInjectDelayInput()
         }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
+        addToggle("Google suggestions when nothing matches", prefs.searchWebSuggestions) { prefs.searchWebSuggestions = it }
         addChoice(getString(R.string.dialer_number_layout), listOf(getString(R.string.dialer_layout_qwerty), getString(R.string.dialer_layout_t9)), prefs.dialerNumberLayout) { prefs.dialerNumberLayout = it }
         addChoice(getString(R.string.search_contacts), listOf("Enabled", "Disabled", "Enable only with @"), prefs.searchContactsMode.coerceIn(0, 2)) {
             prefs.searchContactsMode = it
