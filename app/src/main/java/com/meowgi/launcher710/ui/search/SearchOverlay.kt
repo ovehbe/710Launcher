@@ -36,7 +36,6 @@ class SearchOverlay @JvmOverloads constructor(
     private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
-    private val extendedSearchBtn: TextView
     private val resultsRecycler: RecyclerView
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
@@ -88,7 +87,6 @@ class SearchOverlay @JvmOverloads constructor(
     /** Query the visible results belong to; null forces the next [applyQuery] to run. */
     private var appliedQuery: String? = null
     private var currentResults: List<LaunchableItem> = emptyList()
-    private var searchContextLabel: String = "Extended"
     private var currentDialDigits = ""
 
     // Per-session caches, cleared in show()/showFilter(). Building these touches icon packs,
@@ -168,19 +166,6 @@ class SearchOverlay @JvmOverloads constructor(
         }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        extendedSearchBtn = TextView(context).apply {
-            text = "$searchContextLabel search"
-            textSize = 13f
-            setTextColor(resources.getColor(R.color.bb_text_secondary, null))
-            typeface = font
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(6))
-            isFocusable = true
-            isFocusableInTouchMode = false
-            setOnClickListener { performExtendedSearch() }
-        }
-        addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-
         resultsRecycler = RecyclerView(context).apply {
             layoutManager = GridLayoutManager(context, 4)
             // Its size comes from the weight, not the content, so result changes must not
@@ -252,12 +237,6 @@ class SearchOverlay @JvmOverloads constructor(
         setOnClickListener { dismiss() }
     }
 
-    /** Set label for the extended search button, e.g. "Frequents", "All Apps", "Extended". */
-    fun setSearchContextLabel(label: String) {
-        searchContextLabel = label
-        extendedSearchBtn.text = "$label search"
-    }
-
     fun show() {
         filterIndex = null
         resetSession()
@@ -290,7 +269,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
-    /** On Enter / Extended search: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
+    /** On Enter / IME search action: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
     fun performExtendedSearch() {
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)) {
