@@ -39,6 +39,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
+    private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
     private val adapter: AppAdapter
@@ -91,6 +92,7 @@ class SearchOverlay @JvmOverloads constructor(
     /** Query the visible results belong to; null forces the next [applyQuery] to run. */
     private var appliedQuery: String? = null
     private var currentResults: List<LaunchableItem> = emptyList()
+    private var searchContextLabel: String = "Extended"
     private var currentDialDigits = ""
 
     // Per-session caches, cleared in show()/showFilter(). Building these touches icon packs,
@@ -166,6 +168,19 @@ class SearchOverlay @JvmOverloads constructor(
         dialRow.addView(phoneIcon)
         dialRow.setOnClickListener { dial(currentDialDigits) }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        extendedSearchBtn = TextView(context).apply {
+            text = "$searchContextLabel search"
+            textSize = 13f
+            setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+            typeface = font
+            gravity = Gravity.CENTER
+            setPadding(0, dp(10), 0, dp(6))
+            isFocusable = true
+            isFocusableInTouchMode = false
+            setOnClickListener { performExtendedSearch() }
+        }
+        addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         suggestionsBox = LinearLayout(context).apply {
             orientation = VERTICAL
@@ -244,6 +259,12 @@ class SearchOverlay @JvmOverloads constructor(
         setOnClickListener { dismiss() }
     }
 
+    /** Set label for the extended search button, e.g. "Frequents", "All Apps", "Extended". */
+    fun setSearchContextLabel(label: String) {
+        searchContextLabel = label
+        extendedSearchBtn.text = "$label search"
+    }
+
     fun show() {
         filterIndex = null
         resetSession()
@@ -292,7 +313,7 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     /**
-     * On Enter / IME search action. In command mode, an exactly typed command runs. A dialable number
+     * On Enter / Extended search. In command mode, an exactly typed command runs. A dialable number
      * dials, like tapping the dial row shown above the results. Otherwise the first result launches,
      * or the query goes to web search.
      */

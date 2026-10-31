@@ -1004,6 +1004,13 @@ class LauncherActivity : AppCompatActivity() {
 
         val adapter = pagerAdapter
         val pageId = adapter?.getPageId(appPager.currentItem)
+        searchOverlay.setSearchContextLabel(
+            when (pageId) {
+                "frequent" -> "Frequents"
+                "all" -> "All Apps"
+                else -> "Extended"
+            }
+        )
         if (adapter == null) {
             searchOverlay.show()
         } else {

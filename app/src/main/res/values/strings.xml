@@ -7,6 +7,7 @@
     <string name="tab_favorites">Favorites</string>
 
     <string name="search_hint">Search</string>
+    <string name="extended_search">Extended Search</string>
     <string name="dial_prefix">Dial:</string>
     <string name="dial_no_app">No app to place call</string>
     <string name="dialer_number_layout">Dialer number layout</string>
