@@ -17,10 +17,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.ui.dialogs.AppPickerWithSearchDialog
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
+import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
@@ -516,6 +519,8 @@ class SettingsActivity : AppCompatActivity() {
             addInjectDelayInput()
         }
         addToggle("Search on Physical Keyboard", prefs.searchOnType) { prefs.searchOnType = it }
+        addToggle("Rank results by usage", prefs.searchUsageRanking) { prefs.searchUsageRanking = it }
+        addButton("Reset usage data") { confirmResetUsageData() }
         addChoice(getString(R.string.dialer_number_layout), listOf(getString(R.string.dialer_layout_qwerty), getString(R.string.dialer_layout_t9)), prefs.dialerNumberLayout) { prefs.dialerNumberLayout = it }
         addChoice(getString(R.string.search_contacts), listOf("Enabled", "Disabled", "Enable only with @"), prefs.searchContactsMode.coerceIn(0, 2)) {
             prefs.searchContactsMode = it
@@ -1691,6 +1696,25 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     // --- Toggle ---
+    private fun confirmResetUsageData() {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Reset usage data?")
+            .setMessage("Clears launch counts and last-opened times for every app. Search ranking, the Frequent page and \"Last Opened\" / \"Most Used\" sorting start over. Favorites are kept.")
+            .setPositiveButton("Reset") { _, _ ->
+                val repo = AppRepository.get(this)
+                lifecycleScope.launch {
+                    try {
+                        repo.resetUsageData()
+                        Toast.makeText(this@SettingsActivity, "Usage data reset", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this@SettingsActivity, "Couldn't reset usage data", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun addToggle(title: String, current: Boolean, onChanged: (Boolean) -> Unit) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

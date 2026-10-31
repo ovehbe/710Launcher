@@ -23,6 +23,7 @@ import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
+import com.meowgi.launcher710.util.SearchRanker
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
@@ -393,15 +394,17 @@ class SearchOverlay @JvmOverloads constructor(
             val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) {
                 filter.map { it.item }
             } else {
-                val nameMatches = mutableListOf<LaunchableItem>()
-                val packageOnlyMatches = mutableListOf<LaunchableItem>()
+                val repo = repository
+                val ranked = mutableListOf<SearchRanker.Ranked<LaunchableItem>>()
                 for (entry in filter) {
-                    when (SearchNormalizer.match(nq, dialDigitsForAppSearch, entry.normalizedLabel, entry.words, entry.normalizedPackage)) {
-                        SearchNormalizer.NAME_MATCH -> nameMatches += entry.item
-                        SearchNormalizer.PACKAGE_MATCH -> packageOnlyMatches += entry.item
-                    }
+                    val tier = SearchRanker.tier(nq, dialDigitsForAppSearch, entry.normalizedLabel, entry.words, entry.normalizedPackage)
+                    if (tier == SearchRanker.NO_MATCH) continue
+                    val app = (entry.item as? LaunchableItem.App)?.app
+                    val usage = if (app != null && repo != null) repo.usageKey(app.componentKey) else SearchRanker.NO_USAGE
+                    // Empty sort label: ties keep the page's own order (the sort is stable).
+                    ranked += SearchRanker.Ranked(entry.item, tier, usage, "")
                 }
-                nameMatches + packageOnlyMatches
+                SearchRanker.sort(ranked, repo?.usageRankingEnabled ?: false)
             }
             publish(filtered)
         } else {

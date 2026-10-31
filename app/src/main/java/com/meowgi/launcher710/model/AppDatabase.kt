@@ -2,13 +2,18 @@ package com.meowgi.launcher710.model
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Entity(tableName = "app_stats")
 data class AppStats(
     @PrimaryKey val componentName: String,
     val launchCount: Int = 0,
     val isFavorite: Boolean = false,
-    val lastLaunched: Long = 0
+    val lastLaunched: Long = 0,
+    /** Decayed launch score as of [frecencyAt]; see SearchRanker. */
+    @ColumnInfo(defaultValue = "0") val frecency: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val frecencyAt: Long = 0
 )
 
 @Dao
@@ -22,8 +27,8 @@ interface AppStatsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(stats: AppStats)
 
-    @Query("UPDATE app_stats SET launchCount = launchCount + 1, lastLaunched = :time WHERE componentName = :name")
-    suspend fun incrementLaunch(name: String, time: Long)
+    @Query("UPDATE app_stats SET launchCount = 0, lastLaunched = 0, frecency = 0, frecencyAt = 0")
+    suspend fun resetUsage()
 
     @Query("UPDATE app_stats SET isFavorite = :fav WHERE componentName = :name")
     suspend fun setFavorite(name: String, fav: Boolean)
@@ -35,7 +40,7 @@ interface AppStatsDao {
     suspend fun getFrequent(limit: Int = 30): List<AppStats>
 }
 
-@Database(entities = [AppStats::class], version = 1, exportSchema = false)
+@Database(entities = [AppStats::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun appStatsDao(): AppStatsDao
 
@@ -43,13 +48,29 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        /**
+         * v1 → v2 adds the frecency columns and seeds them as if every past launch happened at the
+         * last one, so upgrading users keep their ranking and counts are untouched.
+         */
+        val MIGRATION_1_2_SQL = listOf(
+            "ALTER TABLE app_stats ADD COLUMN frecency REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE app_stats ADD COLUMN frecencyAt INTEGER NOT NULL DEFAULT 0",
+            "UPDATE app_stats SET frecency = launchCount, frecencyAt = lastLaunched"
+        )
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_1_2_SQL.forEach(db::execSQL)
+            }
+        }
+
         fun get(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "bbos7_launcher.db"
-                ).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
             }
         }
     }
