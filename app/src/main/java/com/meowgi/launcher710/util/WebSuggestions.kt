@@ -54,7 +54,19 @@ class WebSuggestions(private val onResult: (query: String, suggestions: List<Str
             }
             return out
         }
+
+        /**
+         * Whether a query gets web suggestions. Only text matches count as "something matched":
+         * keypad-digit matches ("sjsj" → digits "44" inside a contact's number or the "710"
+         * alias) hit almost every query and must not suppress suggestions. A dialable query gets
+         * the dial row instead.
+         */
+        fun shouldRequest(enabled: Boolean, allowed: Boolean, query: String, dialable: Boolean, hasTextMatch: Boolean): Boolean =
+            enabled && allowed && query.isNotBlank() && !dialable && !hasTextMatch
     }
+
+    /** Replaces the HTTP fetch; runs on [Dispatchers.IO]. */
+    internal var fetcher: ((String) -> List<String>)? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var job: Job? = null
@@ -68,7 +80,7 @@ class WebSuggestions(private val onResult: (query: String, suggestions: List<Str
         requested = query
         job = scope.launch {
             delay(DEBOUNCE_MS)
-            val suggestions = withContext(Dispatchers.IO) { fetch(query) }
+            val suggestions = withContext(Dispatchers.IO) { fetcher?.invoke(query) ?: fetch(query) }
             // A request() or cancel() since then cancelled this job, so withContext threw instead.
             onResult(query, suggestions)
         }

@@ -62,4 +62,32 @@ class DialNumberTest {
         assertNull(DialNumber.dialable("*#"))
         assertNull(DialNumber.dialable("- ( )"))
     }
+
+    @Test
+    fun qwertyKeypadLettersDialWhenEveryCharacterIsDialable() {
+        val q = DialNumber.LAYOUT_QWERTY
+        assertEquals("123", DialNumber.dialable("wer", q))
+        assertEquals("123", DialNumber.dialable("w23", q))
+        assertEquals("456789", DialNumber.dialable("SDFZXC", q))
+        assertEquals("*#06#", DialNumber.dialable("aq06q", q))
+        assertEquals("+90555", DialNumber.dialable("o90 555", q))
+        assertEquals("710", DialNumber.dialable("zw0", q))
+    }
+
+    @Test
+    fun anyNonKeypadLetterStillHidesTheDialRow() {
+        val q = DialNumber.LAYOUT_QWERTY
+        assertNull(DialNumber.dialable("sjsj", q))
+        assertNull(DialNumber.dialable("hello", q))
+        assertNull(DialNumber.dialable("wer t", q))
+        assertNull(DialNumber.dialable("code", q))
+        assertNull(DialNumber.dialable("asap", q))
+    }
+
+    @Test
+    fun t9AndNoKeypadNeverMapLetters() {
+        assertNull(DialNumber.dialable("wer", DialNumber.LAYOUT_T9))
+        assertNull(DialNumber.dialable("wer"))
+        assertEquals("123", DialNumber.dialable("123", DialNumber.LAYOUT_T9))
+    }
 }

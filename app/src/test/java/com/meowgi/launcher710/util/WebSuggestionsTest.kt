@@ -1,6 +1,7 @@
 package com.meowgi.launcher710.util
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,5 +74,15 @@ class WebSuggestionsTest {
         assertTrue(url.contains("&hl=tr"))
         assertTrue(url, url.endsWith("&q=c%2B%2B+%26+caf%C3%A9+%231"))
         assertTrue(WebSuggestions.buildUrl("x", language = "").contains("&hl=en"))
+    }
+
+    @Test
+    fun requestsOnlyWithoutTextMatchesAndForNonNumbers() {
+        assertTrue(WebSuggestions.shouldRequest(true, true, "hjkl", dialable = false, hasTextMatch = false))
+        assertFalse(WebSuggestions.shouldRequest(true, true, "sett", dialable = false, hasTextMatch = true))
+        assertFalse(WebSuggestions.shouldRequest(true, true, "445", dialable = true, hasTextMatch = false))
+        assertFalse(WebSuggestions.shouldRequest(false, true, "hjkl", dialable = false, hasTextMatch = false))
+        assertFalse(WebSuggestions.shouldRequest(true, false, "hjkl", dialable = false, hasTextMatch = false))
+        assertFalse(WebSuggestions.shouldRequest(true, true, "  ", dialable = false, hasTextMatch = false))
     }
 }

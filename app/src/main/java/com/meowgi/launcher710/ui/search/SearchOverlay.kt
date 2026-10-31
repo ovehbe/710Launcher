@@ -105,7 +105,11 @@ class SearchOverlay @JvmOverloads constructor(
     private var webSuggestionsEnabled = false
     /** False in command and @-contact modes, where web suggestions make no sense. */
     private var webSuggestionsAllowed = false
-    private val webSuggestions = WebSuggestions { query, suggestions -> showWebSuggestions(query, suggestions) }
+    internal val webSuggestions = WebSuggestions { query, suggestions -> showWebSuggestions(query, suggestions) }
+    /** Number the current query dials (dial row, Enter), or null; set before results are published. */
+    private var queryDialNumber: String? = null
+    /** Normalized current query, for telling text matches from keypad-digit matches. */
+    private var queryNormalized = ""
 
     private val defaultContactIcon: Drawable by lazy {
         ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
@@ -125,6 +129,8 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun resetSession() {
         lastQuery = ""
+        queryDialNumber = null
+        queryNormalized = ""
         appliedQuery = null
         currentResults = emptyList()
         shownContacts = emptyList()
@@ -339,7 +345,13 @@ class SearchOverlay @JvmOverloads constructor(
                 return
             }
         }
-        val number = if (commandMode) null else DialNumber.dialable(lastQuery)
+        // Keypad letters ("wer") only dial when nothing matched; real digits always dial.
+        val number = when {
+            commandMode -> null
+            DialNumber.dialable(lastQuery) != null -> DialNumber.dialable(lastQuery)
+            currentResults.isEmpty() -> queryDialNumber
+            else -> null
+        }
         if (number != null) {
             dial(number)
             return
@@ -406,6 +418,7 @@ class SearchOverlay @JvmOverloads constructor(
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
             webSuggestionsAllowed = false
+            queryDialNumber = null
             ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
@@ -413,6 +426,7 @@ class SearchOverlay @JvmOverloads constructor(
         val contactMode = contactModeProvider()
         if (contactMode == 2 && query.startsWith("@")) {
             webSuggestionsAllowed = false
+            queryDialNumber = null
             handleAtContactSearch(query.removePrefix("@").trimStart())
             return
         }
@@ -421,6 +435,8 @@ class SearchOverlay @JvmOverloads constructor(
         val keypadDigits = convertToDialDigits(query, layout)
         val dialDigitsForAppSearch = keypadDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
         val nq = SearchNormalizer.normalize(query)
+        queryDialNumber = DialNumber.dialable(query, layout)
+        queryNormalized = nq
 
         val filter = filterIndex
         if (filter != null) {
@@ -471,18 +487,17 @@ class SearchOverlay @JvmOverloads constructor(
                 publish(baseResults)
             }
         }
-        updateDialRow(DialNumber.dialable(query) ?: "")
+        updateDialRow(queryDialNumber ?: "")
     }
 
     /**
-     * Runs on every publish, so it stays cheap: with results showing it only cancels; with none it
-     * (re)starts one debounced request, and a repeat for the same query is a no-op. A dialable
-     * query gets the dial row instead.
+     * Runs on every publish, so it stays cheap: when suggestions don't apply it only cancels;
+     * otherwise it (re)starts one debounced request, and a repeat for the same query is a no-op.
      */
     private fun updateWebSuggestions(results: List<LaunchableItem>) {
         val query = lastQuery.trim()
-        if (!webSuggestionsEnabled || !webSuggestionsAllowed || results.isNotEmpty() || query.isEmpty() ||
-            DialNumber.dialable(query) != null
+        if (!WebSuggestions.shouldRequest(webSuggestionsEnabled, webSuggestionsAllowed, query,
+                dialable = queryDialNumber != null, hasTextMatch = results.any(::matchesText))
         ) {
             clearWebSuggestions()
             return
@@ -490,9 +505,22 @@ class SearchOverlay @JvmOverloads constructor(
         webSuggestions.request(query)
     }
 
+    private fun matchesText(item: LaunchableItem): Boolean {
+        val nq = queryNormalized
+        if (nq.isEmpty()) return false
+        val app = (item as? LaunchableItem.App)?.app
+        val match = if (app != null) {
+            SearchNormalizer.match(nq, null, app.normalizedLabel, app.normalizedWords, app.normalizedPackage)
+        } else {
+            val label = item.label.toString()
+            SearchNormalizer.match(nq, null, SearchNormalizer.normalize(label), SearchNormalizer.words(label), "")
+        }
+        return match != SearchNormalizer.NO_MATCH
+    }
+
     private fun showWebSuggestions(query: String, suggestions: List<String>) {
-        if (visibility != VISIBLE || query != lastQuery.trim() || currentResults.isNotEmpty() || !webSuggestionsAllowed ||
-            DialNumber.dialable(query) != null
+        if (visibility != VISIBLE || query != lastQuery.trim() || !webSuggestionsAllowed || queryDialNumber != null ||
+            currentResults.any(::matchesText)
         ) return
         suggestionsBox.removeAllViews()
         for (s in suggestions) suggestionsBox.addView(webSuggestionRow(s), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -648,22 +676,12 @@ class SearchOverlay @JvmOverloads constructor(
                     when (ch) {
                         '+', '*', '#' -> sb.append(ch)
                         in '0'..'9' -> sb.append(ch)
-                        in "aA" -> sb.append('*')
-                        in "qQ" -> sb.append('#')
-                        in "oO" -> sb.append('+')
-                        in "wWeErRsSdDfFzZxXcC" -> sb.append(qwertyLetterToDigit(ch.lowercaseChar()))
-                        else -> { /* skip unmapped letters */ }
+                        else -> DialNumber.keypadChar(ch, DialNumber.LAYOUT_QWERTY)?.let { sb.append(it) }
                     }
                 }
             }
         }
         return sb.toString()
-    }
-
-    private fun qwertyLetterToDigit(c: Char): Char = when (c) {
-        'w' -> '1'; 'e' -> '2'; 'r' -> '3'; 's' -> '4'; 'd' -> '5'
-        'f' -> '6'; 'z' -> '7'; 'x' -> '8'; 'c' -> '9'
-        else -> '0'
     }
 
     private fun t9LetterToDigit(c: Char): Char = when (c) {
