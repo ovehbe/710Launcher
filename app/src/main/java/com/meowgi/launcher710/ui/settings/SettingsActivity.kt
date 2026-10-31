@@ -21,9 +21,6 @@ import androidx.core.view.WindowCompat
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Settings host: a home list of categories, each opening a sub-screen built by [buildScreen].
@@ -67,35 +64,12 @@ class SettingsActivity : AppCompatActivity() {
     internal var pendingCommandIndexForShortcut: Int? = null
     internal var onCommandShortcutSet: (() -> Unit)? = null
 
-    internal val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) {
-            try {
-                contentResolver.openOutputStream(uri)?.use { it.write(prefs.exportToJson().toByteArray(Charsets.UTF_8)) }
-                Toast.makeText(this, "Settings exported", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Export failed", Toast.LENGTH_SHORT).show()
-            }
-        }
+    internal val backupLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) runBackup(uri)
     }
 
-    internal val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                val json = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: return@registerForActivityResult
-                val backup = prefs.exportToJson()
-                val backupName = "launcher_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.json"
-                openFileOutput(backupName, MODE_PRIVATE).use { it.write(backup.toByteArray(Charsets.UTF_8)) }
-                if (prefs.importFromJson(json)) {
-                    Toast.makeText(this, "Settings imported. Launcher will restart.", Toast.LENGTH_LONG).show()
-                    setResult(RESULT_OK)
-                    finish()
-                } else {
-                    Toast.makeText(this, "Import failed (invalid file)", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Import failed", Toast.LENGTH_SHORT).show()
-            }
-        }
+    internal val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) readBackup(uri)
     }
 
     internal val searchShortcutLauncher = shortcutLauncher("Search") { uri, name ->

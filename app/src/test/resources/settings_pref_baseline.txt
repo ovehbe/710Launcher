@@ -97,6 +97,10 @@ tabBarHighlightAlpha=tabBarHighlightAlpha
 tabBarHighlightCustomColor=tabBarHighlightCustomColor
 tabBarHighlightUseAccent=tabBarHighlightUseAccent
 useNotificationApplets=useNotificationApplets
+# Added in 1.6.0 (#13, #15, #16).
+searchUsageRanking=searchUsageRanking
+searchWebSuggestions=searchWebSuggestions
+swipeDownNotifications=swipeDownNotifications
 [dialogs]
 actionBarCenterAction=actionBarCenterAction
 actionBarCenterActionIntentUri=actionBarCenterActionIntentUri
@@ -142,6 +146,7 @@ ACTION_NOTIFICATION_LISTENER_SETTINGS
 addInjectAlternativeWindowInput
 addInjectDelayInput
 addKeyShortcutsInfo
+confirmResetUsageData
 exportLauncher
 importLauncher
 pickLiveWallpaper

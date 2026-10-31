@@ -26,7 +26,15 @@ class SettingsPrefCoverageTest {
         "addInjectDelayInput" to listOf("numberRow", "searchEngineLaunchInjectDelayMs"),
         "addInjectAlternativeWindowInput" to listOf("numberRow", "searchEngineLaunchInjectAlternativeWindowMs"),
         "addKeyShortcutsInfo" to listOf("noteRow(KEY_SHORTCUTS_HELP)"),
-        "ACTION_CREATE_SHORTCUT" to listOf("launchShortcutPicker")
+        "ACTION_CREATE_SHORTCUT" to listOf("launchShortcutPicker"),
+        "exportLauncher" to listOf("backupLauncher"),
+        "importLauncher" to listOf("restoreLauncher")
+    )
+
+    /** Dialog-layer prefs calls superseded by the full backup, which still reads the old JSON exports. */
+    private val replacedDialogSymbols = mapOf(
+        "exportToJson" to "BackupManager",
+        "importFromJson" to "BackupManager"
     )
 
     private class Baseline(val rows: Map<String, String>, val dialogs: Map<String, String>, val actions: List<String>)
@@ -72,7 +80,7 @@ class SettingsPrefCoverageTest {
 
     @Test
     fun everyDialogSettingIsStillUsed() {
-        val missing = baseline.dialogs.keys.filterNot { references(allSettingsSource, it) }
+        val missing = baseline.dialogs.keys.filterNot { references(allSettingsSource, replacedDialogSymbols[it] ?: it) }
         assertTrue("Prefs used by settings dialogs but no longer referenced: $missing", missing.isEmpty())
     }
 

@@ -19,7 +19,7 @@ internal enum class SettingsScreen(val title: String, val summary: String) {
     SEARCH("Search", "Keyboard search, results, contacts, commands"),
     GESTURES("Gestures & actions", "Swipes, double tap, tap actions"),
     NOTIFICATIONS("Notifications", "Notification hub and applets"),
-    BACKUP("Backup & restore", "Export or import all settings"),
+    BACKUP("Backup & restore", "Back up or restore the whole launcher"),
     ABOUT("About & system", "Version, permissions, restart, reset");
 }
 
@@ -330,17 +330,13 @@ private fun SettingsActivity.buildNotifications() {
 }
 
 private fun SettingsActivity.buildBackup() {
-    group("Settings file", footer = "Importing first saves a copy of the current settings to app storage, then restarts the launcher.") {
-        actionRow("Export settings", "Save all settings to a JSON file") {
-            exportLauncher.launch("bb_launcher_settings_${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.json")
+    group("Launcher backup", footer = "One file with all settings, the dock and pages, shortcuts and their icons, favorites and usage. " +
+        "Restoring checks the whole file first and changes nothing if anything is wrong. Older settings exports can be restored too.") {
+        actionRow("Back up launcher", "Save everything to a backup file") {
+            backupLauncher.launch("710launcher-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.zip")
         }
-        actionRow("Import settings", "Replace all settings from a JSON file") {
-            AlertDialog.Builder(this, dialogTheme)
-                .setTitle("Import settings?")
-                .setMessage("Current settings will be backed up to app storage first, then replaced. Launcher will close after import.")
-                .setPositiveButton("Import") { _, _ -> importLauncher.launch(arrayOf("application/json", "*/*")) }
-                .setNegativeButton("Cancel", null)
-                .show()
+        actionRow("Restore from backup", "Replace everything from a backup file") {
+            restoreLauncher.launch(arrayOf("application/zip", "application/json", "application/octet-stream", "*/*"))
         }
     }
 }
