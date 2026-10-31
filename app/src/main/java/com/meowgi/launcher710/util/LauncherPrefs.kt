@@ -500,6 +500,10 @@ class LauncherPrefs(context: Context) {
     var searchWebSuggestions: Boolean
         get() = prefs.getBoolean("searchWebSuggestions", true)
         set(v) = prefs.edit().putBoolean("searchWebSuggestions", v).apply()
+    /** Rank search results by launch frecency within each match-quality tier. */
+    var searchUsageRanking: Boolean
+        get() = prefs.getBoolean("searchUsageRanking", true)
+        set(v) = prefs.edit().putBoolean("searchUsageRanking", v).apply()
 
     /** 0 = built-in, 1 = launch app, 2 = launch with query, 3 = launch shortcut, 4 = launch and inject key, 5 = disabled */
     var searchEngineMode: Int
