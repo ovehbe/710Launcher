@@ -6,6 +6,8 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.View
+import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -17,7 +19,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.ColorUtils
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
@@ -126,8 +130,12 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Theme.BBOS7 sets windowTranslucentStatus for the home screen, which lays this window out
+        // under the status bar; settings draws edge-to-edge and pads for the bars itself.
+        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_settings)
+        applySystemBarInsets(findViewById(R.id.settingsRoot), findViewById(R.id.settingsToolbar))
 
         prefs = LauncherPrefs(this)
         iconPackManager = IconPackManager(this)
@@ -142,6 +150,16 @@ class SettingsActivity : AppCompatActivity() {
         val restored = savedInstanceState?.getString(STATE_SCREEN)
             ?.let { name -> SettingsScreen.values().firstOrNull { it.name == name } }
         showScreen(restored ?: SettingsScreen.HOME)
+    }
+
+    private fun applySystemBarInsets(root: View, toolbar: View) {
+        val toolbarTop = toolbar.paddingTop
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left, 0, bars.right, bars.bottom)
+            toolbar.setPadding(toolbar.paddingLeft, toolbarTop + bars.top, toolbar.paddingRight, toolbar.paddingBottom)
+            WindowInsetsCompat.CONSUMED
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
