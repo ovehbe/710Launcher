@@ -43,6 +43,10 @@ android {
         }
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -77,4 +81,7 @@ dependencies {
     testImplementation("org.json:json:20231013")
     // Runs the Room migration SQL against real SQLite on the JVM.
     testImplementation("org.xerial:sqlite-jdbc:3.45.1.0")
+    // Drives real views (SearchOverlay, settings insets) on the JVM.
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.test:core:1.5.0")
 }
