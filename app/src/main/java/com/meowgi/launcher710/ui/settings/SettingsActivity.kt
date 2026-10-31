@@ -447,6 +447,7 @@ class SettingsActivity : AppCompatActivity() {
         addChoice("Swipe to switch pages", listOf("Bottom bar only", "Anywhere on screen"), prefs.swipeMode) {
             prefs.swipeMode = it
         }
+        addToggle("Swipe down for notifications", prefs.swipeDownNotifications) { prefs.swipeDownNotifications = it }
         val filteredOrder = prefs.getFilteredPageOrder()
         val pageNames = filteredOrder.map { when(it) { "frequent" -> "Frequent"; "favorites" -> "Favorites"; "all" -> "All"; else -> it.removePrefix("custom_") } }
         val defaultIdx = filteredOrder.indexOf(prefs.defaultTabPageId).coerceAtLeast(0)

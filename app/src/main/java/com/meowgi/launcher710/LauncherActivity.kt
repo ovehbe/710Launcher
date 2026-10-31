@@ -56,6 +56,8 @@ import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.NotificationShade
+import com.meowgi.launcher710.util.SwipeDownGesture
 import com.meowgi.launcher710.util.ShortcutHelper
 import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.*
@@ -782,7 +784,136 @@ class LauncherActivity : AppCompatActivity() {
         return y >= loc[1]
     }
 
+    private val swipeDown by lazy {
+        val vc = android.view.ViewConfiguration.get(this)
+        SwipeDownGesture(
+            touchSlop = vc.scaledTouchSlop.toFloat(),
+            triggerDistance = dp(64).toFloat(),
+            flingDistance = dp(24).toFloat(),
+            minFlingVelocity = maxOf(vc.scaledMinimumFlingVelocity * 4f, dp(600).toFloat()),
+            longPressTimeoutMs = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        )
+    }
+    /** The current touch stream may still become a swipe-down. */
+    private var swipeDownTracking = false
+    /** A swipe-down fired; the rest of the stream is swallowed and children already got CANCEL. */
+    private var swipeDownConsuming = false
+    private var swipeDownVelocity: android.view.VelocityTracker? = null
+    private val hitLoc = IntArray(2)
+
+    /** Returns true when the event belongs to a swipe-down and must not reach the views. */
+    private fun handleSwipeDown(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeDownConsuming = false
+                swipeDownTracking = prefs.swipeDownNotifications && swipeDownCanStartAt(ev.rawX.toInt(), ev.rawY.toInt())
+                swipeDownVelocity?.recycle()
+                swipeDownVelocity = null
+                if (swipeDownTracking) {
+                    swipeDown.down(ev.rawX, ev.rawY, ev.eventTime)
+                    swipeDownVelocity = android.view.VelocityTracker.obtain().apply { addMovement(ev) }
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (swipeDownConsuming) return true
+                swipeDownTracking = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (swipeDownConsuming) return true
+                if (swipeDownTracking) {
+                    swipeDownVelocity?.addMovement(ev)
+                    when (swipeDown.move(ev.rawX, ev.rawY, ev.eventTime)) {
+                        SwipeDownGesture.Result.TRIGGERED -> { fireSwipeDown(ev); return true }
+                        SwipeDownGesture.Result.REJECTED -> swipeDownTracking = false
+                        SwipeDownGesture.Result.UNDECIDED -> {}
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (swipeDownConsuming) {
+                    swipeDownConsuming = false
+                    endSwipeDownTracking()
+                    return true
+                }
+                if (swipeDownTracking) {
+                    val vt = swipeDownVelocity
+                    vt?.addMovement(ev)
+                    vt?.computeCurrentVelocity(1000)
+                    val result = swipeDown.up(ev.rawX, ev.rawY, ev.eventTime, vt?.yVelocity ?: 0f)
+                    endSwipeDownTracking()
+                    if (result == SwipeDownGesture.Result.TRIGGERED) {
+                        // A fling decided on UP: children get CANCEL instead, and the stream ends here.
+                        fireSwipeDown(ev)
+                        swipeDownConsuming = false
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                val consuming = swipeDownConsuming
+                swipeDownConsuming = false
+                endSwipeDownTracking()
+                if (consuming) return true
+            }
+        }
+        return false
+    }
+
+    private fun endSwipeDownTracking() {
+        swipeDownTracking = false
+        swipeDownVelocity?.recycle()
+        swipeDownVelocity = null
+    }
+
+    private fun fireSwipeDown(ev: MotionEvent) {
+        swipeDownTracking = false
+        swipeDownConsuming = true
+        bottomSwipeTracking = false
+        // Children saw the stream so far; cancel it so nothing clicks, long-presses or stays pressed.
+        val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
+        super.dispatchTouchEvent(cancel)
+        cancel.recycle()
+        expandNotificationShade()
+    }
+
+    /**
+     * A swipe-down may only start on the bare home screen: no overlay open, and no view under the
+     * finger that is scrolled away from its top (pulling down would scroll it back) or is a widget
+     * being resized.
+     */
+    private fun swipeDownCanStartAt(x: Int, y: Int): Boolean {
+        if (searchOverlay.visibility == View.VISIBLE ||
+            notificationHub.visibility == View.VISIBLE ||
+            soundProfileOverlay.visibility == View.VISIBLE
+        ) return false
+        return !blocksSwipeDown(window.decorView, x, y)
+    }
+
+    private fun blocksSwipeDown(view: View, x: Int, y: Int): Boolean {
+        if (view.visibility != View.VISIBLE) return false
+        view.getLocationOnScreen(hitLoc)
+        if (x < hitLoc[0] || y < hitLoc[1] || x >= hitLoc[0] + view.width || y >= hitLoc[1] + view.height) return false
+        if (view.canScrollVertically(-1)) return true
+        if (view is com.meowgi.launcher710.ui.widgets.ResizableWidgetFrame && view.isResizeMode) return true
+        if (view is ViewGroup) {
+            for (i in view.childCount - 1 downTo 0) {
+                if (blocksSwipeDown(view.getChildAt(i), x, y)) return true
+            }
+        }
+        return false
+    }
+
+    /** System shade first; then the accessibility service; then the launcher's own hub. */
+    private fun expandNotificationShade() {
+        if (NotificationShade.expand(this)) return
+        val a11y = KeyCaptureAccessibilityService.instance
+        if (a11y != null && a11y.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)) return
+        dismissOtherOverlays()
+        notificationHub.show(prefs.getNotificationAppWhitelist())
+    }
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (handleSwipeDown(ev)) return true
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
                 bottomSwipeTracking = (prefs.swipeMode == 1) || isInBottomBar(ev.rawY)
