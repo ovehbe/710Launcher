@@ -17,7 +17,11 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.backup.BackupCodec
+import com.meowgi.launcher710.backup.BackupException
+import com.meowgi.launcher710.backup.BackupManager
 import com.meowgi.launcher710.ui.notifications.NotifListenerService
 import com.meowgi.launcher710.ui.dialogs.AppPickerWithSearchDialog
 import com.meowgi.launcher710.ui.dialogs.IconPickerDialog
@@ -25,6 +29,9 @@ import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -62,15 +69,12 @@ class SettingsActivity : AppCompatActivity() {
     private var recordingKeyCallback: ((Int) -> Unit)? = null
     private var recordingDialog: AlertDialog? = null
 
-    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) {
-            try {
-                contentResolver.openOutputStream(uri)?.use { it.write(prefs.exportToJson().toByteArray(Charsets.UTF_8)) }
-                Toast.makeText(this, "Settings exported", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Export failed", Toast.LENGTH_SHORT).show()
-            }
-        }
+    private val backupLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) runBackup(uri)
+    }
+
+    private val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) readBackup(uri)
     }
 
     private val searchShortcutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -200,26 +204,6 @@ class SettingsActivity : AppCompatActivity() {
         prefs.searchEngineLaunchInjectIntentUri = intentUri
         prefs.searchEngineLaunchInjectName = name
         rebuildSettings()
-    }
-
-    private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                val json = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: return@registerForActivityResult
-                val backup = prefs.exportToJson()
-                val backupName = "launcher_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.json"
-                openFileOutput(backupName, MODE_PRIVATE).use { it.write(backup.toByteArray(Charsets.UTF_8)) }
-                if (prefs.importFromJson(json)) {
-                    Toast.makeText(this, "Settings imported. Launcher will restart.", Toast.LENGTH_LONG).show()
-                    setResult(RESULT_OK)
-                    finish()
-                } else {
-                    Toast.makeText(this, "Import failed (invalid file)", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Import failed", Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -553,16 +537,11 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         addSection("Backup & restore")
-        addButton("Export settings") {
-            exportLauncher.launch("bb_launcher_settings_${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.json")
+        addButton("Back up launcher") {
+            backupLauncher.launch("710launcher-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.zip")
         }
-        addButton("Import settings") {
-            AlertDialog.Builder(this, R.style.BBDialogTheme)
-                .setTitle("Import settings?")
-                .setMessage("Current settings will be backed up to app storage first, then replaced. Launcher will close after import.")
-                .setPositiveButton("Import") { _, _ -> importLauncher.launch(arrayOf("application/json", "*/*")) }
-                .setNegativeButton("Cancel", null)
-                .show()
+        addButton("Restore from backup") {
+            restoreLauncher.launch(arrayOf("application/zip", "application/json", "application/octet-stream", "*/*"))
         }
 
         addSection("About")
@@ -1718,6 +1697,101 @@ class SettingsActivity : AppCompatActivity() {
         row.setOnClickListener { onClick() }
         container.addView(row)
         addDivider()
+    }
+
+    // --- Backup & restore ---
+    private fun runBackup(uri: android.net.Uri) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { BackupManager(this@SettingsActivity).export(uri) } }
+            result.onSuccess { p ->
+                showBackupMessage("Backup saved", "Saved ${p.prefKeyCount} settings in ${p.prefs.size} files, " +
+                    "${p.rowCount} app records and ${p.assets.size} icon files.")
+            }.onFailure { e ->
+                showBackupMessage("Backup failed", backupError(e))
+            }
+        }
+    }
+
+    private fun readBackup(uri: android.net.Uri) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { BackupManager(this@SettingsActivity).read(uri) } }
+            result.onSuccess(::confirmRestore).onFailure { e ->
+                showBackupMessage("Can't restore this file", "${backupError(e)}\n\nNothing was changed.")
+            }
+        }
+    }
+
+    private fun confirmRestore(prepared: BackupManager.Prepared) {
+        val p = prepared.payload
+        val made = if (p.createdAtMillis > 0) {
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(p.createdAtMillis))
+        } else "unknown date"
+        val msg = buildString {
+            append("Backup from $made")
+            p.source.versionName?.let { append(" (710 Launcher $it)") }
+            append(".\n\nIt replaces ${p.prefKeyCount} settings in ${p.prefs.size} files")
+            if (p.tables.isNotEmpty()) append(", ${p.rowCount} app records")
+            if (p.assets.isNotEmpty()) append(" and ${p.assets.size} icon files")
+            append(". Anything not in the backup stays as it is.")
+            if (p.originalSchemaVersion < BackupCodec.CURRENT_SCHEMA_VERSION) {
+                append("\n\nThis is an older settings-only export; the dock and app records are kept.")
+            }
+            appendMissing(prepared.missingPackages)
+        }
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle("Restore backup?")
+            .setMessage(msg)
+            .setPositiveButton("Restore") { _, _ -> applyRestore(prepared) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun applyRestore(prepared: BackupManager.Prepared) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { BackupManager(this@SettingsActivity).restore(prepared) } }
+            result.onSuccess { r ->
+                val msg = buildString {
+                    append("Restored ${r.prefKeys} settings in ${r.prefFiles} files, ${r.rows} app records and ${r.assets} icon files.")
+                    if (r.skippedTables.isNotEmpty() || r.droppedColumns.isNotEmpty()) {
+                        append("\n\nIgnored data this version doesn't use: ")
+                        append((r.skippedTables + r.droppedColumns).joinToString())
+                        append(".")
+                    }
+                    appendMissing(r.missingPackages)
+                    append("\n\nThe launcher will reload.")
+                }
+                AlertDialog.Builder(this@SettingsActivity, R.style.BBDialogTheme)
+                    .setTitle("Restore complete")
+                    .setMessage(msg)
+                    .setCancelable(false)
+                    .setPositiveButton("OK") { _, _ ->
+                        setResult(RESULT_OK)
+                        finish()
+                    }
+                    .show()
+            }.onFailure { e ->
+                showBackupMessage("Restore failed", backupError(e))
+            }
+        }
+    }
+
+    private fun StringBuilder.appendMissing(packages: List<String>) {
+        if (packages.isEmpty()) return
+        append("\n\n${packages.size} app${if (packages.size == 1) " isn't" else "s aren't"} installed on this device; ")
+        append("their dock, page and shortcut entries are skipped and come back if you install them:\n")
+        append(packages.take(15).joinToString("\n") { "• $it" })
+        if (packages.size > 15) append("\n• … and ${packages.size - 15} more")
+    }
+
+    private fun backupError(e: Throwable): String =
+        if (e is BackupException) e.message ?: "Unknown error" else "Unexpected error: ${e.message ?: e.javaClass.simpleName}"
+
+    private fun showBackupMessage(title: String, message: String) {
+        AlertDialog.Builder(this, R.style.BBDialogTheme)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     // --- Info display ---

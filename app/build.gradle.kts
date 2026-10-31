@@ -73,4 +73,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json on the JVM; the android.jar stub throws.
+    testImplementation("org.json:json:20231013")
 }

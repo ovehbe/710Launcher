@@ -34,6 +34,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
+import com.meowgi.launcher710.backup.BackupManager
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
@@ -257,6 +258,8 @@ class LauncherActivity : AppCompatActivity() {
         savedInstanceState?.remove("android:support:fragments")
         savedInstanceState?.remove("android:fragments")
         super.onCreate(savedInstanceState)
+        // Before anything reads prefs or the DB: undo a restore the process died in the middle of.
+        BackupManager.recoverInterruptedRestore(this)
 
         prefs = LauncherPrefs(this)
         applySystemUI()
