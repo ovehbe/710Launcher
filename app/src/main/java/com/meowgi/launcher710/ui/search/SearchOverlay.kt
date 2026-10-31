@@ -23,6 +23,7 @@ import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
+import com.meowgi.launcher710.util.WebSuggestions
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
@@ -37,6 +38,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val extendedSearchBtn: TextView
+    private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
@@ -97,6 +99,12 @@ class SearchOverlay @JvmOverloads constructor(
     private var cachedContactIcon: Drawable? = null
     private var cachedCommandIcon: Drawable? = null
 
+    /** Read once per session so the keystroke path doesn't touch prefs. */
+    private var webSuggestionsEnabled = false
+    /** False in command and @-contact modes, where web suggestions make no sense. */
+    private var webSuggestionsAllowed = false
+    private val webSuggestions = WebSuggestions { query, suggestions -> showWebSuggestions(query, suggestions) }
+
     private val defaultContactIcon: Drawable by lazy {
         ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
     }
@@ -122,11 +130,14 @@ class SearchOverlay @JvmOverloads constructor(
         cachedContactIcon = null
         cachedCommandIcon = null
         ContactSearchHelper.invalidateCache()
+        webSuggestionsEnabled = prefs.searchWebSuggestions
+        clearWebSuggestions()
     }
 
     private fun publish(results: List<LaunchableItem>) {
         currentResults = results
         adapter.submitListDiffed(results)
+        updateWebSuggestions(results)
     }
 
     init {
@@ -180,6 +191,12 @@ class SearchOverlay @JvmOverloads constructor(
             setOnClickListener { performExtendedSearch() }
         }
         addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        suggestionsBox = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = GONE
+        }
+        addView(suggestionsBox, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         resultsRecycler = RecyclerView(context).apply {
             layoutManager = GridLayoutManager(context, 4)
@@ -273,6 +290,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun dismiss() {
         ContactSearchHelper.cancel()
+        clearWebSuggestions()
         visibility = GONE
         onDismiss?.invoke()
     }
@@ -373,15 +391,18 @@ class SearchOverlay @JvmOverloads constructor(
     private fun onSearch(query: String) {
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
+            webSuggestionsAllowed = false
             ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
         }
         val contactMode = contactModeProvider()
         if (contactMode == 2 && query.startsWith("@")) {
+            webSuggestionsAllowed = false
             handleAtContactSearch(query.removePrefix("@").trimStart())
             return
         }
+        webSuggestionsAllowed = true
         val layout = dialerLayoutProvider().coerceIn(0, 1)
         val dialDigits = convertToDialDigits(query, layout)
         val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
@@ -435,6 +456,56 @@ class SearchOverlay @JvmOverloads constructor(
             }
         }
         updateDialRow(dialDigits)
+    }
+
+    /**
+     * Runs on every publish, so it stays cheap: with results showing it only cancels; with none it
+     * (re)starts one debounced request, and a repeat for the same query is a no-op.
+     */
+    private fun updateWebSuggestions(results: List<LaunchableItem>) {
+        val query = lastQuery.trim()
+        if (!webSuggestionsEnabled || !webSuggestionsAllowed || results.isNotEmpty() || query.isEmpty()) {
+            clearWebSuggestions()
+            return
+        }
+        webSuggestions.request(query)
+    }
+
+    private fun showWebSuggestions(query: String, suggestions: List<String>) {
+        if (visibility != VISIBLE || query != lastQuery.trim() || currentResults.isNotEmpty() || !webSuggestionsAllowed) return
+        suggestionsBox.removeAllViews()
+        for (s in suggestions) suggestionsBox.addView(webSuggestionRow(s), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        suggestionsBox.visibility = if (suggestions.isEmpty()) GONE else VISIBLE
+    }
+
+    private fun clearWebSuggestions() {
+        webSuggestions.cancel()
+        if (suggestionsBox.childCount > 0) suggestionsBox.removeAllViews()
+        suggestionsBox.visibility = GONE
+    }
+
+    private fun webSuggestionRow(text: String): TextView = TextView(context).apply {
+        this.text = text
+        textSize = 15f
+        setTextColor(resources.getColor(R.color.bb_text_primary, null))
+        typeface = font
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(10), dp(8), dp(10))
+        compoundDrawablePadding = dp(12)
+        val icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_search)?.mutate()?.apply {
+            setTint(resources.getColor(R.color.bb_text_secondary, null))
+            setBounds(0, 0, dp(20), dp(20))
+        }
+        setCompoundDrawables(icon, null, null, null)
+        contentDescription = "Search Google for $text"
+        isFocusable = true
+        isClickable = true
+        val outValue = android.util.TypedValue()
+        context.theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
+        setBackgroundResource(outValue.resourceId)
+        setOnClickListener { openWebSearchWithQuery(text) }
     }
 
     private fun updateDialRow(dialDigits: String) {
