@@ -38,6 +38,7 @@
     <string name="uninstall">Uninstall</string>
 
     <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
     <string name="launcher_settings_label">710 Settings</string>
     <string name="refresh_cache_label">Refresh Cache</string>
     <string name="add_widget">Add Widget</string>

@@ -20,4 +20,8 @@
         <item name="android:backgroundDimAmount">0.6</item>
         <item name="android:fontFamily">@font/bbalphas</item>
     </style>
+
+    <style name="SettingsDialogTheme" parent="BBDialogTheme">
+        <item name="colorAccent">@color/bb_tab_active</item>
+    </style>
 </resources>
