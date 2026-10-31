@@ -15,7 +15,7 @@ android {
         applicationId = "com.meowgi.launcher710"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
+        versionCode = 20
         versionName = "1.6.0"
     }
 
