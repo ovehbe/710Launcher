@@ -177,7 +177,8 @@ class LauncherActivity : AppCompatActivity() {
         val iconBmp = data.getParcelableExtra<android.graphics.Bitmap>(Intent.EXTRA_SHORTCUT_ICON)
         if (iconBmp != null) {
             try {
-                val f = java.io.File(cacheDir, "shortcut_icon_${System.currentTimeMillis()}.png")
+                val dir = java.io.File(filesDir, com.meowgi.launcher710.backup.BackupManager.ICON_DIR).apply { mkdirs() }
+                val f = java.io.File(dir, "shortcut_icon_${System.currentTimeMillis()}.png")
                 java.io.FileOutputStream(f).use { iconBmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
                 iconPath = f.absolutePath
             } catch (_: Exception) { }
