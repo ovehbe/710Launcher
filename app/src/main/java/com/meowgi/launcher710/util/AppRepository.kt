@@ -66,6 +66,9 @@ class AppRepository private constructor(private val context: Context) {
     /** Serializes [loadApps] so overlapping triggers can't run two full re-index passes at once. */
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
 
+    /** Launch recording and favourite toggles read-modify-write the same row; one at a time. */
+    private val statsWriteMutex = kotlinx.coroutines.sync.Mutex()
+
     fun clearIconCache() {
         iconCache.evictAll()
         adHocPacks.clear()
@@ -80,6 +83,11 @@ class AppRepository private constructor(private val context: Context) {
         private set
     /** Cached for search/sort by frequency and last opened. */
     private var statsMap: Map<String, AppStats> = emptyMap()
+    /**
+     * [SearchRanker.rankKey] per component, built whenever stats load and patched on launch, so
+     * search ranks by frecency without touching the database or decaying anything per keystroke.
+     */
+    @Volatile private var usageKeys: Map<String, Double> = emptyMap()
     var onAppsChanged: (() -> Unit)? = null
 
     /** Lives as long as the process, like the repository itself. */
@@ -189,12 +197,28 @@ class AppRepository private constructor(private val context: Context) {
      */
     suspend fun refreshStats() = loadMutex.withLock {
         val stats = dao.getAll().associateBy { it.componentName }
-        statsMap = stats
+        setStats(stats)
         for (app in apps) {
             val stat = stats[app.componentName.flattenToString()]
             app.launchCount = stat?.launchCount ?: 0
             app.isFavorite = stat?.isFavorite ?: false
         }
+    }
+
+    private fun setStats(stats: Map<String, AppStats>) {
+        statsMap = stats
+        usageKeys = stats.mapValues { (_, s) -> SearchRanker.rankKey(s.frecency, s.frecencyAt) }
+    }
+
+    /** Frecency rank key for [componentKey]; higher ranks first. Main-thread cheap. */
+    fun usageKey(componentKey: String): Double = usageKeys[componentKey] ?: SearchRanker.NO_USAGE
+
+    val usageRankingEnabled: Boolean get() = prefs.searchUsageRanking
+
+    /** Zeroes launch counts, last-opened times and frecency; favourites are kept. */
+    suspend fun resetUsageData() {
+        statsWriteMutex.withLock { dao.resetUsage() }
+        refreshStats()
     }
 
     private suspend fun loadAppsLocked() {
@@ -203,7 +227,7 @@ class AppRepository private constructor(private val context: Context) {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolveInfos = pm.queryIntentActivities(intent, 0)
         val stats = dao.getAll().associateBy { it.componentName }
-        statsMap = stats
+        setStats(stats)
 
         apps = resolveInfos
             .filter { it.activityInfo.packageName != context.packageName }
@@ -334,7 +358,9 @@ class AppRepository private constructor(private val context: Context) {
 
     /**
      * Matches app names and package names, so "com.whatsapp" or "whatsapp" both find WhatsApp.
-     * Apps matched only by package name are ranked after the name matches.
+     * Ranked by [SearchRanker]: match quality first (exact, label prefix, word prefix, other name
+     * match, package only), then frecency within a tier unless the user turned it off, then label.
+     * Frecency comes from the in-memory [usageKeys], never the database.
      *
      * @param alsoMatchDialDigits If non-empty, apps whose label contains this digit string are also included (e.g. "710" so "zw0" finds "710 Launcher").
      */
@@ -349,55 +375,42 @@ class AppRepository private constructor(private val context: Context) {
         if (normalizedQuery.isEmpty() && digitsOnly.isNullOrEmpty()) return emptyList()
 
         val hidden = prefs.getHiddenApps()
-        val stats = statsMap
-        val nameMatches = mutableListOf<RankedApp>()
-        val packageOnlyMatches = mutableListOf<RankedApp>()
+        val keys = usageKeys
+        val ranked = mutableListOf<SearchRanker.Ranked<AppInfo>>()
         for (app in apps) {
-            val kind = SearchNormalizer.match(
+            if (app.componentKey in hidden) continue
+            val tier = SearchRanker.tier(
                 normalizedQuery, digitsOnly, app.normalizedLabel, app.normalizedWords, app.normalizedPackage
             )
-            if (kind == SearchNormalizer.NO_MATCH || app.componentKey in hidden) continue
-            val stat = stats[app.componentKey]
-            val ranked = RankedApp(app, stat?.launchCount ?: app.launchCount, stat?.lastLaunched ?: 0L)
-            if (kind == SearchNormalizer.NAME_MATCH) nameMatches += ranked else packageOnlyMatches += ranked
+            if (tier == SearchRanker.NO_MATCH) continue
+            ranked += SearchRanker.Ranked(app, tier, keys[app.componentKey] ?: SearchRanker.NO_USAGE, app.label.lowercase())
         }
-
-        nameMatches.sortWith(BY_FREQUENCY)
-        packageOnlyMatches.sortWith(BY_FREQUENCY)
-        val out = ArrayList<AppInfo>(nameMatches.size + packageOnlyMatches.size)
-        nameMatches.mapTo(out) { it.app }
-        packageOnlyMatches.mapTo(out) { it.app }
-        return out
+        return SearchRanker.sort(ranked, prefs.searchUsageRanking)
     }
 
-    /** Sort keys resolved once per match, not on every comparison as the sort runs. */
-    private class RankedApp(val app: AppInfo, val launchCount: Int, val lastLaunched: Long) {
-        val sortLabel: String = app.label.lowercase()
-    }
-
-    private val BY_FREQUENCY = compareByDescending<RankedApp> { it.launchCount }
-        .thenByDescending { it.lastLaunched }
-        .thenBy { it.sortLabel }
-
-    suspend fun recordLaunch(app: AppInfo) {
+    suspend fun recordLaunch(app: AppInfo): Unit = statsWriteMutex.withLock {
         val cn = app.componentName.flattenToString()
-        val existing = dao.get(cn)
-        if (existing != null) {
-            dao.incrementLaunch(cn, System.currentTimeMillis())
-        } else {
-            dao.upsert(AppStats(cn, 1, false, System.currentTimeMillis()))
-        }
-        app.launchCount++
+        val now = System.currentTimeMillis()
+        val existing = dao.get(cn) ?: AppStats(cn)
+        val frecency = SearchRanker.bump(existing.frecency, existing.frecencyAt, now)
+        dao.upsert(existing.copy(
+            launchCount = existing.launchCount + 1,
+            lastLaunched = now,
+            frecency = frecency,
+            frecencyAt = now
+        ))
+        usageKeys = usageKeys + (cn to SearchRanker.rankKey(frecency, now))
+        app.launchCount += 1
     }
 
-    suspend fun toggleFavorite(app: AppInfo) {
+    suspend fun toggleFavorite(app: AppInfo): Unit = statsWriteMutex.withLock {
         val cn = app.componentName.flattenToString()
         app.isFavorite = !app.isFavorite
         val existing = dao.get(cn)
         if (existing != null) {
             dao.setFavorite(cn, app.isFavorite)
         } else {
-            dao.upsert(AppStats(cn, 0, app.isFavorite, 0))
+            dao.upsert(AppStats(cn, isFavorite = app.isFavorite))
         }
     }
 

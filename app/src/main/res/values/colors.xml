@@ -32,5 +32,12 @@
 
     <color name="bb_notification_empty">#FFD0D0D0</color>
 
+    <color name="settings_background">#FF0E0E0F</color>
+    <color name="settings_toolbar">#FF151516</color>
+    <color name="settings_card">#FF1C1C1E</color>
+    <color name="settings_card_divider">#FF2A2A2D</color>
+    <color name="settings_summary">#FF9C9CA1</color>
+    <color name="settings_danger">#FFFF5A52</color>
+
     <color name="transparent">#00000000</color>
 </resources>

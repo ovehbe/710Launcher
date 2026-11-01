@@ -141,7 +141,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.App -> repository?.launchApp(item.app)
                     is LaunchableItem.Shortcut -> shortcutHelper?.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                     is LaunchableItem.IntentShortcut -> shortcutHelper?.launchIntentShortcut(item.info.intentUri)
-                    is LaunchableItem.LauncherSettings -> startActivity(Intent(requireContext(), SettingsActivity::class.java))
+                    is LaunchableItem.LauncherSettings -> startActivity(SettingsActivity.intent(requireContext()))
                     is LaunchableItem.RefreshCache -> { }
                     is LaunchableItem.Contact -> { }
                     is LaunchableItem.SearchCommand -> { }

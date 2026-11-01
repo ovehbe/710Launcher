@@ -16,13 +16,24 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.ai.AiAnswerSession
+import com.meowgi.launcher710.ai.AiConfigResult
+import com.meowgi.launcher710.ai.AiMarkdown
+import com.meowgi.launcher710.ai.AiSecrets
+import com.meowgi.launcher710.ai.AiSettings
+import com.meowgi.launcher710.ai.AiState
 import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
+import com.meowgi.launcher710.ui.settings.SettingsActivity
+import com.meowgi.launcher710.ui.settings.SettingsScreen
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.ContactSearchHelper
+import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
+import com.meowgi.launcher710.util.SearchRanker
+import com.meowgi.launcher710.util.WebSuggestions
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
@@ -37,7 +48,13 @@ class SearchOverlay @JvmOverloads constructor(
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val extendedSearchBtn: TextView
+    private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
+    private val aiPanel: ScrollView
+    private val aiProgress: ProgressBar
+    private val aiText: TextView
+    private val aiError: TextView
+    private val aiSettingsLink: TextView
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
@@ -97,6 +114,26 @@ class SearchOverlay @JvmOverloads constructor(
     private var cachedContactIcon: Drawable? = null
     private var cachedCommandIcon: Drawable? = null
 
+    /** Read once per session so the keystroke path doesn't touch prefs. */
+    private var webSuggestionsEnabled = false
+    /** False in command and @-contact modes, where web suggestions make no sense. */
+    private var webSuggestionsAllowed = false
+    internal val webSuggestions = WebSuggestions { query, suggestions -> showWebSuggestions(query, suggestions) }
+    internal val aiSession = AiAnswerSession { renderAi(it) }
+    /** Read on each AI trigger, so settings changes apply without reopening search. */
+    internal var aiConfigProvider: () -> AiConfigResult = { AiSettings.load(prefs, AiSecrets(context)) }
+    private val markdownStyle by lazy {
+        AiMarkdown.Style(
+            codeBackground = 0x33FFFFFF,
+            quoteColor = resources.getColor(R.color.bb_text_secondary, null),
+            indentPx = dp(14)
+        )
+    }
+    /** Number the current query dials (dial row, Enter), or null; set before results are published. */
+    private var queryDialNumber: String? = null
+    /** Normalized current query, for telling text matches from keypad-digit matches. */
+    private var queryNormalized = ""
+
     private val defaultContactIcon: Drawable by lazy {
         ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon) ?: android.graphics.drawable.ColorDrawable(Color.GRAY)
     }
@@ -115,6 +152,8 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun resetSession() {
         lastQuery = ""
+        queryDialNumber = null
+        queryNormalized = ""
         appliedQuery = null
         currentResults = emptyList()
         shownContacts = emptyList()
@@ -122,11 +161,18 @@ class SearchOverlay @JvmOverloads constructor(
         cachedContactIcon = null
         cachedCommandIcon = null
         ContactSearchHelper.invalidateCache()
+        webSuggestionsEnabled = prefs.searchWebSuggestions
+        aiSession.cancel()
+        clearWebSuggestions()
+        clearNavSelection()
+        if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
     private fun publish(results: List<LaunchableItem>) {
         currentResults = results
+        clearNavSelection()
         adapter.submitListDiffed(results)
+        updateWebSuggestions(results)
     }
 
     init {
@@ -153,19 +199,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         dialRow.addView(dialText)
         dialRow.addView(phoneIcon)
-        dialRow.setOnClickListener {
-            try {
-                // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
-                val telUri = "tel:" + currentDialDigits.replace("#", "%23")
-                val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-                dismiss()
-            } catch (_: Exception) {
-                Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
-            }
-        }
+        dialRow.setOnClickListener { dial(currentDialDigits) }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
@@ -181,6 +215,12 @@ class SearchOverlay @JvmOverloads constructor(
         }
         addView(extendedSearchBtn, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        suggestionsBox = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = GONE
+        }
+        addView(suggestionsBox, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
         resultsRecycler = RecyclerView(context).apply {
             layoutManager = GridLayoutManager(context, 4)
             // Its size comes from the weight, not the content, so result changes must not
@@ -195,52 +235,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         adapter = AppAdapter(
             context,
-            onClick = { item ->
-                val handler = onLaunchItem
-                if (handler != null) {
-                    handler(item)
-                    dismiss()
-                } else {
-                    when (item) {
-                        is LaunchableItem.App -> {
-                            repository?.launchApp(item.app)
-                            dismiss()
-                        }
-                        is LaunchableItem.Contact -> {
-                            item.phoneNumbers.firstOrNull()?.let { num ->
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-                                    dismiss()
-                                } catch (_: Exception) {
-                                    Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
-                                }
-                            } ?: dismiss()
-                        }
-                        is LaunchableItem.LauncherSettings -> {
-                            context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
-                            dismiss()
-                        }
-                        is LaunchableItem.RefreshCache -> {
-                            onRefreshCache?.invoke()
-                            dismiss()
-                        }
-                        is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
-                        is LaunchableItem.SearchCommand -> {
-                            when (item.actionType) {
-                                0 -> item.actionPackage?.let { pkg ->
-                                    context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                                }
-                                1 -> item.intentUri?.let { uri ->
-                                    try {
-                                        context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                    } catch (_: Exception) { }
-                                }
-                            }
-                            dismiss()
-                        }
-                    }
-                }
-            },
+            onClick = { item -> openResult(item) },
             onLongClick = { item, view -> onItemLongClick?.invoke(item, view) },
             iconResolver = { item -> iconResolver?.invoke(item) ?: item.icon }
         )
@@ -249,7 +244,292 @@ class SearchOverlay @JvmOverloads constructor(
         resultsRecycler.setOnClickListener { /* consume so root click doesn't dismiss */ }
         addView(resultsRecycler, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
+        aiProgress = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(prefs.accentColor)
+        }
+        aiText = TextView(context).apply {
+            textSize = 15f
+            setTextColor(resources.getColor(R.color.bb_text_primary, null))
+            typeface = font
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        aiError = TextView(context).apply {
+            textSize = 14f
+            setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+            typeface = font
+        }
+        aiSettingsLink = TextView(context).apply {
+            text = context.getString(R.string.ai_open_settings)
+            textSize = 14f
+            setTextColor(prefs.accentColor)
+            typeface = font
+            setPadding(0, dp(10), 0, dp(10))
+            isFocusable = true
+            setOnClickListener {
+                context.startActivity(SettingsActivity.intent(context, SettingsScreen.AI))
+                dismiss()
+            }
+        }
+        val aiContent = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(16))
+            addView(aiProgress, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(12) })
+            addView(aiText, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(aiError, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(aiSettingsLink, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        }
+        aiPanel = ScrollView(context).apply {
+            visibility = GONE
+            isFocusable = true
+            isFocusableInTouchMode = false
+            isFillViewport = true
+            setOnClickListener { /* consume so root click doesn't dismiss */ }
+            addView(aiContent, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        addView(aiPanel, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+
         setOnClickListener { dismiss() }
+
+        resultsRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (navPos != null) invalidate()
+            }
+        })
+        aiPanel.setOnScrollChangeListener { _, _, _, _, _ -> if (navPos != null) invalidate() }
+    }
+
+    private fun openResult(item: LaunchableItem) {
+        val handler = onLaunchItem
+        if (handler != null) {
+            handler(item)
+            dismiss()
+            return
+        }
+        when (item) {
+            is LaunchableItem.App -> {
+                repository?.launchApp(item.app)
+                dismiss()
+            }
+            is LaunchableItem.Contact -> {
+                item.phoneNumbers.firstOrNull()?.let { num ->
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                        dismiss()
+                    } catch (_: Exception) {
+                        Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+                    }
+                } ?: dismiss()
+            }
+            is LaunchableItem.LauncherSettings -> {
+                context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
+                dismiss()
+            }
+            is LaunchableItem.RefreshCache -> {
+                onRefreshCache?.invoke()
+                dismiss()
+            }
+            is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
+            is LaunchableItem.SearchCommand -> {
+                when (item.actionType) {
+                    0 -> item.actionPackage?.let { pkg ->
+                        context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    }
+                    1 -> item.intentUri?.let { uri ->
+                        try {
+                            context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) { }
+                    }
+                }
+                dismiss()
+            }
+        }
+    }
+
+    /** Something the trackpad highlight can rest on. */
+    sealed class NavTarget {
+        object Dial : NavTarget() { override fun toString() = "dial" }
+        data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
+        data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
+        object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
+    }
+
+    /**
+     * Trackpad highlight. Keyboard focus never leaves the search field (so typing always lands
+     * there); this is a virtual selection over the rows below it, drawn by [dispatchDraw].
+     */
+    private var navPos: NavPos? = null
+    private val navPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val navRect = android.graphics.Rect()
+    private val navRectF = android.graphics.RectF()
+
+    private fun navTargetRows(): List<List<NavTarget>> {
+        val rows = mutableListOf<List<NavTarget>>()
+        if (dialRow.visibility == VISIBLE) rows += listOf(NavTarget.Dial)
+        if (suggestionsBox.visibility == VISIBLE) {
+            for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
+        }
+        if (resultsRecycler.visibility == VISIBLE) {
+            val span = (resultsRecycler.layoutManager as? GridLayoutManager)?.spanCount ?: 1
+            currentResults.indices.chunked(span).forEach { chunk -> rows += chunk.map { NavTarget.Result(it) } }
+        }
+        if (aiPanel.visibility == VISIBLE && aiSettingsLink.visibility == VISIBLE) rows += listOf(NavTarget.AiSettings)
+        return rows
+    }
+
+    private fun navRows(rows: List<List<NavTarget>>) =
+        rows.mapIndexed { i, row -> NavRow(row.size, if (row.first() is NavTarget.Result) -1 else i) }
+
+    internal val navSelection: NavTarget?
+        get() = navPos?.let { p -> navTargetRows().getOrNull(p.row)?.getOrNull(p.col) }
+
+    val hasNavSelection: Boolean get() = navSelection != null
+
+    fun clearNavSelection() {
+        if (navPos == null) return
+        navPos = null
+        invalidate()
+    }
+
+    /**
+     * Moves the trackpad highlight. Up/down are always consumed while search is shown, so focus
+     * can't wander to the home screen behind it; left/right only while a row is highlighted,
+     * otherwise they move the field's cursor. In an AI answer, up/down past the rows scroll it.
+     */
+    fun navigate(dRow: Int, dCol: Int): Boolean {
+        if (visibility != VISIBLE) return false
+        val targets = navTargetRows()
+        val rows = navRows(targets)
+        val from = navPos?.takeIf { it.row in rows.indices && it.col < rows[it.row].size }
+        if (dRow == 0 && from == null) return false
+        if (aiPanel.visibility == VISIBLE && dRow != 0) {
+            val atEnd = if (dRow > 0) from?.row == rows.lastIndex || rows.isEmpty() else from == null
+            if (atEnd && aiPanel.canScrollVertically(dRow)) {
+                aiPanel.scrollBy(0, dRow * maxOf(aiPanel.height / 3, dp(48)))
+                return true
+            }
+        }
+        navPos = SearchNavigation.move(rows, from, dRow, dCol)
+        navPos?.let { revealNavTarget(targets[it.row][it.col]) }
+        invalidate()
+        return true
+    }
+
+    /** Activates the highlighted row as a tap would. False when nothing is highlighted. */
+    fun activateNavSelection(): Boolean {
+        val target = navSelection ?: return false
+        navPos = null
+        invalidate()
+        when (target) {
+            NavTarget.Dial -> dial(currentDialDigits)
+            is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
+            is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
+            NavTarget.AiSettings -> aiSettingsLink.performClick()
+        }
+        return true
+    }
+
+    private fun revealNavTarget(target: NavTarget) {
+        when (target) {
+            is NavTarget.Result -> {
+                resultsRecycler.scrollToPosition(target.position)
+                // The item may only be laid out on the next pass; redraw the highlight then.
+                resultsRecycler.post { invalidate() }
+            }
+            NavTarget.AiSettings -> {
+                val content = aiSettingsLink.parent as View
+                aiPanel.scrollTo(0, maxOf(0, aiSettingsLink.bottom + content.paddingBottom - aiPanel.height))
+            }
+            else -> {}
+        }
+    }
+
+    private fun navTargetView(target: NavTarget): View? = when (target) {
+        NavTarget.Dial -> dialRow
+        is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
+        is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
+        NavTarget.AiSettings -> aiSettingsLink
+    }
+
+    override fun dispatchDraw(canvas: android.graphics.Canvas) {
+        super.dispatchDraw(canvas)
+        val target = navSelection ?: return
+        val view = navTargetView(target)?.takeIf { it.isShown } ?: return
+        navRect.set(0, 0, view.width, view.height)
+        offsetDescendantRectToMyCoords(view, navRect)
+        val clipTo: View? = when (target) {
+            is NavTarget.Result -> resultsRecycler
+            NavTarget.AiSettings -> aiPanel
+            else -> null
+        }
+        canvas.save()
+        if (clipTo != null) canvas.clipRect(clipTo.left, clipTo.top, clipTo.right, clipTo.bottom)
+        navRectF.set(navRect)
+        navRectF.inset(dp(1).toFloat(), dp(1).toFloat())
+        val radius = dp(6).toFloat()
+        navPaint.color = navHighlightColor
+        canvas.drawRoundRect(navRectF, radius, radius, navPaint)
+        canvas.restore()
+    }
+
+    /**
+     * A soft neutral fill, lighter than whatever is under it. The highlight always sits on the
+     * overlay's own background, so contrast is judged against that: white on a dark (or mostly
+     * see-through) background, black on a light one.
+     */
+    internal val navHighlightColor: Int
+        get() {
+            val bg = (background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.BLACK
+            val lightBg = Color.alpha(bg) >= 0x80 && androidx.core.graphics.ColorUtils.calculateLuminance(bg) > 0.5
+            return if (lightBg) Color.argb(0x1A, 0, 0, 0) else Color.argb(0x1F, 255, 255, 255)
+        }
+
+    /**
+     * Answers the current query with the configured AI model, in place of the results. Typing,
+     * closing or reopening search cancels it. Returns false when there is no query to answer.
+     */
+    fun startAiAnswer(): Boolean {
+        val query = lastQuery.trim()
+        if (visibility != VISIBLE || query.isEmpty()) return false
+        clearWebSuggestions()
+        aiSession.start(query, aiConfigProvider())
+        return true
+    }
+
+    private fun renderAi(state: AiState) {
+        val active = state !is AiState.Idle
+        clearNavSelection()
+        aiPanel.visibility = if (active) VISIBLE else GONE
+        resultsRecycler.visibility = if (active) GONE else VISIBLE
+        if (!active) return
+        if (suggestionsBox.visibility == VISIBLE) clearWebSuggestions()
+        val loading = state is AiState.Loading || (state is AiState.Answer && state.text.isEmpty() && !state.done)
+        aiProgress.visibility = if (loading) VISIBLE else GONE
+        when (state) {
+            is AiState.Answer -> {
+                aiError.visibility = GONE
+                aiSettingsLink.visibility = GONE
+                if (state.done && state.text.isBlank()) {
+                    aiText.visibility = GONE
+                    aiError.visibility = VISIBLE
+                    aiError.text = context.getString(R.string.ai_empty_answer)
+                } else {
+                    aiText.visibility = if (state.text.isEmpty()) GONE else VISIBLE
+                    aiText.text = AiMarkdown.toSpanned(AiMarkdown.parse(state.text), markdownStyle)
+                }
+            }
+            is AiState.Failed -> {
+                aiText.visibility = GONE
+                aiError.visibility = VISIBLE
+                aiError.text = state.message
+                aiSettingsLink.visibility = VISIBLE
+            }
+            else -> {
+                aiText.visibility = GONE
+                aiError.visibility = GONE
+                aiSettingsLink.visibility = GONE
+                aiPanel.scrollTo(0, 0)
+            }
+        }
     }
 
     /** Set label for the extended search button, e.g. "Frequents", "All Apps", "Extended". */
@@ -273,6 +553,9 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun dismiss() {
         ContactSearchHelper.cancel()
+        aiSession.cancel()
+        clearWebSuggestions()
+        clearNavSelection()
         visibility = GONE
         onDismiss?.invoke()
     }
@@ -282,6 +565,7 @@ class SearchOverlay @JvmOverloads constructor(
         if (query == appliedQuery) return
         lastQuery = query
         appliedQuery = query
+        if (aiSession.isActive) aiSession.cancel()
         android.os.Trace.beginSection("SearchOverlay.applyQuery")
         try {
             onSearch(query)
@@ -290,11 +574,30 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
-    /** On Enter / Extended search: launch first result if any, otherwise search on web. In command mode, exact-typed command runs that command. */
+    private fun dial(number: String) {
+        try {
+            // Encode # as %23 so it is not interpreted as URI fragment (otherwise dialer only receives "*" for *#06#)
+            val telUri = "tel:" + number.replace("#", "%23")
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse(telUri)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            dismiss()
+        } catch (_: Exception) {
+            Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * On Enter / Extended search. In command mode, an exactly typed command runs. A dialable number
+     * dials, like tapping the dial row shown above the results. Otherwise the first result launches,
+     * or the query goes to web search.
+     */
     fun performExtendedSearch() {
         val trigger = commandTriggerProvider?.invoke()
-        if (!trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)) {
-            val commandPart = lastQuery.removePrefix(trigger).trim()
+        val commandMode = !trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)
+        if (commandMode) {
+            val commandPart = lastQuery.removePrefix(trigger!!).trim()
             val commands = commandsProvider?.invoke() ?: emptyList()
             val exact = commands.find { it.name.equals(commandPart, ignoreCase = true) }
             if (exact != null) {
@@ -312,6 +615,17 @@ class SearchOverlay @JvmOverloads constructor(
                 return
             }
         }
+        // Keypad letters ("wer") only dial when nothing matched; real digits always dial.
+        val number = when {
+            commandMode -> null
+            DialNumber.dialable(lastQuery) != null -> DialNumber.dialable(lastQuery)
+            currentResults.isEmpty() -> queryDialNumber
+            else -> null
+        }
+        if (number != null) {
+            dial(number)
+            return
+        }
         val first = currentResults.firstOrNull()
         if (first != null) {
             val handler = onLaunchItem
@@ -324,7 +638,7 @@ class SearchOverlay @JvmOverloads constructor(
                         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     } catch (_: Exception) { Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show() }
                 }
-                is LaunchableItem.LauncherSettings -> context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                is LaunchableItem.LauncherSettings -> context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
                 is LaunchableItem.RefreshCache -> onRefreshCache?.invoke()
                 is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                 is LaunchableItem.SearchCommand -> {
@@ -373,19 +687,26 @@ class SearchOverlay @JvmOverloads constructor(
     private fun onSearch(query: String) {
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
+            webSuggestionsAllowed = false
+            queryDialNumber = null
             ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
         }
         val contactMode = contactModeProvider()
         if (contactMode == 2 && query.startsWith("@")) {
+            webSuggestionsAllowed = false
+            queryDialNumber = null
             handleAtContactSearch(query.removePrefix("@").trimStart())
             return
         }
+        webSuggestionsAllowed = true
         val layout = dialerLayoutProvider().coerceIn(0, 1)
-        val dialDigits = convertToDialDigits(query, layout)
-        val dialDigitsForAppSearch = dialDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
+        val keypadDigits = convertToDialDigits(query, layout)
+        val dialDigitsForAppSearch = keypadDigits.filter { it in '0'..'9' }.takeIf { it.isNotEmpty() }
         val nq = SearchNormalizer.normalize(query)
+        queryDialNumber = DialNumber.dialable(query, layout)
+        queryNormalized = nq
 
         val filter = filterIndex
         if (filter != null) {
@@ -393,15 +714,17 @@ class SearchOverlay @JvmOverloads constructor(
             val filtered = if (nq.isEmpty() && dialDigitsForAppSearch == null) {
                 filter.map { it.item }
             } else {
-                val nameMatches = mutableListOf<LaunchableItem>()
-                val packageOnlyMatches = mutableListOf<LaunchableItem>()
+                val repo = repository
+                val ranked = mutableListOf<SearchRanker.Ranked<LaunchableItem>>()
                 for (entry in filter) {
-                    when (SearchNormalizer.match(nq, dialDigitsForAppSearch, entry.normalizedLabel, entry.words, entry.normalizedPackage)) {
-                        SearchNormalizer.NAME_MATCH -> nameMatches += entry.item
-                        SearchNormalizer.PACKAGE_MATCH -> packageOnlyMatches += entry.item
-                    }
+                    val tier = SearchRanker.tier(nq, dialDigitsForAppSearch, entry.normalizedLabel, entry.words, entry.normalizedPackage)
+                    if (tier == SearchRanker.NO_MATCH) continue
+                    val app = (entry.item as? LaunchableItem.App)?.app
+                    val usage = if (app != null && repo != null) repo.usageKey(app.componentKey) else SearchRanker.NO_USAGE
+                    // Empty sort label: ties keep the page's own order (the sort is stable).
+                    ranked += SearchRanker.Ranked(entry.item, tier, usage, "")
                 }
-                nameMatches + packageOnlyMatches
+                SearchRanker.sort(ranked, repo?.usageRankingEnabled ?: false)
             }
             publish(filtered)
         } else {
@@ -434,14 +757,85 @@ class SearchOverlay @JvmOverloads constructor(
                 publish(baseResults)
             }
         }
-        updateDialRow(dialDigits)
+        updateDialRow(queryDialNumber ?: "")
+    }
+
+    /**
+     * Runs on every publish, so it stays cheap: when suggestions don't apply it only cancels;
+     * otherwise it hands the query to [WebSuggestions], where a repeat of the same query is a no-op.
+     */
+    private fun updateWebSuggestions(results: List<LaunchableItem>) {
+        val query = lastQuery.trim()
+        if (aiSession.isActive || !WebSuggestions.shouldRequest(webSuggestionsEnabled, webSuggestionsAllowed, query,
+                dialable = queryDialNumber != null, hasTextMatch = results.any(::matchesText))
+        ) {
+            clearWebSuggestions()
+            return
+        }
+        webSuggestions.request(query)
+    }
+
+    private fun matchesText(item: LaunchableItem): Boolean {
+        val nq = queryNormalized
+        if (nq.isEmpty()) return false
+        val app = (item as? LaunchableItem.App)?.app
+        val match = if (app != null) {
+            SearchNormalizer.match(nq, null, app.normalizedLabel, app.normalizedWords, app.normalizedPackage)
+        } else {
+            val label = item.label.toString()
+            SearchNormalizer.match(nq, null, SearchNormalizer.normalize(label), SearchNormalizer.words(label), "")
+        }
+        return match != SearchNormalizer.NO_MATCH
+    }
+
+    private fun showWebSuggestions(query: String, suggestions: List<String>) {
+        if (visibility != VISIBLE || query != lastQuery.trim() || !webSuggestionsAllowed || queryDialNumber != null || aiSession.isActive ||
+            currentResults.any(::matchesText)
+        ) return
+        clearNavSelection()
+        suggestionsBox.removeAllViews()
+        for (s in suggestions) suggestionsBox.addView(webSuggestionRow(s), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        suggestionsBox.visibility = if (suggestions.isEmpty()) GONE else VISIBLE
+    }
+
+    private fun clearWebSuggestions() {
+        webSuggestions.cancel()
+        if (suggestionsBox.visibility == VISIBLE) clearNavSelection()
+        if (suggestionsBox.childCount > 0) suggestionsBox.removeAllViews()
+        suggestionsBox.visibility = GONE
+    }
+
+    private fun webSuggestionRow(text: String): TextView = TextView(context).apply {
+        this.text = text
+        textSize = 15f
+        setTextColor(resources.getColor(R.color.bb_text_primary, null))
+        typeface = font
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(10), dp(8), dp(10))
+        compoundDrawablePadding = dp(12)
+        val icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_search)?.mutate()?.apply {
+            setTint(resources.getColor(R.color.bb_text_secondary, null))
+            setBounds(0, 0, dp(20), dp(20))
+        }
+        setCompoundDrawables(icon, null, null, null)
+        contentDescription = "Search Google for $text"
+        isFocusable = true
+        isClickable = true
+        val outValue = android.util.TypedValue()
+        context.theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
+        setBackgroundResource(outValue.resourceId)
+        setOnClickListener { openWebSearchWithQuery(text) }
     }
 
     private fun updateDialRow(dialDigits: String) {
         if (dialDigits.isEmpty()) {
+            if (dialRow.visibility == VISIBLE) clearNavSelection()
             dialRow.visibility = GONE
             return
         }
+        if (dialRow.visibility != VISIBLE || dialDigits != currentDialDigits) clearNavSelection()
         dialRow.visibility = VISIBLE
         // setText always requests a layout, so skip it when the digits didn't change.
         if (dialDigits != currentDialDigits) {
@@ -524,6 +918,9 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     /**
+     * Keypad digits for matching app labels and contact numbers by digits (e.g. "zw0" finds
+     * "710 Launcher"). Never shown or dialled: the dial row and Enter use [DialNumber.dialable].
+     *
      * Converts search query to dial digits using the selected layout.
      * Layout 0 = Qwerty: w→1, e→2, r→3, s→4, d→5, f→6, z→7, x→8, c→9; a→*, q→#, o→+; digits and +*# pass through.
      * Layout 1 = T9: abc→2, def→3, ghi→4, jkl→5, mno→6, pqrs→7, tuv→8, wxyz→9; 0/space→0, . or 1→1; digits and +*# pass through.
@@ -553,22 +950,12 @@ class SearchOverlay @JvmOverloads constructor(
                     when (ch) {
                         '+', '*', '#' -> sb.append(ch)
                         in '0'..'9' -> sb.append(ch)
-                        in "aA" -> sb.append('*')
-                        in "qQ" -> sb.append('#')
-                        in "oO" -> sb.append('+')
-                        in "wWeErRsSdDfFzZxXcC" -> sb.append(qwertyLetterToDigit(ch.lowercaseChar()))
-                        else -> { /* skip unmapped letters */ }
+                        else -> DialNumber.keypadChar(ch, DialNumber.LAYOUT_QWERTY)?.let { sb.append(it) }
                     }
                 }
             }
         }
         return sb.toString()
-    }
-
-    private fun qwertyLetterToDigit(c: Char): Char = when (c) {
-        'w' -> '1'; 'e' -> '2'; 'r' -> '3'; 's' -> '4'; 'd' -> '5'
-        'f' -> '6'; 'z' -> '7'; 'x' -> '8'; 'c' -> '9'
-        else -> '0'
     }
 
     private fun t9LetterToDigit(c: Char): Char = when (c) {

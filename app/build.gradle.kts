@@ -15,8 +15,8 @@ android {
         applicationId = "com.meowgi.launcher710"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "1.5.5"
+        versionCode = 25
+        versionName = "1.6.0"
     }
 
     signingConfigs {
@@ -41,6 +41,10 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 
     compileOptions {
@@ -73,4 +77,13 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM tests; android.jar only ships stubs.
+    testImplementation("org.json:json:20231013")
+    // Runs the Room migration SQL against real SQLite on the JVM.
+    testImplementation("org.xerial:sqlite-jdbc:3.45.1.0")
+    // Drives real views (SearchOverlay, settings insets) on the JVM.
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.test:core:1.5.0")
+    // Android's HttpURLConnection is a fork of OkHttp 2.7.5; the latency bench runs through it.
+    testImplementation("com.squareup.okhttp:okhttp-urlconnection:2.7.5")
 }

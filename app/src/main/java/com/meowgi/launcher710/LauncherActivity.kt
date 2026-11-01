@@ -34,6 +34,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
+import com.meowgi.launcher710.ai.AiSearchTrigger
+import com.meowgi.launcher710.backup.BackupManager
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
@@ -56,6 +58,8 @@ import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.NotificationShade
+import com.meowgi.launcher710.util.SwipeDownGesture
 import com.meowgi.launcher710.util.ShortcutHelper
 import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.*
@@ -64,6 +68,9 @@ class LauncherActivity : AppCompatActivity() {
 
     companion object {
         const val OPEN_HOME_MENU_EXTRA = "open_home_menu"
+
+        /** Set by a restore in Settings, which runs in its own task and so can't return a result. */
+        @Volatile var reloadRequested = false
         private const val KEY_ROLE_HOME = 1
         private const val KEY_ROLE_BACK = 2
         private const val KEY_ROLE_RECENTS = 3
@@ -155,15 +162,6 @@ class LauncherActivity : AppCompatActivity() {
         pendingWidgetId = -1
     }
 
-    private val settingsLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            repository.invalidate()
-            recreate()
-        }
-    }
-
     private val createShortcutLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -213,6 +211,17 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
+    /** Broadcast form of [AiSearchTrigger.ACTION]: no activity start, so the launcher isn't even paused. */
+    private val aiSearchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            triggerAiSearch()
+        }
+    }
+
+    private val aiSearchHandler: () -> Unit = { triggerAiSearch() }
+    /** The Enter DOWN was taken as Alt+Enter, so its UP (Alt possibly released by then) is swallowed too. */
+    private var altEnterDown = false
+
     private fun updateSoundProfileIcon() {
         if (!::btnSoundProfile.isInitialized) return
         val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
@@ -257,6 +266,8 @@ class LauncherActivity : AppCompatActivity() {
         savedInstanceState?.remove("android:support:fragments")
         savedInstanceState?.remove("android:fragments")
         super.onCreate(savedInstanceState)
+        // Before anything reads prefs or the DB: undo a restore the process died in the middle of.
+        BackupManager.recoverInterruptedRestore(this)
 
         prefs = LauncherPrefs(this)
         applySystemUI()
@@ -386,7 +397,7 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> repository.launchApp(item.app)
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
-                is LaunchableItem.LauncherSettings -> startActivity(Intent(this, SettingsActivity::class.java))
+                is LaunchableItem.LauncherSettings -> startActivity(SettingsActivity.intent(this))
                 is LaunchableItem.RefreshCache -> {
                     android.widget.Toast.makeText(this, "Indexing…", android.widget.Toast.LENGTH_SHORT).show()
                     lifecycleScope.launch {
@@ -466,6 +477,12 @@ class LauncherActivity : AppCompatActivity() {
             IntentFilter("android.media.RINGER_MODE_CHANGED"),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, aiSearchReceiver,
+            IntentFilter(AiSearchTrigger.ACTION),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
+        AiSearchTrigger.register(aiSearchHandler)
 
         // The pager must be attached before the activity's state-restore pass, so it goes up now
         // with whatever the repository has — empty only on a cold start; after a config change the
@@ -782,7 +799,136 @@ class LauncherActivity : AppCompatActivity() {
         return y >= loc[1]
     }
 
+    private val swipeDown by lazy {
+        val vc = android.view.ViewConfiguration.get(this)
+        SwipeDownGesture(
+            touchSlop = vc.scaledTouchSlop.toFloat(),
+            triggerDistance = dp(64).toFloat(),
+            flingDistance = dp(24).toFloat(),
+            minFlingVelocity = maxOf(vc.scaledMinimumFlingVelocity * 4f, dp(600).toFloat()),
+            longPressTimeoutMs = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        )
+    }
+    /** The current touch stream may still become a swipe-down. */
+    private var swipeDownTracking = false
+    /** A swipe-down fired; the rest of the stream is swallowed and children already got CANCEL. */
+    private var swipeDownConsuming = false
+    private var swipeDownVelocity: android.view.VelocityTracker? = null
+    private val hitLoc = IntArray(2)
+
+    /** Returns true when the event belongs to a swipe-down and must not reach the views. */
+    private fun handleSwipeDown(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeDownConsuming = false
+                swipeDownTracking = prefs.swipeDownNotifications && swipeDownCanStartAt(ev.rawX.toInt(), ev.rawY.toInt())
+                swipeDownVelocity?.recycle()
+                swipeDownVelocity = null
+                if (swipeDownTracking) {
+                    swipeDown.down(ev.rawX, ev.rawY, ev.eventTime)
+                    swipeDownVelocity = android.view.VelocityTracker.obtain().apply { addMovement(ev) }
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (swipeDownConsuming) return true
+                swipeDownTracking = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (swipeDownConsuming) return true
+                if (swipeDownTracking) {
+                    swipeDownVelocity?.addMovement(ev)
+                    when (swipeDown.move(ev.rawX, ev.rawY, ev.eventTime)) {
+                        SwipeDownGesture.Result.TRIGGERED -> { fireSwipeDown(ev); return true }
+                        SwipeDownGesture.Result.REJECTED -> swipeDownTracking = false
+                        SwipeDownGesture.Result.UNDECIDED -> {}
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (swipeDownConsuming) {
+                    swipeDownConsuming = false
+                    endSwipeDownTracking()
+                    return true
+                }
+                if (swipeDownTracking) {
+                    val vt = swipeDownVelocity
+                    vt?.addMovement(ev)
+                    vt?.computeCurrentVelocity(1000)
+                    val result = swipeDown.up(ev.rawX, ev.rawY, ev.eventTime, vt?.yVelocity ?: 0f)
+                    endSwipeDownTracking()
+                    if (result == SwipeDownGesture.Result.TRIGGERED) {
+                        // A fling decided on UP: children get CANCEL instead, and the stream ends here.
+                        fireSwipeDown(ev)
+                        swipeDownConsuming = false
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                val consuming = swipeDownConsuming
+                swipeDownConsuming = false
+                endSwipeDownTracking()
+                if (consuming) return true
+            }
+        }
+        return false
+    }
+
+    private fun endSwipeDownTracking() {
+        swipeDownTracking = false
+        swipeDownVelocity?.recycle()
+        swipeDownVelocity = null
+    }
+
+    private fun fireSwipeDown(ev: MotionEvent) {
+        swipeDownTracking = false
+        swipeDownConsuming = true
+        bottomSwipeTracking = false
+        // Children saw the stream so far; cancel it so nothing clicks, long-presses or stays pressed.
+        val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
+        super.dispatchTouchEvent(cancel)
+        cancel.recycle()
+        expandNotificationShade()
+    }
+
+    /**
+     * A swipe-down may only start on the bare home screen: no overlay open, and no view under the
+     * finger that is scrolled away from its top (pulling down would scroll it back) or is a widget
+     * being resized.
+     */
+    private fun swipeDownCanStartAt(x: Int, y: Int): Boolean {
+        if (searchOverlay.visibility == View.VISIBLE ||
+            notificationHub.visibility == View.VISIBLE ||
+            soundProfileOverlay.visibility == View.VISIBLE
+        ) return false
+        return !blocksSwipeDown(window.decorView, x, y)
+    }
+
+    private fun blocksSwipeDown(view: View, x: Int, y: Int): Boolean {
+        if (view.visibility != View.VISIBLE) return false
+        view.getLocationOnScreen(hitLoc)
+        if (x < hitLoc[0] || y < hitLoc[1] || x >= hitLoc[0] + view.width || y >= hitLoc[1] + view.height) return false
+        if (view.canScrollVertically(-1)) return true
+        if (view is com.meowgi.launcher710.ui.widgets.ResizableWidgetFrame && view.isResizeMode) return true
+        if (view is ViewGroup) {
+            for (i in view.childCount - 1 downTo 0) {
+                if (blocksSwipeDown(view.getChildAt(i), x, y)) return true
+            }
+        }
+        return false
+    }
+
+    /** System shade first; then the accessibility service; then the launcher's own hub. */
+    private fun expandNotificationShade() {
+        if (NotificationShade.expand(this)) return
+        val a11y = KeyCaptureAccessibilityService.instance
+        if (a11y != null && a11y.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)) return
+        dismissOtherOverlays()
+        notificationHub.show(prefs.getNotificationAppWhitelist())
+    }
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (handleSwipeDown(ev)) return true
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
                 bottomSwipeTracking = (prefs.swipeMode == 1) || isInBottomBar(ev.rawY)
@@ -992,7 +1138,42 @@ class LauncherActivity : AppCompatActivity() {
                 true
             } else false
         }
+        searchInputInBar.setOnKeyListener { _, keyCode, event -> onSearchEnterKey(keyCode, event) }
         searchInputInBar.visibility = View.GONE
+    }
+
+    /**
+     * Alt+Enter asks AI about the query; plain Enter is left to the EditText (Google fallback).
+     * Alt counts when held (event meta state, including a system Alt lock) or when the field's
+     * key listener has it sticky or locked (tap / double-tap Alt). The whole key press is
+     * consumed, so it never reaches the editor action or inserts a newline.
+     */
+    private fun onSearchEnterKey(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_ENTER && keyCode != KeyEvent.KEYCODE_NUMPAD_ENTER) return false
+        if (event.action == KeyEvent.ACTION_UP && altEnterDown) {
+            altEnterDown = false
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (event.repeatCount > 0) return altEnterDown
+        val text = searchInputInBar.text
+        if (!prefs.aiAltEnter || searchOverlay.visibility != View.VISIBLE || !isAltActive(event, text)) return false
+        altEnterDown = true
+        // A one-shot (sticky) Alt is spent by this key, as it would be by a typed character; a lock stays.
+        android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
+        triggerAiSearch()
+        return true
+    }
+
+    private fun isAltActive(event: KeyEvent, text: CharSequence) = AiSearchTrigger.altActive(
+        event.metaState,
+        android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
+    )
+
+    internal fun triggerAiSearch() {
+        if (!searchOverlay.startAiAnswer()) {
+            android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun handleTypeToSearchFromText(text: CharSequence) {
@@ -1135,7 +1316,10 @@ class LauncherActivity : AppCompatActivity() {
             soundProfileOverlay.show()
         }
         applyClickHighlight(findViewById(R.id.btnSearch))
-        findViewById<View>(R.id.btnSearch).setOnClickListener { showSearchPageAware() }
+        findViewById<View>(R.id.btnSearch).apply {
+            setOnClickListener { showSearchPageAware() }
+            setOnLongClickListener { triggerAiSearch(); true }
+        }
 
         val contentArea = findViewById<View>(R.id.contentArea)
         contentArea.setOnLongClickListener {
@@ -1211,7 +1395,7 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title == getString(R.string.settings_title) -> {
-                    settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
+                    startActivity(SettingsActivity.intent(this))
                     true
                 }
                 else -> false
@@ -2107,7 +2291,74 @@ class LauncherActivity : AppCompatActivity() {
             }
         }
 
+        if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
+    }
+
+    /** Keys whose ACTION_DOWN search navigation consumed; their ACTION_UP is consumed too. */
+    private val searchNavKeys = mutableSetOf<Int>()
+
+    private val trackballNav by lazy {
+        com.meowgi.launcher710.ui.search.TrackballNavigator(
+            onStep = { dRow, dCol -> if (searchOverlay.navigate(dRow, dCol)) focusSearchField() },
+            onClick = { searchOverlay.activateNavSelection() }
+        )
+    }
+
+    /**
+     * Trackpad navigation of search results. Focus stays on the search field, which the home
+     * pager sits below in focus order: plain focus search would leave the overlay for the pager
+     * behind it, where typed keys are dropped. DPAD moves a highlight drawn by the overlay
+     * instead; DPAD center (or Enter, unless Alt asks AI) opens the highlighted row. Typing while
+     * a row is highlighted clears the highlight and goes to the field.
+     */
+    private fun handleSearchKey(event: KeyEvent): Boolean {
+        if (!::searchOverlay.isInitialized) return false
+        val code = event.keyCode
+        if (event.action == KeyEvent.ACTION_UP) return searchNavKeys.remove(code)
+        if (event.action != KeyEvent.ACTION_DOWN || searchOverlay.visibility != View.VISIBLE) return false
+        val handled = when (code) {
+            KeyEvent.KEYCODE_DPAD_UP -> searchOverlay.navigate(-1, 0)
+            KeyEvent.KEYCODE_DPAD_DOWN -> searchOverlay.navigate(1, 0)
+            KeyEvent.KEYCODE_DPAD_LEFT -> searchOverlay.navigate(0, -1)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> searchOverlay.navigate(0, 1)
+            KeyEvent.KEYCODE_DPAD_CENTER -> searchOverlay.activateNavSelection()
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                searchOverlay.hasNavSelection && !isAltActive(event, searchInputInBar.text) &&
+                    searchOverlay.activateNavSelection()
+            else -> {
+                if (isSearchTypingKey(event)) {
+                    searchOverlay.clearNavSelection()
+                    focusSearchField()
+                }
+                false
+            }
+        }
+        if (handled) {
+            searchNavKeys += code
+            if (searchOverlay.visibility == View.VISIBLE) focusSearchField()
+        }
+        return handled
+    }
+
+    private fun isSearchTypingKey(event: KeyEvent) = when (event.keyCode) {
+        KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.KEYCODE_SPACE -> true
+        else -> !KeyEvent.isModifierKey(event.keyCode) && getTypingChar(event) != null
+    }
+
+    private fun focusSearchField() {
+        if (!searchInputInBar.hasFocus()) searchInputInBar.requestFocus()
+    }
+
+    override fun dispatchTrackballEvent(ev: MotionEvent?): Boolean {
+        if (ev == null || !::searchOverlay.isInitialized) return super.dispatchTrackballEvent(ev)
+        // Consumed whole while search is shown, so the system doesn't also turn it into DPAD keys.
+        if (searchOverlay.visibility == View.VISIBLE || trackballNav.pressed) {
+            trackballNav.onEvent(ev)
+            return true
+        }
+        trackballNav.reset()
+        return super.dispatchTrackballEvent(ev)
     }
 
     private fun isDescendantOf(view: View, root: View): Boolean {
@@ -2264,6 +2515,12 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (reloadRequested) {
+            reloadRequested = false
+            repository.invalidate()
+            recreate()
+            return
+        }
         window.decorView.post { clearHighlightTraces() }
         updateSoundProfileIcon()
         refreshWallpaper()
@@ -2337,5 +2594,7 @@ class LauncherActivity : AppCompatActivity() {
         pagerAdapter = null
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(aiSearchReceiver) } catch (_: Exception) {}
+        AiSearchTrigger.unregister(aiSearchHandler)
     }
 }

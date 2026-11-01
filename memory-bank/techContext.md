@@ -30,5 +30,5 @@
 - **Main Activity:** `app/src/main/java/com/meowgi/launcher710/LauncherActivity.kt`
 - **Preferences:** `util/LauncherPrefs.kt` (single SharedPreferences file; export/import JSON)
 - **App data:** `util/AppRepository.kt`; Room DB `model/AppDatabase.kt` (AppStats)
-- **Settings UI:** `ui/settings/SettingsActivity.kt`
+- **Settings UI:** `ui/settings/` — `SettingsActivity` (host), `SettingsScreens.kt` (categories), `SettingsRows.kt` (row widgets), `Settings*Dialogs.kt`
 - **Main layout:** `res/layout/activity_launcher.xml`
