@@ -63,4 +63,5 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
-- Accessibility service cost (unreleased): the service declares only `typeViewFocused` (the sole event the key-inject path reads) with a 100 ms `notificationTimeout`, instead of `typeAllMask`. `FLAG_REQUEST_FILTER_KEY_EVENTS` is set only while `KeyCaptureReceiver.setRecording(true, ...)` is active, so system key events are no longer routed through this process the rest of the time.
+- Accessibility service cost (unreleased): the service declares only `typeViewFocused` (the sole event the key-inject path reads), instead of `typeAllMask`. `FLAG_REQUEST_FILTER_KEY_EVENTS` is set only while `KeyCaptureReceiver.setRecording(true, ...)` is active, so system key events are no longer routed through this process the rest of the time.
+- Key recording teardown (unreleased): \`SettingsActivity.onStop\` dismisses the record-key dialog, because a dialog dismissed by activity teardown never fires its dismiss listener and would leave key filtering on.

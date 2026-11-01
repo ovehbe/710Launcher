@@ -225,6 +225,13 @@ class SettingsActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onStop() {
+        super.onStop()
+        // A dialog dismissed by activity teardown never fires its dismiss listener, which would
+        // leave key filtering on and swallow Home/Back system-wide.
+        recordingDialog?.dismiss()
+    }
+
     private fun finishRecording(keyCode: Int) {
         recordingKeyCallback?.invoke(keyCode)
         recordingKeyCallback = null
