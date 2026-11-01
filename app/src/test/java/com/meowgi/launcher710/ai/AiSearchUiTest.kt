@@ -6,6 +6,10 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.text.method.MetaKeyKeyListener
+import android.text.method.QwertyKeyListener
+import android.text.method.TextKeyListener
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -162,10 +166,11 @@ class AiSearchUiTest {
 
     // ------------------------------------------------------------------ launcher triggers
 
-    private fun launcherWithQuery(aiEnabled: Boolean): Pair<LauncherActivity, SearchOverlay> {
+    private fun launcherWithQuery(aiEnabled: Boolean, altEnter: Boolean = true): Pair<LauncherActivity, SearchOverlay> {
         LauncherPrefs(context).apply {
             searchWebSuggestions = false
             this.aiEnabled = aiEnabled
+            aiAltEnter = altEnter
         }
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         val looper = shadowOf(Looper.getMainLooper())
@@ -177,40 +182,103 @@ class AiSearchUiTest {
         }
         val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
         assertEquals(View.VISIBLE, o.visibility)
+        assertEquals("hj", searchField(activity).text.toString())
         o.aiConfigProvider = { AiConfigResult.Unavailable("AI answers are off.") }
         return activity to o
     }
 
-    @Test
-    fun longPressEnterTriggersAi_shortEnterStillSearchesTheWeb() {
-        val (activity, o) = launcherWithQuery(aiEnabled = true)
-        val looper = shadowOf(Looper.getMainLooper())
+    private fun searchField(activity: LauncherActivity) = activity.findViewById<EditText>(R.id.searchInputInBar)
 
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-        looper.idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 50L))
-        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 1))
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-        looper.idle()
+    private val altMeta = KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+
+    private fun key(activity: LauncherActivity, code: Int, downMeta: Int = 0, upMeta: Int = downMeta) {
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, code, 0, downMeta))
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_UP, code, 0, upMeta))
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun altEnterAsksAi_withoutWebSearchOrNewline() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true)
+        key(activity, KeyEvent.KEYCODE_ENTER, altMeta)
         assertEquals(AiState.Failed("hj", "AI answers are off."), o.aiSession.state)
-        assertNull("a long press doesn't also search the web", shadowOf(activity).nextStartedActivity)
+        assertNull("Alt+Enter must not also run the Google fallback", shadowOf(activity).nextStartedActivity)
+        assertEquals("hj", searchField(activity).text.toString())
         assertEquals(View.VISIBLE, o.visibility)
 
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-        looper.idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 100L))
-        assertNotNull("short Enter runs the normal web search", shadowOf(activity).nextStartedActivity)
+        key(activity, KeyEvent.KEYCODE_NUMPAD_ENTER, altMeta)
+        assertTrue(o.aiSession.isActive)
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun releasingAltBeforeEnterStillSwallowsTheKeyUp() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true)
+        key(activity, KeyEvent.KEYCODE_ENTER, downMeta = altMeta, upMeta = 0)
+        assertTrue(o.aiSession.isActive)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertEquals("hj", searchField(activity).text.toString())
+    }
+
+    @Test
+    fun plainEnterStillRunsTheWebSearch() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true)
+        key(activity, KeyEvent.KEYCODE_ENTER)
+        assertFalse(o.aiSession.isActive)
+        assertNotNull("plain Enter runs the normal web search", shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun altTrackedByTheFieldCounts_andIsSpentByEnter() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true)
+        // The field's key listener tracks Alt on the text itself. On the device's alphabetic
+        // keyboard a tapped Alt stays there as sticky (state 1) or locked (2) after release;
+        // Robolectric's virtual keyboard drops it on release, so leave it in the pressed state
+        // (also 1) and send Enter without Alt in the event's own meta state.
+        val field = searchField(activity)
+        QwertyKeyListener.getInstance(false, TextKeyListener.Capitalize.NONE)
+            .onKeyDown(field, field.text, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ALT_LEFT, 0, altMeta))
+        assertEquals(1, MetaKeyKeyListener.getMetaState(field.text, MetaKeyKeyListener.META_ALT_ON))
+
+        key(activity, KeyEvent.KEYCODE_ENTER)
+        assertEquals(AiState.Failed("hj", "AI answers are off."), o.aiSession.state)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertEquals("hj", field.text.toString())
+
+        QwertyKeyListener.getInstance(false, TextKeyListener.Capitalize.NONE)
+            .onKeyUp(field, field.text, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ALT_LEFT, 0, 0))
+        assertEquals(0, MetaKeyKeyListener.getMetaState(field.text, MetaKeyKeyListener.META_ALT_ON))
+        key(activity, KeyEvent.KEYCODE_ENTER)
+        assertNotNull("with Alt gone, Enter is plain again", shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun withTheSettingOffAltEnterDoesNotAskAi() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true, altEnter = false)
+        key(activity, KeyEvent.KEYCODE_ENTER, altMeta)
         assertFalse(o.aiSession.isActive)
     }
 
     @Test
-    fun withAiOffEnterIsUntouched() {
-        val (activity, o) = launcherWithQuery(aiEnabled = false)
+    fun longPressEnterNoLongerTriggersAi() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true)
         val looper = shadowOf(Looper.getMainLooper())
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
         looper.idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 100L))
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 1))
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         looper.idle()
         assertFalse(o.aiSession.isActive)
+    }
+
+    @Test
+    fun altDetection() {
+        assertTrue(AiSearchTrigger.altActive(KeyEvent.META_ALT_ON or KeyEvent.META_ALT_RIGHT_ON, 0))
+        assertTrue("system Alt lock", AiSearchTrigger.altActive(MetaKeyKeyListener.META_ALT_LOCKED, 0))
+        assertTrue("sticky in the field", AiSearchTrigger.altActive(0, 1))
+        assertTrue("locked in the field", AiSearchTrigger.altActive(0, 2))
+        assertFalse(AiSearchTrigger.altActive(KeyEvent.META_SHIFT_ON, 0))
+        assertFalse(AiSearchTrigger.altActive(0, 0))
     }
 
     @Test

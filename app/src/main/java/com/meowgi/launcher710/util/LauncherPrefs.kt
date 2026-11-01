@@ -518,6 +518,9 @@ class LauncherPrefs(context: Context) {
     var aiSystemPrompt: String
         get() = prefs.getString("aiSystemPrompt", null) ?: ""
         set(v) = prefs.edit().putString("aiSystemPrompt", v).apply()
+    var aiAltEnter: Boolean
+        get() = prefs.getBoolean("aiAltEnter", true)
+        set(v) = prefs.edit().putBoolean("aiAltEnter", v).apply()
     /** Models from the last successful "Fetch models", offered in the model picker. */
     var aiFetchedModels: List<String>
         get() = prefs.getString("aiFetchedModels", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()

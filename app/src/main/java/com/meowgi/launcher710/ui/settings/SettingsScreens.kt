@@ -269,9 +269,10 @@ private fun SettingsActivity.buildSearch() {
 }
 
 private fun SettingsActivity.buildAi() {
-    group(null, footer = "Long-press Enter in search, or fire ${AiSearchTrigger.ACTION} (e.g. from Key Mapper), " +
-        "to answer the current query. Short Enter still searches the web.") {
+    group(null, footer = "Ask from search with Alt+Enter, or fire ${AiSearchTrigger.ACTION} (e.g. from Key Mapper) " +
+        "to answer the current query. Plain Enter still searches the web.") {
         toggleRow("AI answers in search", prefs.aiEnabled) { prefs.aiEnabled = it }
+        toggleRow("Alt+Enter asks AI", prefs.aiAltEnter, "On the search field; Alt held, tapped or locked") { prefs.aiAltEnter = it }
     }
     group("Connection", footer = "Any OpenAI-compatible API. The key is encrypted on this device and never included in backups.") {
         actionRow("Base URL", prefs.aiBaseUrl) { showAiBaseUrlDialog() }

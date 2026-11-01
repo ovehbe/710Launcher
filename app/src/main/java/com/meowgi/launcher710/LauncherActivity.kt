@@ -219,7 +219,8 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private val aiSearchHandler: () -> Unit = { triggerAiSearch() }
-    private var enterLongPressRunnable: Runnable? = null
+    /** The Enter DOWN was taken as Alt+Enter, so its UP (Alt possibly released by then) is swallowed too. */
+    private var altEnterDown = false
 
     private fun updateSoundProfileIcon() {
         if (!::btnSoundProfile.isInitialized) return
@@ -1142,31 +1143,32 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     /**
-     * Long-press Enter asks AI about the query; a short press still runs the normal (Google)
-     * search, on key up as the EditText's own Enter handling does. Only taken over while AI
-     * answers are on and the overlay is open; otherwise the EditText handles Enter as before.
+     * Alt+Enter asks AI about the query; plain Enter is left to the EditText (Google fallback).
+     * Alt counts when held (event meta state, including a system Alt lock) or when the field's
+     * key listener has it sticky or locked (tap / double-tap Alt). The whole key press is
+     * consumed, so it never reaches the editor action or inserts a newline.
      */
     private fun onSearchEnterKey(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode != KeyEvent.KEYCODE_ENTER && keyCode != KeyEvent.KEYCODE_NUMPAD_ENTER) return false
-        if (!prefs.aiEnabled || searchOverlay.visibility != View.VISIBLE) return false
-        when (event.action) {
-            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) {
-                enterLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
-                val longPress = Runnable {
-                    enterLongPressRunnable = null
-                    triggerAiSearch()
-                }
-                enterLongPressRunnable = longPress
-                keyHandler.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
-            }
-            KeyEvent.ACTION_UP -> enterLongPressRunnable?.let {
-                keyHandler.removeCallbacks(it)
-                enterLongPressRunnable = null
-                searchOverlay.performExtendedSearch()
-            }
+        if (event.action == KeyEvent.ACTION_UP && altEnterDown) {
+            altEnterDown = false
+            return true
         }
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (event.repeatCount > 0) return altEnterDown
+        val text = searchInputInBar.text
+        if (!prefs.aiAltEnter || searchOverlay.visibility != View.VISIBLE || !isAltActive(event, text)) return false
+        altEnterDown = true
+        // A one-shot (sticky) Alt is spent by this key, as it would be by a typed character; a lock stays.
+        android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
+        triggerAiSearch()
         return true
     }
+
+    private fun isAltActive(event: KeyEvent, text: CharSequence) = AiSearchTrigger.altActive(
+        event.metaState,
+        android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
+    )
 
     internal fun triggerAiSearch() {
         if (!searchOverlay.startAiAnswer()) {

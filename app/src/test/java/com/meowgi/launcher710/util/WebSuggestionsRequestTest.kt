@@ -97,7 +97,7 @@ class WebSuggestionsRequestTest {
         request("x")
         awaitResult("x")
         now += WebSuggestions.CACHE_TTL_MS + 1
-        assertTrue(request("weather").isEmpty())
+        request("weather").let { assertTrue("expired: $it fetched=$fetched results=$results", it.isEmpty()) }
         awaitResult("weather", count = 2)
         assertEquals(2, fetched.count { it == "weather" })
     }
@@ -110,7 +110,7 @@ class WebSuggestionsRequestTest {
             awaitResult("q$i")
         }
         now += 1000
-        assertTrue("eldest entry evicted", request("q0").isEmpty())
+        request("q0").let { assertTrue("eldest entry evicted: $it fetched=$fetched", it.isEmpty()) }
         awaitResult("q0", count = 2)
         now += 1000
         assertEquals(1, request("q${WebSuggestions.CACHE_SIZE}").size)
