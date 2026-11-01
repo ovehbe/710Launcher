@@ -32,6 +32,12 @@ class NotificationBadgeCounterTest {
     }
 
     @Test
+    fun summaryNumberSurvivesWhenChildrenReportNone() {
+        val r = NotificationBadgeCounter.count(listOf(e("mail", "g", summary = true, number = 12), e("mail", "g"), e("mail", "g"), e("mail", "g")))
+        assertEquals(12, r["mail"])
+    }
+
+    @Test
     fun reportedNumberWinsWhenLarger() {
         assertEquals(5, NotificationBadgeCounter.count(listOf(e("mail", number = 5)))["mail"])
     }

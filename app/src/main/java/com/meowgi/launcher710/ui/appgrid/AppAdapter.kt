@@ -19,7 +19,7 @@ class AppAdapter(
     private val iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null,
     private val labelResolver: ((LaunchableItem) -> CharSequence)? = null,
     val isSparseMode: Boolean = false,
-    /** Notification badge number for an item; 0 hides the badge. Grid view only. */
+    /** Notification badge number for an item; 0 hides the badge. */
     private val badgeResolver: ((LaunchableItem) -> Int)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
@@ -52,6 +52,7 @@ class AppAdapter(
         val icon: ImageView = view.findViewById(R.id.appIcon)
         val nameBar: LinearLayout = view.findViewById(R.id.nameBar)
         val label: TextView = view.findViewById(R.id.appLabel)
+        val badge: TextView = view.findViewById(R.id.appBadge)
     }
 
     /** Transparent placeholder for an unoccupied grid cell. Cannot be dragged or tapped. */
@@ -169,15 +170,16 @@ class AppAdapter(
         if (badgeResolver != null && itemCount > 0) notifyItemRangeChanged(0, itemCount, PAYLOAD_BADGE)
     }
 
-    private fun bindBadge(holder: GridVH, item: LaunchableItem) {
+    private fun bindBadge(badge: TextView, item: LaunchableItem) {
         val n = badgeResolver?.invoke(item) ?: 0
-        holder.badge.visibility = if (n > 0) View.VISIBLE else View.GONE
-        if (n > 0) holder.badge.text = if (n > 99) "99+" else n.toString()
+        badge.visibility = if (n > 0) View.VISIBLE else View.GONE
+        if (n > 0) badge.text = if (n > 99) "99+" else n.toString()
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
-        if (payloads.contains(PAYLOAD_BADGE) && holder is GridVH) {
-            sparseItems[position]?.let { bindBadge(holder, it) }
+        if (payloads.contains(PAYLOAD_BADGE) && (holder is GridVH || holder is ListVH)) {
+            val badge = if (holder is GridVH) holder.badge else (holder as ListVH).badge
+            sparseItems[position]?.let { bindBadge(badge, it) }
             return
         }
         super.onBindViewHolder(holder, position, payloads)
@@ -196,7 +198,7 @@ class AppAdapter(
                     height = iconSizePx
                 } ?: android.view.ViewGroup.LayoutParams(iconSizePx, iconSizePx)
                 holder.label.text = label
-                bindBadge(holder, item)
+                bindBadge(holder.badge, item)
                 holder.itemView.isClickable = true
                 holder.itemView.defaultFocusHighlightEnabled = false
                 holder.itemView.foreground = prefs.getClickHighlightRipple(context)
@@ -211,6 +213,7 @@ class AppAdapter(
             is ListVH -> {
                 holder.icon.setImageDrawable(icon)
                 holder.label.text = label
+                bindBadge(holder.badge, item)
                 val iconBarColor = if (prefs.listViewUseAccent) prefs.accentColor else prefs.listViewCustomColor
                 holder.accentSquare.setBackgroundColor(Color.argb(prefs.listViewIconBarAlpha, Color.red(iconBarColor), Color.green(iconBarColor), Color.blue(iconBarColor)))
                 val nameBarColor = Color.argb(prefs.listViewNameBarAlpha, 0, 0, 0)

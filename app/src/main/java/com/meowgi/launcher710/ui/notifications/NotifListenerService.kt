@@ -36,6 +36,7 @@ class NotifListenerService : NotificationListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        badgeCounts = emptyMap()
         mainHandler.removeCallbacks(dispatchChange)
     }
 
@@ -53,11 +54,20 @@ class NotifListenerService : NotificationListenerService() {
         notifyChange()
     }
 
+    override fun onListenerDisconnected() {
+        badgeCounts = emptyMap()
+    }
+
     fun updateBadges() {
-        badgeCounts = NotificationBadgeCounter.count(getNotifications().map { sbn ->
+        // A failed read (listener not connected yet, binder died) keeps the previous counts
+        // instead of wiping every badge; onListenerConnected resyncs.
+        val active = try { activeNotifications } catch (_: Exception) { null } ?: return
+        badgeCounts = NotificationBadgeCounter.count(active.map { sbn ->
             NotificationBadgeCounter.Entry(
                 packageName = sbn.packageName,
-                groupKey = sbn.notification.group,
+                // Not notification.group: the system's automatic summaries group their children
+                // through an override key that only sbn.groupKey reflects.
+                groupKey = sbn.groupKey,
                 isGroupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
                 isOngoing = sbn.isOngoing,
                 number = sbn.notification.number
