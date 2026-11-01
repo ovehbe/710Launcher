@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.os.Looper
 import android.os.SystemClock
 import android.view.InputDevice
@@ -283,26 +284,57 @@ class SearchTrackpadNavTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun theHighlightIsDrawnOverTheHighlightedRow() {
+    fun theHighlightIsASoftNeutralFillVisibleOnDarkAndLightWallpapers() {
         launch()
         type(KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_5)
-        press(KeyEvent.KEYCODE_DPAD_DOWN)
-        assertEquals("dial", selection())
-
         val dialRow = overlay.getChildAt(0)
         assertTrue(dialRow.width > 0 && dialRow.height > 0)
-        val accent = LauncherPrefs(context).accentColor or 0xFF000000.toInt()
-        fun edgePixel(): Int {
-            val bmp = Bitmap.createBitmap(overlay.width, overlay.height, Bitmap.Config.ARGB_8888)
-            overlay.draw(Canvas(bmp))
-            val dp = context.resources.displayMetrics.density
-            return bmp.getPixel(dialRow.left + dialRow.width / 2, dialRow.top + (1.5f * dp).toInt()) or 0xFF000000.toInt()
-        }
-        assertEquals(accent, edgePixel())
+        val dp = context.resources.displayMetrics.density
+        // Empty space at the row's right end, clear of the text and the phone icon.
+        val x = dialRow.right - (3 * dp).toInt()
+        val y = dialRow.top + dialRow.height / 2
 
-        press(KeyEvent.KEYCODE_DPAD_UP)
-        assertNull(selection())
-        assertTrue("no highlight once back in the field", edgePixel() != accent)
+        fun pixel(wallpaper: Int): Int {
+            val bmp = Bitmap.createBitmap(overlay.width, overlay.height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            canvas.drawColor(wallpaper)
+            overlay.draw(canvas)
+            return bmp.getPixel(x, y)
+        }
+
+        /** Each channel moves the same way by about [alpha] of the distance to [toward]. */
+        fun assertNeutralBlend(base: Int, lit: Int, toward: Int, alpha: Int) {
+            for (shift in intArrayOf(16, 8, 0)) {
+                val b = (base shr shift) and 0xFF
+                val l = (lit shr shift) and 0xFF
+                val expected = b + (toward - b) * alpha / 255
+                assertTrue("channel $shift: base $b, highlighted $l, expected ~$expected", kotlin.math.abs(l - expected) <= 3)
+            }
+        }
+
+        for (wallpaper in intArrayOf(Color.BLACK, Color.WHITE, 0xFF3366CC.toInt())) {
+            val base = pixel(wallpaper)
+            press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertEquals("dial", selection())
+            val lit = pixel(wallpaper)
+            assertTrue("visible on wallpaper ${Integer.toHexString(wallpaper)}", lit != base)
+            assertNeutralBlend(base, lit, toward = 255, alpha = 0x1F)
+            press(KeyEvent.KEYCODE_DPAD_UP)
+            assertNull(selection())
+            assertEquals("gone once back in the field", base, pixel(wallpaper))
+        }
+
+        // A light custom overlay background gets a dark fill instead.
+        LauncherPrefs(context).apply {
+            searchOverlayUseDefaultBackground = false
+            searchOverlayCustomBackgroundColor = Color.WHITE
+        }
+        overlay.applyOpacity(230)
+        val base = pixel(Color.WHITE)
+        press(KeyEvent.KEYCODE_DPAD_DOWN)
+        val lit = pixel(Color.WHITE)
+        assertTrue(lit != base)
+        assertNeutralBlend(base, lit, toward = 0, alpha = 0x1A)
     }
 
     @Test

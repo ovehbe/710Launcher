@@ -466,16 +466,22 @@ class SearchOverlay @JvmOverloads constructor(
         navRectF.set(navRect)
         navRectF.inset(dp(1).toFloat(), dp(1).toFloat())
         val radius = dp(6).toFloat()
-        val accent = prefs.accentColor
-        navPaint.style = android.graphics.Paint.Style.FILL
-        navPaint.color = Color.argb(0x40, Color.red(accent), Color.green(accent), Color.blue(accent))
-        canvas.drawRoundRect(navRectF, radius, radius, navPaint)
-        navPaint.style = android.graphics.Paint.Style.STROKE
-        navPaint.strokeWidth = dp(2).toFloat()
-        navPaint.color = accent
+        navPaint.color = navHighlightColor
         canvas.drawRoundRect(navRectF, radius, radius, navPaint)
         canvas.restore()
     }
+
+    /**
+     * A soft neutral fill, lighter than whatever is under it. The highlight always sits on the
+     * overlay's own background, so contrast is judged against that: white on a dark (or mostly
+     * see-through) background, black on a light one.
+     */
+    internal val navHighlightColor: Int
+        get() {
+            val bg = (background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.BLACK
+            val lightBg = Color.alpha(bg) >= 0x80 && androidx.core.graphics.ColorUtils.calculateLuminance(bg) > 0.5
+            return if (lightBg) Color.argb(0x1A, 0, 0, 0) else Color.argb(0x1F, 255, 255, 255)
+        }
 
     /**
      * Answers the current query with the configured AI model, in place of the results. Typing,
