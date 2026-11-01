@@ -38,9 +38,15 @@ class WebSuggestionsRequestTest {
 
     /** Requests on the main thread and returns what was shown synchronously, before any fetch. */
     private fun request(q: String): List<Pair<String, List<String>>> {
-        val before = results.size
-        onMain { request(q) }
-        return results.drop(before)
+        var shown: List<Pair<String, List<String>>> = emptyList()
+        // Snapshot inside the main-thread task: once it returns, the fetch it scheduled can
+        // deliver at any moment, and that is not "shown synchronously".
+        onMain {
+            val before = results.size
+            request(q)
+            shown = results.drop(before)
+        }
+        return shown
     }
 
     private fun awaitResult(q: String, count: Int = 1) {
