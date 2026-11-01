@@ -233,6 +233,8 @@ private fun SettingsActivity.buildSearch() {
         toggleRow("Google suggestions when nothing matches", prefs.searchWebSuggestions) { prefs.searchWebSuggestions = it }
         toggleRow("Rank results by usage", prefs.searchUsageRanking) { prefs.searchUsageRanking = it }
         toggleRow("Inline calculator", prefs.searchCalculatorEnabled, "Evaluate arithmetic expressions") { prefs.searchCalculatorEnabled = it }
+        toggleRow("Currency converter", prefs.searchCurrencyEnabled, "Convert currencies in search") { prefs.searchCurrencyEnabled = it }
+        actionRow("Display currencies", getCurrencyListLabel()) { showCurrencyListManager() }
         actionRow("Reset usage data", "Launch counts and last-opened times; favorites are kept", showChevron = false) { confirmResetUsageData() }
         choiceRow(getString(R.string.search_contacts), listOf("Enabled", "Disabled", "Enable only with @"), prefs.searchContactsMode.coerceIn(0, 2)) {
             prefs.searchContactsMode = it
