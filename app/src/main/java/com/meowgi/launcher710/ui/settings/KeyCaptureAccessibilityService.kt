@@ -22,8 +22,19 @@ class KeyCaptureAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         setInstance(this)
+        setKeyFiltering(KeyCaptureReceiver.recordingMode)
+    }
+
+    /**
+     * Key filtering routes every system key event through this process, so it is only
+     * enabled while a shortcut is being recorded.
+     */
+    fun setKeyFiltering(enabled: Boolean) {
         val info = serviceInfo ?: return
-        info.flags = info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        val flag = AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        val flags = if (enabled) info.flags or flag else info.flags and flag.inv()
+        if (flags == info.flags) return
+        info.flags = flags
         serviceInfo = info
     }
 
@@ -112,6 +123,7 @@ class KeyCaptureAccessibilityService : AccessibilityService() {
         fun setRecording(recording: Boolean, onKey: ((Int) -> Unit)?) {
             recordingMode = recording
             listener = onKey
+            instance?.setKeyFiltering(recording)
         }
 
         fun notifyKey(keyCode: Int) {
