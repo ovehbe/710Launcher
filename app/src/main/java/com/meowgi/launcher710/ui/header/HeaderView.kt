@@ -28,7 +28,7 @@ class HeaderView @JvmOverloads constructor(
     private val ticker = object : Runnable {
         override fun run() {
             updateTime()
-            handler.postDelayed(this, 1000)
+            handler.postDelayed(this, msToNextMinute(System.currentTimeMillis()))
         }
     }
 
@@ -57,14 +57,16 @@ class HeaderView @JvmOverloads constructor(
         addView(clockText, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        ticker.run()
+    // Ticks only while the window is visible, so nothing runs once another app is on top.
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        handler.removeCallbacks(ticker)
+        if (isVisible) ticker.run()
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        handler.removeCallbacks(ticker)
+    companion object {
+        /** Delay until the next wall-clock minute boundary (the clock only shows HH:mm). */
+        fun msToNextMinute(nowMs: Long): Long = 60_000L - nowMs % 60_000L
     }
 
     private fun updateTime() {

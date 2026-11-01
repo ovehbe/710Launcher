@@ -63,3 +63,4 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
+- Clock and status ticks (unreleased): `HeaderView` and `BBStatusBar` start and stop their work in `onVisibilityAggregated` instead of attach/detach, so the battery receiver and clock callbacks stop when the launcher is stopped. The header clock wakes once per minute, aligned on the minute boundary (`HeaderView.msToNextMinute`), instead of every second.
