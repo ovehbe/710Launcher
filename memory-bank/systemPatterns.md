@@ -18,6 +18,12 @@
 - Contacts: `ContactSearchHelper.searchAsync` runs on a single background worker, latest request only (generation counter). The phone table is indexed once per session (`invalidateCache`). Still-matching contacts carry over between keystrokes so they don't blink.
 - Results go through `AppAdapter.submitListDiffed` (synchronous DiffUtil, no stable ids because contact keys aren't unique). The results RecyclerView has `setHasFixedSize(true)` and no item animator.
 
+## AI answers (`ai/`)
+- `AiProtocol` (SSE parser, request/response JSON, error mapping) and `AiMarkdown.parse` are pure Kotlin and unit-tested. `AiClient` does blocking HttpURLConnection calls. `AiAnswerSession` runs one answer at a time on the main thread: a generation counter drops anything from a cancelled or replaced request, and tokens are coalesced into one posted update.
+- `SearchOverlay` owns the session. `applyQuery` (on a changed query), `resetSession` and `dismiss` cancel it. Web suggestions are blocked while it is active. Test seams: `aiConfigProvider` and `aiSession.streamer`.
+- Never log the API key or put it in `LauncherPrefs`. It lives only in `AiSecrets` (the `ai_secrets` prefs file). Failure messages pass through `AiProtocol.redact`, and `AiConfig.toString` masks it. Any new backup path must skip `BackupEngine.EXCLUDED_PREF_FILES`.
+- To open Settings on a given screen, use `SettingsActivity.intent(context, SettingsScreen.X)`. It adds CLEAR_TOP|SINGLE_TOP and an extra, and is handled in `onCreate`/`onNewIntent`.
+
 ## Stability invariants (do not regress)
 - **Attach the pager synchronously.** `setupPager()` must run inside `onCreate`, never behind an `await` on `loadApps()`. ViewPager2 replays restored state into the adapter at attach time; deferring it caused the `Fragment no longer exists for key f#N` crashes.
 - **No state restore on the home screen.** `appPager.isSaveEnabled = false` and fragment state is stripped from `savedInstanceState`. Don't reintroduce either.
