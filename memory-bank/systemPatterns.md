@@ -24,6 +24,7 @@
 - `LauncherActivity.handleSearchKey` (from `dispatchKeyEvent`) routes DPAD keys to `navigate`/`activateNavSelection`. The UP of every consumed DOWN is consumed too (`searchNavKeys`).
 - **Every Enter-like submit goes through `submitSearch`** (Alt+Enter asks AI, otherwise the highlighted row opens, otherwise the query runs). Never add a submit path that skips it. An IME sees hardware keys before the activity and may deliver Enter as `performEditorAction` (editor-action listener only) or as a committed newline (InputFilter), so `Activity.dispatchKeyEvent` is not the only entry. Tests must cover the field and IME paths too (`SearchEnterPathsTest`). Typing keys clear the selection and refocus the field.
 - Trackball: `dispatchTrackballEvent` consumes everything while search is shown, so the system doesn't also synthesize DPAD keys. `TrackballNavigator` steps once per 1.0 of accumulated motion (the MotionEvent trackball unit is one DPAD press).
+- Opening search must start fresh: `resetSession()` resets the results grid and AI panel scroll and clears the highlight. The overlay view persists between sessions, so new per-session view state belongs there too.
 - Any change to what is shown (`publish`, suggestions shown or cleared, dial row change, `renderAi`, session reset, `dismiss`) must call `clearNavSelection()`.
 - Robolectric's `Activity.dispatchKeyEvent` skips ViewRootImpl focus navigation, so tests read focus with `decorView.findFocus()` (`currentFocus` is null) and use `focusSearch` to model where focus would go.
 

@@ -165,6 +165,9 @@ class SearchOverlay @JvmOverloads constructor(
         aiSession.cancel()
         clearWebSuggestions()
         clearNavSelection()
+        // The overlay is only hidden between sessions, so its lists keep their scroll position.
+        resultsRecycler.scrollToPosition(0)
+        aiPanel.scrollTo(0, 0)
         if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
