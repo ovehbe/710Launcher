@@ -87,6 +87,11 @@ class BBStatusBar @JvmOverloads constructor(
 
     private var started = false
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        refresh() // later returns to the foreground are refreshed by LauncherActivity.onResume
+    }
+
     // Receiver and clock run only while the window is visible, so nothing runs in the background.
     override fun onVisibilityAggregated(isVisible: Boolean) {
         super.onVisibilityAggregated(isVisible)
@@ -99,7 +104,6 @@ class BBStatusBar @JvmOverloads constructor(
                 ContextCompat.RECEIVER_NOT_EXPORTED
             )
             handler.post(clockRunnable)
-            refresh()
         } else {
             handler.removeCallbacks(clockRunnable)
             try { context.unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
