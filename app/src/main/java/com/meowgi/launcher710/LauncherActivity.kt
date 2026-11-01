@@ -220,7 +220,6 @@ class LauncherActivity : AppCompatActivity() {
 
     private val aiSearchHandler: () -> Unit = { triggerAiSearch() }
     /** The Enter DOWN was taken as Alt+Enter, so its UP (Alt possibly released by then) is swallowed too. */
-    private var altEnterDown = false
 
     private fun updateSoundProfileIcon() {
         if (!::btnSoundProfile.isInitialized) return
@@ -1132,41 +1131,73 @@ class LauncherActivity : AppCompatActivity() {
                 }
             }
         })
-        searchInputInBar.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                searchOverlay.performExtendedSearch()
-                true
-            } else false
+        searchInputInBar.setOnEditorActionListener { _, actionId, event -> onSearchEditorAction(actionId, event) }
+        searchInputInBar.setOnKeyListener { _, keyCode, event -> onSearchFieldKey(keyCode, event) }
+        // Some IMEs deliver Enter as a committed newline, which a single-line field still accepts.
+        searchInputInBar.filters = searchInputInBar.filters + android.text.InputFilter { source, start, end, _, _, _ ->
+            val chunk = source.subSequence(start, end)
+            if (chunk.none { it == '\n' }) return@InputFilter null
+            searchInputInBar.post { submitSearch(0, runQuery = true) }
+            chunk.filter { it != '\n' }
         }
-        searchInputInBar.setOnKeyListener { _, keyCode, event -> onSearchEnterKey(keyCode, event) }
         searchInputInBar.visibility = View.GONE
     }
 
     /**
-     * Alt+Enter asks AI about the query; plain Enter is left to the EditText (Google fallback).
+     * The one decision for every Enter-like submit from search, whichever path it arrives on:
+     * a key through the activity, a key delivered straight to the field, or an IME editor action
+     * (an IME sees hardware keys first and may turn Enter into `performEditorAction`, which only
+     * reaches the editor-action listener). Alt+Enter asks AI; otherwise a highlighted row opens;
+     * otherwise [runQuery] runs the query as before (Google fallback / first result).
+     *
      * Alt counts when held (event meta state, including a system Alt lock) or when the field's
-     * key listener has it sticky or locked (tap / double-tap Alt). The whole key press is
-     * consumed, so it never reaches the editor action or inserts a newline.
+     * key listener has it sticky or locked (tap / double-tap Alt); a sticky Alt is spent here.
      */
-    private fun onSearchEnterKey(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_ENTER && keyCode != KeyEvent.KEYCODE_NUMPAD_ENTER) return false
-        if (event.action == KeyEvent.ACTION_UP && altEnterDown) {
-            altEnterDown = false
+    private fun submitSearch(metaState: Int, runQuery: Boolean): Boolean {
+        if (searchOverlay.visibility != View.VISIBLE) return false
+        val text = searchInputInBar.text
+        if (prefs.aiAltEnter && isAltActive(metaState, text)) {
+            android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
+            triggerAiSearch()
             return true
         }
-        if (event.action != KeyEvent.ACTION_DOWN) return false
-        if (event.repeatCount > 0) return altEnterDown
-        val text = searchInputInBar.text
-        if (!prefs.aiAltEnter || searchOverlay.visibility != View.VISIBLE || !isAltActive(event, text)) return false
-        altEnterDown = true
-        // A one-shot (sticky) Alt is spent by this key, as it would be by a typed character; a lock stays.
-        android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
-        triggerAiSearch()
+        if (searchOverlay.activateNavSelection()) return true
+        if (!runQuery) return false
+        searchOverlay.performExtendedSearch()
         return true
     }
 
-    private fun isAltActive(event: KeyEvent, text: CharSequence) = AiSearchTrigger.altActive(
-        event.metaState,
+    private fun onSearchEditorAction(actionId: Int, event: KeyEvent?): Boolean {
+        // The key-up half of an Enter whose key-down was handled here.
+        if (event != null && event.action != KeyEvent.ACTION_DOWN) return true
+        // A late action for a search that the same press already closed.
+        if (searchOverlay.visibility != View.VISIBLE) return true
+        return submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
+    }
+
+    /**
+     * Enter-like keys delivered to the field. Usually [handleSearchKey] already took them on the
+     * way through the activity; this covers keys sent straight to the field. A plain Enter with
+     * no highlight is left to the EditText, which turns it into the editor action.
+     */
+    private fun onSearchFieldKey(keyCode: Int, event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP) return searchNavKeys.remove(keyCode)
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (event.repeatCount > 0 && keyCode in searchNavKeys) return true
+        val handled = submitKey(event)
+        if (handled) searchNavKeys += keyCode
+        return handled
+    }
+
+    /** Enter / numpad Enter submit (without running the query); DPAD center only opens a highlight. */
+    private fun submitKey(event: KeyEvent): Boolean = when (event.keyCode) {
+        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> submitSearch(event.metaState, runQuery = false)
+        KeyEvent.KEYCODE_DPAD_CENTER -> searchOverlay.visibility == View.VISIBLE && searchOverlay.activateNavSelection()
+        else -> false
+    }
+
+    private fun isAltActive(metaState: Int, text: CharSequence) = AiSearchTrigger.altActive(
+        metaState,
         android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
     )
 
@@ -2309,7 +2340,8 @@ class LauncherActivity : AppCompatActivity() {
      * Trackpad navigation of search results. Focus stays on the search field, which the home
      * pager sits below in focus order: plain focus search would leave the overlay for the pager
      * behind it, where typed keys are dropped. DPAD moves a highlight drawn by the overlay
-     * instead; DPAD center (or Enter, unless Alt asks AI) opens the highlighted row. Typing while
+     * instead; Enter-like keys go through [submitSearch] (Alt+Enter asks AI, else a highlighted
+     * row opens, else plain Enter is left to the field's editor action). Typing while
      * a row is highlighted clears the highlight and goes to the field.
      */
     private fun handleSearchKey(event: KeyEvent): Boolean {
@@ -2322,10 +2354,8 @@ class LauncherActivity : AppCompatActivity() {
             KeyEvent.KEYCODE_DPAD_DOWN -> searchOverlay.navigate(1, 0)
             KeyEvent.KEYCODE_DPAD_LEFT -> searchOverlay.navigate(0, -1)
             KeyEvent.KEYCODE_DPAD_RIGHT -> searchOverlay.navigate(0, 1)
-            KeyEvent.KEYCODE_DPAD_CENTER -> searchOverlay.activateNavSelection()
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
-                searchOverlay.hasNavSelection && !isAltActive(event, searchInputInBar.text) &&
-                    searchOverlay.activateNavSelection()
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                if (event.repeatCount > 0 && code in searchNavKeys) true else submitKey(event)
             else -> {
                 if (isSearchTypingKey(event)) {
                     searchOverlay.clearNavSelection()
