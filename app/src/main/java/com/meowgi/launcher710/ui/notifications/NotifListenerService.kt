@@ -3,7 +3,9 @@ package com.meowgi.launcher710.ui.notifications
 import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
+import android.app.Notification
 import android.service.notification.StatusBarNotification
+import com.meowgi.launcher710.util.NotificationBadgeCounter
 
 class NotifListenerService : NotificationListenerService() {
 
@@ -14,7 +16,16 @@ class NotifListenerService : NotificationListenerService() {
             private set
         var onNotificationsChanged: (() -> Unit)? = null
         private val mainHandler = Handler(Looper.getMainLooper())
-        private val dispatchChange = Runnable { onNotificationsChanged?.invoke() }
+        private val dispatchChange = Runnable {
+            // Nobody is listening while the launcher is stopped, so skip the IPC then too.
+            val cb = onNotificationsChanged ?: return@Runnable
+            instance?.updateBadges()
+            cb()
+        }
+
+        /** Badge number per package, refreshed by [updateBadges]. Read on the main thread. */
+        @Volatile var badgeCounts: Map<String, Int> = emptyMap()
+            private set
     }
 
     override fun onCreate() {
@@ -35,6 +46,23 @@ class NotifListenerService : NotificationListenerService() {
     private fun notifyChange() {
         mainHandler.removeCallbacks(dispatchChange)
         mainHandler.postDelayed(dispatchChange, DEBOUNCE_MS)
+    }
+
+    override fun onListenerConnected() {
+        // After a rebind the activity would otherwise show nothing until the next change.
+        notifyChange()
+    }
+
+    fun updateBadges() {
+        badgeCounts = NotificationBadgeCounter.count(getNotifications().map { sbn ->
+            NotificationBadgeCounter.Entry(
+                packageName = sbn.packageName,
+                groupKey = sbn.notification.group,
+                isGroupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+                isOngoing = sbn.isOngoing,
+                number = sbn.notification.number
+            )
+        })
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {

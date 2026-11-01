@@ -78,6 +78,12 @@ class AppPagerAdapter(
         return AppGridFragment.newInstance(tabType, pageId).also { bind(it) }
     }
 
+    fun refreshBadges() {
+        for (i in 0 until itemCount) {
+            getFragment(i)?.takeIf { it.isAdded }?.refreshBadges()
+        }
+    }
+
     fun refreshAll() {
         for (i in 0 until itemCount) {
             getFragment(i)?.takeIf { it.isAdded }?.refreshList()

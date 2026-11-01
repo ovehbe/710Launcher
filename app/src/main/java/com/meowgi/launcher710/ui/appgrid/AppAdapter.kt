@@ -18,13 +18,16 @@ class AppAdapter(
     private val viewMode: Int = 0, // 0 = grid, 1 = list
     private val iconResolver: ((LaunchableItem) -> android.graphics.drawable.Drawable)? = null,
     private val labelResolver: ((LaunchableItem) -> CharSequence)? = null,
-    val isSparseMode: Boolean = false
+    val isSparseMode: Boolean = false,
+    /** Notification badge number for an item; 0 hides the badge. Grid view only. */
+    private val badgeResolver: ((LaunchableItem) -> Int)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
         private const val VIEW_TYPE_GRID = 0
         private const val VIEW_TYPE_LIST = 1
         const val VIEW_TYPE_EMPTY = 2
+        private const val PAYLOAD_BADGE = "badge"
 
         /** Stable string key used to identify an item across sessions for grid position storage. */
         fun itemKey(item: LaunchableItem): String = when (item) {
@@ -41,6 +44,7 @@ class AppAdapter(
     class GridVH(view: View) : RecyclerView.ViewHolder(view) {
         val icon: ImageView = view.findViewById(R.id.appIcon)
         val label: TextView = view.findViewById(R.id.appLabel)
+        val badge: TextView = view.findViewById(R.id.appBadge)
     }
 
     class ListVH(view: View) : RecyclerView.ViewHolder(view) {
@@ -160,6 +164,25 @@ class AppAdapter(
         }
     }
 
+    /** Rebinds only the badges; the rest of each cell is untouched. */
+    fun refreshBadges() {
+        if (badgeResolver != null && itemCount > 0) notifyItemRangeChanged(0, itemCount, PAYLOAD_BADGE)
+    }
+
+    private fun bindBadge(holder: GridVH, item: LaunchableItem) {
+        val n = badgeResolver?.invoke(item) ?: 0
+        holder.badge.visibility = if (n > 0) View.VISIBLE else View.GONE
+        if (n > 0) holder.badge.text = if (n > 99) "99+" else n.toString()
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.contains(PAYLOAD_BADGE) && holder is GridVH) {
+            sparseItems[position]?.let { bindBadge(holder, it) }
+            return
+        }
+        super.onBindViewHolder(holder, position, payloads)
+    }
+
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         if (holder is EmptyVH) return
         val item = sparseItems[position] ?: return
@@ -173,6 +196,7 @@ class AppAdapter(
                     height = iconSizePx
                 } ?: android.view.ViewGroup.LayoutParams(iconSizePx, iconSizePx)
                 holder.label.text = label
+                bindBadge(holder, item)
                 holder.itemView.isClickable = true
                 holder.itemView.defaultFocusHighlightEnabled = false
                 holder.itemView.foreground = prefs.getClickHighlightRipple(context)
