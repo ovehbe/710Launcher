@@ -32,6 +32,7 @@
 - **Static callbacks are paired.** `NotifListenerService.onNotificationsChanged` is set in `onStart` and cleared in `onStop`; it holds the activity.
 
 ## Settings structure
+- `SettingsActivity` runs in its own task (manifest `taskAffinity`), so it shows in Recents. In the launcher's singleTask home task, Home would clear it. Always start it with `SettingsActivity.intent(context)`; `SettingsTaskTest` fails on any other start site. It can't return results to the launcher.
 - `SettingsActivity` is only the host: launchers, navigation (`showScreen`, Back returns to the category list), `rebuildSettings()` (re-renders the current screen, keeps scroll). Toolbar is outside the rebuilt container.
 - Categories are `SettingsScreen` in `SettingsScreens.kt`, one `build*()` per category; add a new setting as a row inside the right `group(...)` there. Row widgets (`toggleRow`, `choiceRow`, `colorChoiceRow`, `sliderRow`, `numberRow`, `actionRow`…) are in `SettingsRows.kt`; dialogs in `Settings*Dialogs.kt`; the four tap-action slots in `SettingsTapActions.kt`.
 - `app/src/test/resources/settings_pref_baseline.txt` is the snapshot of prefs/entry points the old screen exposed; `SettingsPrefCoverageTest` fails if one stops being reachable or a key changes. Don't edit the baseline to make it pass; add to `renamedActions` only for a deliberate replacement.
