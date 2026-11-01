@@ -1,9 +1,9 @@
 package com.meowgi.launcher710.ui.settings
 
-import android.app.Activity
 import android.net.Uri
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import com.meowgi.launcher710.LauncherActivity
 import com.meowgi.launcher710.backup.BackupCodec
 import com.meowgi.launcher710.backup.BackupException
 import com.meowgi.launcher710.backup.BackupManager
@@ -79,7 +79,7 @@ private fun SettingsActivity.applyRestore(prepared: BackupManager.Prepared) {
                 .setMessage(msg)
                 .setCancelable(false)
                 .setPositiveButton("OK") { _, _ ->
-                    setResult(Activity.RESULT_OK)
+                    LauncherActivity.reloadRequested = true
                     finish()
                 }
                 .show()

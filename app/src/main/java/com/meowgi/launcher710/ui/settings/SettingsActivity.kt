@@ -1,5 +1,6 @@
 package com.meowgi.launcher710.ui.settings
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -38,6 +39,13 @@ class SettingsActivity : AppCompatActivity() {
         private const val BB_BLUE = 0xFF0073BC.toInt()
         private const val STATE_SCREEN = "settings_screen"
         private const val STATE_HOME_SCROLL = "settings_home_scroll"
+
+        /**
+         * Settings runs in its own task (see its taskAffinity). Inside the launcher's home task it
+         * never appears in Recents, and every Home press clears it off the singleTask launcher.
+         */
+        fun intent(context: Context): Intent =
+            Intent(context, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     internal lateinit var prefs: LauncherPrefs

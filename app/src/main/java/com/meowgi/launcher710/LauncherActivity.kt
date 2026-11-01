@@ -67,6 +67,9 @@ class LauncherActivity : AppCompatActivity() {
 
     companion object {
         const val OPEN_HOME_MENU_EXTRA = "open_home_menu"
+
+        /** Set by a restore in Settings, which runs in its own task and so can't return a result. */
+        @Volatile var reloadRequested = false
         private const val KEY_ROLE_HOME = 1
         private const val KEY_ROLE_BACK = 2
         private const val KEY_ROLE_RECENTS = 3
@@ -156,15 +159,6 @@ class LauncherActivity : AppCompatActivity() {
             widgetHost.deleteWidgetId(pendingWidgetId)
         }
         pendingWidgetId = -1
-    }
-
-    private val settingsLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            repository.invalidate()
-            recreate()
-        }
     }
 
     private val createShortcutLauncher = registerForActivityResult(
@@ -391,7 +385,7 @@ class LauncherActivity : AppCompatActivity() {
                 is LaunchableItem.App -> repository.launchApp(item.app)
                 is LaunchableItem.Shortcut -> shortcutHelper.launchShortcut(item.shortcut.packageName, item.shortcut.shortcutId)
                 is LaunchableItem.IntentShortcut -> shortcutHelper.launchIntentShortcut(item.info.intentUri)
-                is LaunchableItem.LauncherSettings -> startActivity(Intent(this, SettingsActivity::class.java))
+                is LaunchableItem.LauncherSettings -> startActivity(SettingsActivity.intent(this))
                 is LaunchableItem.RefreshCache -> {
                     android.widget.Toast.makeText(this, "Indexing…", android.widget.Toast.LENGTH_SHORT).show()
                     lifecycleScope.launch {
@@ -1345,7 +1339,7 @@ class LauncherActivity : AppCompatActivity() {
                     true
                 }
                 title == getString(R.string.settings_title) -> {
-                    settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
+                    startActivity(SettingsActivity.intent(this))
                     true
                 }
                 else -> false
@@ -2398,6 +2392,12 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (reloadRequested) {
+            reloadRequested = false
+            repository.invalidate()
+            recreate()
+            return
+        }
         window.decorView.post { clearHighlightTraces() }
         updateSoundProfileIcon()
         refreshWallpaper()

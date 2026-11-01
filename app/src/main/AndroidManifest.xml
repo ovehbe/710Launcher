@@ -67,6 +67,8 @@
         <activity
             android:name=".ui.settings.SettingsActivity"
             android:exported="false"
+            android:label="@string/launcher_settings_label"
+            android:taskAffinity="${applicationId}.settings"
             android:theme="@style/Theme.BBOS7"
             android:screenOrientation="portrait" />
 
