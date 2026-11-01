@@ -302,12 +302,7 @@ class CurrencyConverterTest {
         assertEquals(2_000_000.0, query2!!.amount, 0.001)
     }
 
-    @Test
-    fun `parse with t suffix for trillions`() {
-        val query = CurrencyConverter.parse("1t idr", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
-        assertNotNull(query)
-        assertEquals(1_000_000_000_000.0, query!!.amount, 0.001)
-    }
+    // Note: 't' suffix removed because t is a bracket key on BB keyboard
 
     @Test
     fun `parse magnitude suffixes without space before currency`() {
@@ -400,10 +395,9 @@ class CurrencyConverterTest {
 
     @Test
     fun `parse hundred thousand`() {
-        // TODO: Fix chained multipliers logic
-        // val query = CurrencyConverter.parse("hundred thousand gbp", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
-        // assertNotNull(query)
-        // assertEquals(100_000.0, query!!.amount, 0.001)
+        val query = CurrencyConverter.parse("hundred thousand gbp", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query)
+        assertEquals(100_000.0, query!!.amount, 0.001)
     }
 
     @Test

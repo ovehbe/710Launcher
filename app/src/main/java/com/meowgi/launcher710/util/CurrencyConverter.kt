@@ -157,10 +157,10 @@ object CurrencyConverter {
      * Map BB keyboard letters to digits/operators in amount string only.
      * Handles magnitude suffixes (k, m, b) and number words.
      * 
-     * Context-sensitive mapping:
-     * - m: decimal point when followed by digits, million suffix when trailing
-     * - k: thousand suffix (may also be from BB keyboard)
-     * - b: billion suffix (may also be from BB keyboard)
+     * Strategy:
+     * - Map each character: digits stay, BB letters map to their values
+     * - ONLY trailing k/m/b/bn/mn (at end of amount) are magnitude suffixes
+     * - All other letters map through BB keyboard
      */
     private fun mapAmountString(str: String, layout: Int): String? {
         if (str.isEmpty()) return null
@@ -168,80 +168,40 @@ object CurrencyConverter {
         // First, expand number words (e.g., "one million" -> "1000000")
         val withWords = expandNumberWords(str)
         
-        // Then map BB keyboard letters FIRST, handling m/k/b context-sensitively
-        val sb = StringBuilder(withWords.length * 2)
-        var hasDigit = false
-        var i = 0
+        // Check for trailing magnitude suffix (k, m, b, bn, mn) at the END
+        val trimmed = withWords.trim()
+        val hasBn = trimmed.endsWith("bn", ignoreCase = true)
+        val hasMn = trimmed.endsWith("mn", ignoreCase = true)
+        val hasK = !hasBn && !hasMn && trimmed.endsWith("k", ignoreCase = true)
+        val hasM = !hasBn && !hasMn && trimmed.endsWith("m", ignoreCase = true)
+        val hasB = !hasBn && !hasMn && trimmed.endsWith("b", ignoreCase = true)
         
-        while (i < withWords.length) {
-            val ch = withWords[i]
+        val (baseAmount, multiplier) = when {
+            hasBn -> trimmed.dropLast(2) to "*1000000000"
+            hasMn -> trimmed.dropLast(2) to "*1000000"
+            hasK -> trimmed.dropLast(1) to "*1000"
+            hasM -> trimmed.dropLast(1) to "*1000000"
+            hasB -> trimmed.dropLast(1) to "*1000000000"
+            else -> trimmed to ""
+        }
+        
+        // Now map BB keyboard letters in baseAmount
+        val sb = StringBuilder(baseAmount.length * 2)
+        var hasDigit = false
+        
+        for (ch in baseAmount) {
             when {
-                ch in '0'..'9' -> { sb.append(ch); hasDigit = true; i++ }
-                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> { sb.append(ch); i++ }
-                ch == '.' || ch == ',' -> { sb.append(ch); i++ }
-                ch == '(' || ch == ')' -> { sb.append(ch); i++ }
-                ch == ' ' || ch == '\t' -> { i++ } // ignore whitespace
-                ch.lowercaseChar() == 'm' -> {
-                    // Check if m should be decimal point (followed by digit/digit-letter) or million (trailing)
-                    val nextChar = if (i + 1 < withWords.length) withWords[i + 1] else null
-                    val isFollowedByDigit = nextChar != null && (
-                        nextChar.isDigit() || 
-                        Calculator.operatorChar(nextChar, layout)?.isDigit() == true
-                    )
-                    if (isFollowedByDigit) {
-                        // m is decimal point
-                        sb.append('.')
-                    } else {
-                        // m is million suffix
-                        sb.append("*1000000")
-                    }
-                    hasDigit = true
-                    i++
-                }
-                ch.lowercaseChar() == 'k' && (i + 1 >= withWords.length || !withWords[i + 1].isDigit()) -> {
-                    // k is thousand suffix only when trailing or not followed by digit
-                    sb.append("*1000")
-                    hasDigit = true
-                    i++
-                }
-                ch.lowercaseChar() == 'b' -> {
-                    // Check if followed by 'n' for 'bn' = billion
-                    if (i + 1 < withWords.length && withWords[i + 1].lowercaseChar() == 'n') {
-                        sb.append("*1000000000")
-                        i += 2
-                    } else {
-                        sb.append("*1000000000")
-                        i++
-                    }
-                    hasDigit = true
-                }
-                ch.lowercaseChar() == 't' -> {
-                    // t could be trillion or left paren (BB keyboard)
-                    // Only use as trillion if not followed by digits (would be part of an expression)
-                    val nextChar = if (i + 1 < withWords.length) withWords[i + 1] else null
-                    if (nextChar == null || !nextChar.isDigit()) {
-                        sb.append("*1000000000000")
-                        hasDigit = true
-                        i++
-                    } else {
-                        // Map as BB keyboard
-                        val mapped = Calculator.operatorChar(ch, layout)
-                        if (mapped != null) {
-                            sb.append(mapped)
-                            if (mapped in '0'..'9') hasDigit = true
-                        } else {
-                            return null
-                        }
-                        i++
-                    }
-                }
+                ch in '0'..'9' -> { sb.append(ch); hasDigit = true }
+                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> sb.append(ch)
+                ch == '.' || ch == ',' -> sb.append(ch)
+                ch == '(' || ch == ')' -> sb.append(ch)
+                ch == ' ' || ch == '\t' -> {} // ignore whitespace
                 else -> {
-                    // Try to map letter to operator/digit
+                    // Map letter to operator/digit via BB keyboard
                     val mapped = Calculator.operatorChar(ch, layout)
                     if (mapped != null) {
                         sb.append(mapped)
                         if (mapped in '0'..'9') hasDigit = true
-                        i++
                     } else {
                         // Character can't be mapped
                         return null
@@ -249,6 +209,9 @@ object CurrencyConverter {
                 }
             }
         }
+        
+        // Append multiplier if any
+        sb.append(multiplier)
         
         return if (hasDigit) sb.toString() else null
     }
@@ -372,22 +335,28 @@ object CurrencyConverter {
                     i++
                 }
                 multiplier != null -> {
+                    // Multiplier logic: hundred multiplies within group, thousand/million/billion scale
                     if (currentNumber == 0.0) currentNumber = 1.0
                     
-                    // Handle chained multipliers like "hundred thousand"
-                    if (multiplier <= 1000.0 && pendingMultiplier == 0.0) {
-                        // Small multiplier (hundred) - check if followed by larger one
+                    if (multiplier == 100.0) {
+                        // "hundred" multiplies the current number within the group
+                        currentNumber *= multiplier
+                        i++
+                        // Don't flush yet - might be followed by "thousand"
+                    } else {
+                        // thousand/million/billion - scale the entire group
                         currentNumber *= multiplier
                         i++
                         
-                        // Check if next is a larger multiplier
-                        val nextMult = if (i < words.size) getMultiplier(words[i]) else null
-                        if (nextMult != null && nextMult > multiplier) {
-                            // Continue accumulating (e.g., "hundred thousand")
-                            pendingMultiplier = currentNumber
-                            currentNumber = 0.0
-                        } else {
-                            // Flush this number
+                        // Check if next is another number word (continue building)
+                        val nextIsNumber = i < words.size && (
+                            words[i].toDoubleOrNull() != null ||
+                            getDigitValue(words[i]) != null ||
+                            words[i] == "hundred"
+                        )
+                        
+                        if (!nextIsNumber) {
+                            // Flush the number
                             val value = if (currentNumber == currentNumber.toLong().toDouble()) {
                                 currentNumber.toLong().toString()
                             } else {
@@ -396,23 +365,6 @@ object CurrencyConverter {
                             result.add(value)
                             currentNumber = 0.0
                         }
-                    } else {
-                        // Large multiplier or we have pending
-                        if (pendingMultiplier > 0) {
-                            currentNumber = pendingMultiplier + currentNumber
-                            pendingMultiplier = 0.0
-                        }
-                        currentNumber *= multiplier
-                        i++
-                        
-                        // Flush the number
-                        val value = if (currentNumber == currentNumber.toLong().toDouble()) {
-                            currentNumber.toLong().toString()
-                        } else {
-                            currentNumber.toString()
-                        }
-                        result.add(value)
-                        currentNumber = 0.0
                     }
                 }
                 word == "a" || word == "an" -> {
