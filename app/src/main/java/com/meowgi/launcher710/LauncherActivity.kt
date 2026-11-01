@@ -1203,8 +1203,10 @@ class LauncherActivity : AppCompatActivity() {
     )
 
     internal fun triggerAiSearch() {
-        if (!searchOverlay.startAiAnswer()) {
-            android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
+        if (!searchOverlay.copyCurrentAiAnswer()) {
+            if (!searchOverlay.startAiAnswer()) {
+                android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

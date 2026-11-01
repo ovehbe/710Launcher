@@ -89,8 +89,9 @@ class AiSearchUiTest {
     private val panelContent get() = panel.getChildAt(0) as LinearLayout
     private val progress get() = panelContent.getChildAt(0)
     private val answer get() = panelContent.getChildAt(1) as TextView
-    private val error get() = panelContent.getChildAt(2) as TextView
-    private val settingsLink get() = panelContent.getChildAt(3) as TextView
+    private val aiContentContainer get() = panelContent.getChildAt(2) as LinearLayout
+    private val error get() = panelContent.getChildAt(3) as TextView
+    private val settingsLink get() = panelContent.getChildAt(4) as TextView
     private val results get() = (0 until overlay.childCount).map { overlay.getChildAt(it) }.filterIsInstance<RecyclerView>().single()
 
     private fun suggestions(): List<String> {
@@ -282,6 +283,40 @@ class AiSearchUiTest {
         assertEquals(View.VISIBLE, o.visibility)
         assertEquals("hj", searchField(activity).text.toString())
         assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun longPressWhenAnswerExistsCopiesInsteadOfResending() {
+        type("test query")
+        assertTrue(overlay.startAiAnswer())
+        release.countDown()
+        settle()
+        assertEquals(AiState.Answer("test query", "**Hello** from the model", done = true), overlay.aiSession.state)
+        
+        assertTrue(overlay.copyCurrentAiAnswer())
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        assertNotNull(clipText)
+        assertTrue(clipText!!.contains("Hello"))
+        assertTrue(clipText.contains("from the model"))
+        assertEquals(context.getString(R.string.ai_answer_copied), ShadowToast.getTextOfLatestToast())
+    }
+
+    @Test
+    fun copyReturnsFalseWhenNoAnswerExists() {
+        type("test query")
+        assertFalse(overlay.copyCurrentAiAnswer())
+    }
+
+    @Test
+    fun copyReturnsFalseWhenQueryChanged() {
+        type("original query")
+        assertTrue(overlay.startAiAnswer())
+        release.countDown()
+        settle()
+        
+        overlay.applyQuery("different query")
+        assertFalse(overlay.copyCurrentAiAnswer())
     }
 
     @Test

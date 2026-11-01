@@ -22,16 +22,31 @@ object AiMarkdown {
     /** [level] is the heading level or the list nesting depth. */
     data class Span(val start: Int, val end: Int, val kind: Kind, val level: Int = 0)
 
-    data class Rendered(val text: String, val spans: List<Span>)
+    data class TableCell(val text: String, val spans: List<Span>)
+    data class Table(val rows: List<List<TableCell>>, val hasHeader: Boolean, val textOffset: Int)
+
+    data class Rendered(val text: String, val spans: List<Span>, val tables: List<Table> = emptyList())
 
     private val HEADING = Regex("^(#{1,6})\\s+(.*)$")
     private val BULLET = Regex("^(\\s*)[-*+]\\s+(.*)$")
     private val ORDERED = Regex("^(\\s*)(\\d{1,3})[.)]\\s+(.*)$")
     private val RULE = Regex("^\\s*([-*_])(\\s*\\1){2,}\\s*$")
+    private val TABLE_ROW = Regex("^\\s*\\|(.+)\\|\\s*$")
+    private val TABLE_SEP = Regex("^\\s*\\|\\s*([-:]+\\s*\\|\\s*)+$")
+
+    private fun parseTableRow(row: String): List<String> {
+        val cells = row.trim().removePrefix("|").removeSuffix("|").split('|')
+        return cells.map { it.trim() }
+    }
+
+    private fun isTableSeparator(line: String): Boolean = TABLE_SEP.matches(line)
+
+    private fun isTableRow(line: String): Boolean = TABLE_ROW.matches(line)
 
     fun parse(markdown: String): Rendered {
         val out = StringBuilder()
         val spans = ArrayList<Span>()
+        val tables = ArrayList<Table>()
         val lines = markdown.replace("\r\n", "\n").split('\n')
         var i = 0
         var pendingBreak = false
@@ -45,6 +60,33 @@ object AiMarkdown {
             val line = lines[i]
             val trimmed = line.trimStart()
             when {
+                isTableRow(line) && i + 1 < lines.size && isTableSeparator(lines[i + 1]) -> {
+                    startBlock()
+                    val textOffset = out.length
+                    val tableRows = ArrayList<List<TableCell>>()
+                    val headerCells = parseTableRow(line).map { cellText ->
+                        val cellOut = StringBuilder()
+                        val cellSpans = ArrayList<Span>()
+                        inline(cellText, cellOut, cellSpans)
+                        TableCell(cellOut.toString(), cellSpans)
+                    }
+                    tableRows += headerCells
+                    i += 2
+                    while (i < lines.size && isTableRow(lines[i])) {
+                        val rowCells = parseTableRow(lines[i]).map { cellText ->
+                            val cellOut = StringBuilder()
+                            val cellSpans = ArrayList<Span>()
+                            inline(cellText, cellOut, cellSpans)
+                            TableCell(cellOut.toString(), cellSpans)
+                        }
+                        tableRows += rowCells
+                        i++
+                    }
+                    tables += Table(tableRows, hasHeader = true, textOffset = textOffset)
+                    out.append("[Table: ${tableRows.size} rows × ${headerCells.size} columns]")
+                    i--
+                    pendingBreak = true
+                }
                 trimmed.startsWith("```") -> {
                     startBlock()
                     val start = out.length
@@ -89,7 +131,7 @@ object AiMarkdown {
             }
             i++
         }
-        return Rendered(out.toString(), spans)
+        return Rendered(out.toString(), spans, tables)
     }
 
     private fun depth(indent: String) = (indent.replace("\t", "    ").length / 2).coerceAtMost(4)
@@ -172,6 +214,48 @@ object AiMarkdown {
     }
 
     data class Style(val codeBackground: Int, val quoteColor: Int, val indentPx: Int)
+
+    fun toPlainText(r: Rendered): String {
+        val out = StringBuilder(r.text)
+        for (table in r.tables.sortedByDescending { it.textOffset }) {
+            val placeholder = "[Table: ${table.rows.size} rows × ${table.rows.firstOrNull()?.size ?: 0} columns]"
+            val start = r.text.indexOf(placeholder, table.textOffset)
+            if (start >= 0) {
+                val tableText = formatTableAsPlainText(table)
+                out.replace(start, start + placeholder.length, tableText)
+            }
+        }
+        return out.toString()
+    }
+
+    private fun formatTableAsPlainText(table: Table): String {
+        if (table.rows.isEmpty()) return ""
+        val numCols = table.rows.firstOrNull()?.size ?: 0
+        val colWidths = IntArray(numCols)
+        for (row in table.rows) {
+            for ((colIdx, cell) in row.withIndex()) {
+                if (colIdx < numCols) {
+                    colWidths[colIdx] = maxOf(colWidths[colIdx], cell.text.length)
+                }
+            }
+        }
+        val sb = StringBuilder()
+        for ((rowIdx, row) in table.rows.withIndex()) {
+            for ((colIdx, cell) in row.withIndex()) {
+                if (colIdx > 0) sb.append(" | ")
+                sb.append(cell.text.padEnd(colWidths[colIdx]))
+            }
+            sb.append("\n")
+            if (rowIdx == 0 && table.hasHeader) {
+                for (colIdx in 0 until numCols) {
+                    if (colIdx > 0) sb.append("-+-")
+                    sb.append("-".repeat(colWidths[colIdx]))
+                }
+                sb.append("\n")
+            }
+        }
+        return sb.toString().trimEnd()
+    }
 
     fun toSpanned(r: Rendered, style: Style): CharSequence {
         val sb = SpannableStringBuilder(r.text)
