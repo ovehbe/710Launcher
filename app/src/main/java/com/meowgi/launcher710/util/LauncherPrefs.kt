@@ -504,6 +504,10 @@ class LauncherPrefs(context: Context) {
     var searchUsageRanking: Boolean
         get() = prefs.getBoolean("searchUsageRanking", true)
         set(v) = prefs.edit().putBoolean("searchUsageRanking", v).apply()
+    /** Show inline calculator when search text is an arithmetic expression. */
+    var searchCalculatorEnabled: Boolean
+        get() = prefs.getBoolean("searchCalculatorEnabled", true)
+        set(v) = prefs.edit().putBoolean("searchCalculatorEnabled", v).apply()
 
     // --- AI answers (the API key is in AiSecrets, never here) ---
     var aiEnabled: Boolean

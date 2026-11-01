@@ -145,6 +145,7 @@ class AppGridFragment : Fragment() {
                     is LaunchableItem.RefreshCache -> { }
                     is LaunchableItem.Contact -> { }
                     is LaunchableItem.SearchCommand -> { }
+                    is LaunchableItem.CalculatorResult -> { }
                 }
             },
             onLongClick = if (tab == TAB_FAVORITES) null else { item, view -> onItemLongClick?.invoke(item, view) },
@@ -159,6 +160,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.RefreshCache -> item.icon
                         is LaunchableItem.Contact -> item.icon
                         is LaunchableItem.SearchCommand -> item.icon
+                        is LaunchableItem.CalculatorResult -> item.icon
                     }
                 }
             } else { null },
@@ -173,6 +175,7 @@ class AppGridFragment : Fragment() {
                         is LaunchableItem.RefreshCache -> item.label
                         is LaunchableItem.Contact -> item.displayName
                         is LaunchableItem.SearchCommand -> item.label
+                        is LaunchableItem.CalculatorResult -> item.label
                     }
                 })
             } else null,

@@ -27,6 +27,7 @@ import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.ui.settings.SettingsActivity
 import com.meowgi.launcher710.ui.settings.SettingsScreen
 import com.meowgi.launcher710.util.AppRepository
+import com.meowgi.launcher710.util.Calculator
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
@@ -47,6 +48,8 @@ class SearchOverlay @JvmOverloads constructor(
     private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
+    private val calculatorRow: LinearLayout
+    private val calculatorText: TextView
     private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
@@ -131,6 +134,11 @@ class SearchOverlay @JvmOverloads constructor(
     }
     /** Number the current query dials (dial row, Enter), or null; set before results are published. */
     private var queryDialNumber: String? = null
+    /** Calculator result for the current query, or null; set before results are published. */
+    private var queryCalculatorResult: String? = null
+    private var queryCalculatorExpression: String? = null
+    /** Whether to show calculator row even without a valid result (when no app matches) */
+    private var queryCalculatorShowIncomplete: Boolean = false
     /** Normalized current query, for telling text matches from keypad-digit matches. */
     private var queryNormalized = ""
 
@@ -153,6 +161,9 @@ class SearchOverlay @JvmOverloads constructor(
     private fun resetSession() {
         lastQuery = ""
         queryDialNumber = null
+        queryCalculatorResult = null
+        queryCalculatorExpression = null
+        queryCalculatorShowIncomplete = false
         queryNormalized = ""
         appliedQuery = null
         currentResults = emptyList()
@@ -169,6 +180,16 @@ class SearchOverlay @JvmOverloads constructor(
         resultsRecycler.scrollToPosition(0)
         aiPanel.scrollTo(0, 0)
         if (webSuggestionsEnabled) webSuggestions.prewarm()
+    }
+
+    private fun copyCalculatorResult() {
+        val result = queryCalculatorResult
+        val expression = queryCalculatorExpression ?: return
+        val toCopy = result ?: expression // Copy result if available, otherwise the expression
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Calculator", toCopy)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Copied: $toCopy", Toast.LENGTH_SHORT).show()
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -204,6 +225,26 @@ class SearchOverlay @JvmOverloads constructor(
         dialRow.addView(phoneIcon)
         dialRow.setOnClickListener { dial(currentDialDigits) }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        calculatorRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = GONE
+            setPadding(0, dp(6), 0, dp(2))
+        }
+        calculatorText = TextView(context).apply {
+            textSize = 14f
+            setTextColor(resources.getColor(R.color.bb_text_primary, null))
+            typeface = font
+        }
+        val equalsIcon = ImageView(context).apply {
+            setImageResource(android.R.drawable.ic_menu_info_details)
+            setPadding(dp(4), dp(4), dp(8), dp(4))
+        }
+        calculatorRow.addView(calculatorText)
+        calculatorRow.addView(equalsIcon)
+        calculatorRow.setOnClickListener { copyCalculatorResult() }
+        addView(calculatorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
             text = "$searchContextLabel search"
@@ -345,12 +386,14 @@ class SearchOverlay @JvmOverloads constructor(
                 }
                 dismiss()
             }
+            is LaunchableItem.CalculatorResult -> { }
         }
     }
 
     /** Something the trackpad highlight can rest on. */
     sealed class NavTarget {
         object Dial : NavTarget() { override fun toString() = "dial" }
+        object Calculator : NavTarget() { override fun toString() = "calculator" }
         data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
         data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
         object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
@@ -368,6 +411,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun navTargetRows(): List<List<NavTarget>> {
         val rows = mutableListOf<List<NavTarget>>()
         if (dialRow.visibility == VISIBLE) rows += listOf(NavTarget.Dial)
+        if (calculatorRow.visibility == VISIBLE) rows += listOf(NavTarget.Calculator)
         if (suggestionsBox.visibility == VISIBLE) {
             for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
         }
@@ -424,6 +468,7 @@ class SearchOverlay @JvmOverloads constructor(
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
+            NavTarget.Calculator -> copyCalculatorResult()
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
             NavTarget.AiSettings -> aiSettingsLink.performClick()
@@ -448,6 +493,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun navTargetView(target: NavTarget): View? = when (target) {
         NavTarget.Dial -> dialRow
+        NavTarget.Calculator -> calculatorRow
         is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
         is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
         NavTarget.AiSettings -> aiSettingsLink
@@ -656,6 +702,7 @@ class SearchOverlay @JvmOverloads constructor(
                         }
                     }
                 }
+                is LaunchableItem.CalculatorResult -> { }
             }
             dismiss()
         } else {
@@ -692,6 +739,8 @@ class SearchOverlay @JvmOverloads constructor(
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
             webSuggestionsAllowed = false
             queryDialNumber = null
+            queryCalculatorResult = null
+            queryCalculatorExpression = null
             ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
@@ -700,6 +749,8 @@ class SearchOverlay @JvmOverloads constructor(
         if (contactMode == 2 && query.startsWith("@")) {
             webSuggestionsAllowed = false
             queryDialNumber = null
+            queryCalculatorResult = null
+            queryCalculatorExpression = null
             handleAtContactSearch(query.removePrefix("@").trimStart())
             return
         }
@@ -710,7 +761,7 @@ class SearchOverlay @JvmOverloads constructor(
         val nq = SearchNormalizer.normalize(query)
         queryDialNumber = DialNumber.dialable(query, layout)
         queryNormalized = nq
-
+        
         val filter = filterIndex
         if (filter != null) {
             ContactSearchHelper.cancel()
@@ -730,6 +781,7 @@ class SearchOverlay @JvmOverloads constructor(
                 SearchRanker.sort(ranked, repo?.usageRankingEnabled ?: false)
             }
             publish(filtered)
+            evaluateCalculator(query, layout, filtered.isNotEmpty())
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
@@ -740,7 +792,9 @@ class SearchOverlay @JvmOverloads constructor(
                 // shown right away instead of blinking out until this keystroke's lookup returns.
                 val carried = shownContacts.filter { contactStillMatches(it, nq, dialDigitsForAppSearch) }
                 shownContacts = carried
-                publish(baseResults + carried)
+                val initialResults = baseResults + carried
+                publish(initialResults)
+                evaluateCalculator(query, layout, initialResults.isNotEmpty())
                 val queryForContact = query
                 ContactSearchHelper.searchAsync(
                     context,
@@ -752,15 +806,92 @@ class SearchOverlay @JvmOverloads constructor(
                 ) { contactResults ->
                     if (lastQuery != queryForContact) return@searchAsync
                     shownContacts = contactResults
-                    publish(baseResults + contactResults)
+                    val finalResults = baseResults + contactResults
+                    publish(finalResults)
+                    evaluateCalculator(queryForContact, layout, finalResults.isNotEmpty())
                 }
             } else {
                 ContactSearchHelper.cancel()
                 shownContacts = emptyList()
                 publish(baseResults)
+                evaluateCalculator(query, layout, baseResults.isNotEmpty())
             }
         }
         updateDialRow(queryDialNumber ?: "")
+    }
+    
+    private fun evaluateCalculator(query: String, layout: Int, hasResults: Boolean) {
+        queryCalculatorResult = null
+        queryCalculatorExpression = null
+        queryCalculatorShowIncomplete = false
+        
+        if (!prefs.searchCalculatorEnabled) {
+            updateCalculatorRow()
+            return
+        }
+        
+        val expression = Calculator.toExpression(query, layout)
+        if (expression != null) {
+            // Only show calculator if expression contains at least one digit (mapped or raw)
+            val hasDigit = expression.any { it.isDigit() }
+            if (hasDigit) {
+                // When there are no app/contact matches, always show the expression even if incomplete
+                // When there are matches, only show when we have a valid result
+                if (!hasResults) {
+                    // Always show the mapped expression when no results
+                    queryCalculatorExpression = expression
+                    queryCalculatorShowIncomplete = true
+                    // Try to evaluate - if successful, show the result
+                    val allowPlainNumber = true
+                    val result = Calculator.evaluate(expression, allowPlainNumber)
+                    if (result != null) {
+                        queryCalculatorResult = result
+                    }
+                    // If result is null, we still show just the expression (incomplete)
+                } else {
+                    // When there are matches, require a valid evaluation
+                    val allowPlainNumber = false
+                    val result = Calculator.evaluate(expression, allowPlainNumber)
+                    if (result != null) {
+                        queryCalculatorResult = result
+                        queryCalculatorExpression = expression
+                    }
+                }
+            }
+        }
+        
+        updateCalculatorRow()
+    }
+
+    private fun updateCalculatorRow() {
+        val result = queryCalculatorResult
+        val expression = queryCalculatorExpression
+        val showIncomplete = queryCalculatorShowIncomplete
+        
+        // Hide row if no expression
+        if (expression == null) {
+            if (calculatorRow.visibility == VISIBLE) clearNavSelection()
+            calculatorRow.visibility = GONE
+            return
+        }
+        
+        // Determine text to show
+        val displayText = if (result != null) {
+            "$expression = $result"
+        } else if (showIncomplete) {
+            expression // Show incomplete expression without result
+        } else {
+            // No result and not showing incomplete -> hide row
+            if (calculatorRow.visibility == VISIBLE) clearNavSelection()
+            calculatorRow.visibility = GONE
+            return
+        }
+        
+        if (calculatorRow.visibility != VISIBLE || calculatorText.text.toString() != displayText) {
+            clearNavSelection()
+        }
+        calculatorRow.visibility = VISIBLE
+        calculatorText.text = displayText
     }
 
     /**
@@ -865,6 +996,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun handleAtContactSearch(contactQuery: String) {
         dialRow.visibility = GONE
+        calculatorRow.visibility = GONE
         if (contactQuery.isEmpty()) {
             ContactSearchHelper.cancel()
             shownContacts = emptyList()
@@ -896,6 +1028,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun handleCommandSearch(commandQuery: String) {
         dialRow.visibility = GONE
+        calculatorRow.visibility = GONE
         shownContacts = emptyList()
         val commands = commandsProvider?.invoke() ?: emptyList()
         val icon = commandIcon()
