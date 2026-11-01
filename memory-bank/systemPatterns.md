@@ -18,6 +18,14 @@
 - Contacts: `ContactSearchHelper.searchAsync` runs on a single background worker, latest request only (generation counter). The phone table is indexed once per session (`invalidateCache`). Still-matching contacts carry over between keystrokes so they don't blink.
 - Results go through `AppAdapter.submitListDiffed` (synchronous DiffUtil, no stable ids because contact keys aren't unique). The results RecyclerView has `setHasFixedSize(true)` and no item animator.
 
+## Search trackpad navigation (DPAD / trackball)
+- Keyboard focus stays on `searchInputInBar` while search is open. Plain focus search must not be used there: from the action-bar field, FOCUS_DOWN finds the home pager's RecyclerView behind the overlay, and typed keys are dropped once focus is there.
+- The overlay owns a virtual selection (`navPos`) over rows in on-screen order: the dial row, Google suggestion rows, result grid rows (adapter positions chunked by span count), and the AI "Open AI settings" link. The grid wraps left/right (`SearchNavigation.move`, pure and unit-tested). The highlight is drawn in `SearchOverlay.dispatchDraw`, not with view focus states.
+- `LauncherActivity.handleSearchKey` (from `dispatchKeyEvent`) routes DPAD keys to `navigate`/`activateNavSelection`. Enter only opens the highlighted row when one exists and Alt isn't active; otherwise the field's Enter/Alt+Enter path is unchanged. The UP of every consumed DOWN is consumed too (`searchNavKeys`). Typing keys clear the selection and refocus the field.
+- Trackball: `dispatchTrackballEvent` consumes everything while search is shown, so the system doesn't also synthesize DPAD keys. `TrackballNavigator` steps once per 1.0 of accumulated motion (the MotionEvent trackball unit is one DPAD press).
+- Any change to what is shown (`publish`, suggestions shown or cleared, dial row change, `renderAi`, session reset, `dismiss`) must call `clearNavSelection()`.
+- Robolectric's `Activity.dispatchKeyEvent` skips ViewRootImpl focus navigation, so tests read focus with `decorView.findFocus()` (`currentFocus` is null) and use `focusSearch` to model where focus would go.
+
 ## AI answers (`ai/`)
 - `AiProtocol` (SSE parser, request/response JSON, error mapping) and `AiMarkdown.parse` are pure Kotlin and unit-tested. `AiClient` does blocking HttpURLConnection calls. `AiAnswerSession` runs one answer at a time on the main thread: a generation counter drops anything from a cancelled or replaced request, and tokens are coalesced into one posted update.
 - `SearchOverlay` owns the session. `applyQuery` (on a changed query), `resetSession` and `dismiss` cancel it. Web suggestions are blocked while it is active. Test seams: `aiConfigProvider` and `aiSession.streamer`.
