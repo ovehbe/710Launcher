@@ -34,6 +34,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
+import com.meowgi.launcher710.ai.AiSearchTrigger
 import com.meowgi.launcher710.backup.BackupManager
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
@@ -209,6 +210,16 @@ class LauncherActivity : AppCompatActivity() {
             updateSoundProfileIcon()
         }
     }
+
+    /** Broadcast form of [AiSearchTrigger.ACTION]: no activity start, so the launcher isn't even paused. */
+    private val aiSearchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            triggerAiSearch()
+        }
+    }
+
+    private val aiSearchHandler: () -> Unit = { triggerAiSearch() }
+    private var enterLongPressRunnable: Runnable? = null
 
     private fun updateSoundProfileIcon() {
         if (!::btnSoundProfile.isInitialized) return
@@ -465,6 +476,12 @@ class LauncherActivity : AppCompatActivity() {
             IntentFilter("android.media.RINGER_MODE_CHANGED"),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, aiSearchReceiver,
+            IntentFilter(AiSearchTrigger.ACTION),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
+        AiSearchTrigger.register(aiSearchHandler)
 
         // The pager must be attached before the activity's state-restore pass, so it goes up now
         // with whatever the repository has — empty only on a cold start; after a config change the
@@ -1120,7 +1137,41 @@ class LauncherActivity : AppCompatActivity() {
                 true
             } else false
         }
+        searchInputInBar.setOnKeyListener { _, keyCode, event -> onSearchEnterKey(keyCode, event) }
         searchInputInBar.visibility = View.GONE
+    }
+
+    /**
+     * Long-press Enter asks AI about the query; a short press still runs the normal (Google)
+     * search, on key up as the EditText's own Enter handling does. Only taken over while AI
+     * answers are on and the overlay is open; otherwise the EditText handles Enter as before.
+     */
+    private fun onSearchEnterKey(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_ENTER && keyCode != KeyEvent.KEYCODE_NUMPAD_ENTER) return false
+        if (!prefs.aiEnabled || searchOverlay.visibility != View.VISIBLE) return false
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) {
+                enterLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+                val longPress = Runnable {
+                    enterLongPressRunnable = null
+                    triggerAiSearch()
+                }
+                enterLongPressRunnable = longPress
+                keyHandler.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
+            }
+            KeyEvent.ACTION_UP -> enterLongPressRunnable?.let {
+                keyHandler.removeCallbacks(it)
+                enterLongPressRunnable = null
+                searchOverlay.performExtendedSearch()
+            }
+        }
+        return true
+    }
+
+    internal fun triggerAiSearch() {
+        if (!searchOverlay.startAiAnswer()) {
+            android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun handleTypeToSearchFromText(text: CharSequence) {
@@ -2471,5 +2522,7 @@ class LauncherActivity : AppCompatActivity() {
         pagerAdapter = null
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(aiSearchReceiver) } catch (_: Exception) {}
+        AiSearchTrigger.unregister(aiSearchHandler)
     }
 }

@@ -16,16 +16,24 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.ai.AiAnswerSession
+import com.meowgi.launcher710.ai.AiConfigResult
+import com.meowgi.launcher710.ai.AiMarkdown
+import com.meowgi.launcher710.ai.AiSecrets
+import com.meowgi.launcher710.ai.AiSettings
+import com.meowgi.launcher710.ai.AiState
 import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.ui.appgrid.AppAdapter
+import com.meowgi.launcher710.ui.settings.SettingsActivity
+import com.meowgi.launcher710.ui.settings.SettingsScreen
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
-import com.meowgi.launcher710.util.WebSuggestions
 import com.meowgi.launcher710.util.SearchRanker
+import com.meowgi.launcher710.util.WebSuggestions
 import androidx.core.content.ContextCompat
 
 class SearchOverlay @JvmOverloads constructor(
@@ -42,6 +50,11 @@ class SearchOverlay @JvmOverloads constructor(
     private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
+    private val aiPanel: ScrollView
+    private val aiProgress: ProgressBar
+    private val aiText: TextView
+    private val aiError: TextView
+    private val aiSettingsLink: TextView
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
@@ -106,6 +119,16 @@ class SearchOverlay @JvmOverloads constructor(
     /** False in command and @-contact modes, where web suggestions make no sense. */
     private var webSuggestionsAllowed = false
     internal val webSuggestions = WebSuggestions { query, suggestions -> showWebSuggestions(query, suggestions) }
+    internal val aiSession = AiAnswerSession { renderAi(it) }
+    /** Read on each AI trigger, so settings changes apply without reopening search. */
+    internal var aiConfigProvider: () -> AiConfigResult = { AiSettings.load(prefs, AiSecrets(context)) }
+    private val markdownStyle by lazy {
+        AiMarkdown.Style(
+            codeBackground = 0x33FFFFFF,
+            quoteColor = resources.getColor(R.color.bb_text_secondary, null),
+            indentPx = dp(14)
+        )
+    }
     /** Number the current query dials (dial row, Enter), or null; set before results are published. */
     private var queryDialNumber: String? = null
     /** Normalized current query, for telling text matches from keypad-digit matches. */
@@ -139,6 +162,7 @@ class SearchOverlay @JvmOverloads constructor(
         cachedCommandIcon = null
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
+        aiSession.cancel()
         clearWebSuggestions()
         if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
@@ -263,7 +287,99 @@ class SearchOverlay @JvmOverloads constructor(
         resultsRecycler.setOnClickListener { /* consume so root click doesn't dismiss */ }
         addView(resultsRecycler, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
+        aiProgress = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(prefs.accentColor)
+        }
+        aiText = TextView(context).apply {
+            textSize = 15f
+            setTextColor(resources.getColor(R.color.bb_text_primary, null))
+            typeface = font
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        aiError = TextView(context).apply {
+            textSize = 14f
+            setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+            typeface = font
+        }
+        aiSettingsLink = TextView(context).apply {
+            text = context.getString(R.string.ai_open_settings)
+            textSize = 14f
+            setTextColor(prefs.accentColor)
+            typeface = font
+            setPadding(0, dp(10), 0, dp(10))
+            isFocusable = true
+            setOnClickListener {
+                context.startActivity(SettingsActivity.intent(context, SettingsScreen.AI))
+                dismiss()
+            }
+        }
+        val aiContent = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(16))
+            addView(aiProgress, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(12) })
+            addView(aiText, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(aiError, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(aiSettingsLink, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        }
+        aiPanel = ScrollView(context).apply {
+            visibility = GONE
+            isFocusable = true
+            isFocusableInTouchMode = false
+            isFillViewport = true
+            setOnClickListener { /* consume so root click doesn't dismiss */ }
+            addView(aiContent, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        addView(aiPanel, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+
         setOnClickListener { dismiss() }
+    }
+
+    /**
+     * Answers the current query with the configured AI model, in place of the results. Typing,
+     * closing or reopening search cancels it. Returns false when there is no query to answer.
+     */
+    fun startAiAnswer(): Boolean {
+        val query = lastQuery.trim()
+        if (visibility != VISIBLE || query.isEmpty()) return false
+        clearWebSuggestions()
+        aiSession.start(query, aiConfigProvider())
+        return true
+    }
+
+    private fun renderAi(state: AiState) {
+        val active = state !is AiState.Idle
+        aiPanel.visibility = if (active) VISIBLE else GONE
+        resultsRecycler.visibility = if (active) GONE else VISIBLE
+        if (!active) return
+        if (suggestionsBox.visibility == VISIBLE) clearWebSuggestions()
+        val loading = state is AiState.Loading || (state is AiState.Answer && state.text.isEmpty() && !state.done)
+        aiProgress.visibility = if (loading) VISIBLE else GONE
+        when (state) {
+            is AiState.Answer -> {
+                aiError.visibility = GONE
+                aiSettingsLink.visibility = GONE
+                if (state.done && state.text.isBlank()) {
+                    aiText.visibility = GONE
+                    aiError.visibility = VISIBLE
+                    aiError.text = context.getString(R.string.ai_empty_answer)
+                } else {
+                    aiText.visibility = if (state.text.isEmpty()) GONE else VISIBLE
+                    aiText.text = AiMarkdown.toSpanned(AiMarkdown.parse(state.text), markdownStyle)
+                }
+            }
+            is AiState.Failed -> {
+                aiText.visibility = GONE
+                aiError.visibility = VISIBLE
+                aiError.text = state.message
+                aiSettingsLink.visibility = VISIBLE
+            }
+            else -> {
+                aiText.visibility = GONE
+                aiError.visibility = GONE
+                aiSettingsLink.visibility = GONE
+                aiPanel.scrollTo(0, 0)
+            }
+        }
     }
 
     /** Set label for the extended search button, e.g. "Frequents", "All Apps", "Extended". */
@@ -287,6 +403,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun dismiss() {
         ContactSearchHelper.cancel()
+        aiSession.cancel()
         clearWebSuggestions()
         visibility = GONE
         onDismiss?.invoke()
@@ -297,6 +414,7 @@ class SearchOverlay @JvmOverloads constructor(
         if (query == appliedQuery) return
         lastQuery = query
         appliedQuery = query
+        if (aiSession.isActive) aiSession.cancel()
         android.os.Trace.beginSection("SearchOverlay.applyQuery")
         try {
             onSearch(query)
@@ -497,7 +615,7 @@ class SearchOverlay @JvmOverloads constructor(
      */
     private fun updateWebSuggestions(results: List<LaunchableItem>) {
         val query = lastQuery.trim()
-        if (!WebSuggestions.shouldRequest(webSuggestionsEnabled, webSuggestionsAllowed, query,
+        if (aiSession.isActive || !WebSuggestions.shouldRequest(webSuggestionsEnabled, webSuggestionsAllowed, query,
                 dialable = queryDialNumber != null, hasTextMatch = results.any(::matchesText))
         ) {
             clearWebSuggestions()
@@ -520,7 +638,7 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun showWebSuggestions(query: String, suggestions: List<String>) {
-        if (visibility != VISIBLE || query != lastQuery.trim() || !webSuggestionsAllowed || queryDialNumber != null ||
+        if (visibility != VISIBLE || query != lastQuery.trim() || !webSuggestionsAllowed || queryDialNumber != null || aiSession.isActive ||
             currentResults.any(::matchesText)
         ) return
         suggestionsBox.removeAllViews()

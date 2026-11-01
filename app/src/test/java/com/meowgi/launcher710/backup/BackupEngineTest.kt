@@ -253,6 +253,29 @@ class BackupEngineTest {
     }
 
     @Test
+    fun aiApiKeyIsNeverBackedUp() {
+        val source = sourceDevice().apply {
+            prefs.files["ai_secrets"] = mapOf("api_key" to "c2VhbGVk")
+            prefs.files["meowgi_launcher710_settings"] =
+                prefs.files.getValue("meowgi_launcher710_settings") + mapOf("aiEnabled" to true, "aiModel" to "gpt-x")
+        }
+        val captured = source.engine().capture()
+        assertFalse(captured.prefs.containsKey("ai_secrets"))
+        assertFalse(String(BackupCodec.encode(captured)).contains("c2VhbGVk"))
+        // The rest of the AI settings travel with the backup.
+        assertEquals("gpt-x", captured.prefs.getValue("meowgi_launcher710_settings")["aiModel"])
+    }
+
+    @Test
+    fun restoreLeavesTheDeviceAiApiKeyAlone() {
+        val target = targetDevice().apply { prefs.files["ai_secrets"] = mapOf("api_key" to "device-key") }
+        val crafted = backupOf(sourceDevice()).let { it.copy(prefs = it.prefs + ("ai_secrets" to mapOf("api_key" to "foreign"))) }
+        val report = target.engine().restore(crafted)
+        assertEquals(mapOf("api_key" to "device-key"), target.prefs.files["ai_secrets"])
+        assertEquals(2, report.prefFiles)
+    }
+
+    @Test
     fun nothingPendingMeansNoRecovery() {
         assertFalse(targetDevice().engine().recoverInterrupted())
     }

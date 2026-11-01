@@ -59,10 +59,15 @@ class BackupEngine(
         val COLUMN_FILLS: Map<String, Map<String, String>> = mapOf(
             "app_stats" to mapOf("frecency" to "launchCount", "frecencyAt" to "lastLaunched")
         )
+
+        /** Never captured, and never written by a restore even if a backup file contains them. */
+        val EXCLUDED_PREF_FILES: Set<String> = setOf(com.meowgi.launcher710.ai.AiSecrets.PREFS_NAME)
     }
 
     fun capture(): BackupPayload {
-        val prefData = prefs.fileNames().filter(BackupCodec::isValidName).sorted().associateWith { prefs.read(it) }
+        val prefData = prefs.fileNames()
+            .filter { BackupCodec.isValidName(it) && it !in EXCLUDED_PREF_FILES }
+            .sorted().associateWith { prefs.read(it) }
         val tables = db.tableNames().sorted().associateWith { db.read(it) }
         val used = HashSet<String>()
         val files = BackupScan.referencedPaths(prefData, dataRoots).mapNotNull { path ->
@@ -109,7 +114,8 @@ class BackupEngine(
             throw BackupException("Couldn't prepare the backup's files. Nothing was changed.", e)
         }
         val relocation = payload.assets.mapNotNull { a -> finalPaths[a.name]?.let { a.originalPath to it } }.toMap()
-        val newPrefs = payload.prefs.mapValues { (_, v) -> BackupScan.relocate(v, relocation) }
+        val newPrefs = payload.prefs.filterKeys { it !in EXCLUDED_PREF_FILES }
+            .mapValues { (_, v) -> BackupScan.relocate(v, relocation) }
 
         val snapshot = try {
             BackupPayload(

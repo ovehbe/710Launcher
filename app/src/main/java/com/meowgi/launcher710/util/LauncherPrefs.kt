@@ -505,6 +505,24 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("searchUsageRanking", true)
         set(v) = prefs.edit().putBoolean("searchUsageRanking", v).apply()
 
+    // --- AI answers (the API key is in AiSecrets, never here) ---
+    var aiEnabled: Boolean
+        get() = prefs.getBoolean("aiEnabled", false)
+        set(v) = prefs.edit().putBoolean("aiEnabled", v).apply()
+    var aiBaseUrl: String
+        get() = prefs.getString("aiBaseUrl", null) ?: com.meowgi.launcher710.ai.AiProtocol.DEFAULT_BASE_URL
+        set(v) = prefs.edit().putString("aiBaseUrl", v).apply()
+    var aiModel: String
+        get() = prefs.getString("aiModel", null) ?: ""
+        set(v) = prefs.edit().putString("aiModel", v).apply()
+    var aiSystemPrompt: String
+        get() = prefs.getString("aiSystemPrompt", null) ?: ""
+        set(v) = prefs.edit().putString("aiSystemPrompt", v).apply()
+    /** Models from the last successful "Fetch models", offered in the model picker. */
+    var aiFetchedModels: List<String>
+        get() = prefs.getString("aiFetchedModels", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+        set(v) = prefs.edit().putString("aiFetchedModels", v.joinToString("\n")).apply()
+
     /** 0 = built-in, 1 = launch app, 2 = launch with query, 3 = launch shortcut, 4 = launch and inject key, 5 = disabled */
     var searchEngineMode: Int
         get() = prefs.getInt("searchEngineMode", 0)
