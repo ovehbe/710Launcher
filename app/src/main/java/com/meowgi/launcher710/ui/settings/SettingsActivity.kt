@@ -267,5 +267,19 @@ class SettingsActivity : AppCompatActivity() {
         typeface = font
     }
 
+    internal fun showResetToDefaultsDialog() {
+        AlertDialog.Builder(this, dialogTheme)
+            .setTitle("Reset to default style")
+            .setMessage("This will reset all launcher settings to the factory defaults. Your apps and data are not affected.")
+            .setPositiveButton("Reset") { _, _ ->
+                com.meowgi.launcher710.util.DefaultProfile.reset(this)
+                Toast.makeText(this, "Launcher reset to defaults. Restart to apply.", Toast.LENGTH_LONG).show()
+                startActivity(Intent(this, com.meowgi.launcher710.RestartLauncherActivity::class.java))
+                finish()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     internal fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 }

@@ -56,6 +56,7 @@ import com.meowgi.launcher710.model.IntentShortcutInfo
 import com.meowgi.launcher710.model.LaunchableItem
 import com.meowgi.launcher710.model.ShortcutDisplayInfo
 import com.meowgi.launcher710.util.AppRepository
+import com.meowgi.launcher710.util.DefaultProfile
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.NotificationShade
@@ -267,6 +268,8 @@ class LauncherActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // Before anything reads prefs or the DB: undo a restore the process died in the middle of.
         BackupManager.recoverInterruptedRestore(this)
+        // On a fresh install, apply the factory defaults before first render.
+        DefaultProfile.applyIfFresh(this)
 
         prefs = LauncherPrefs(this)
         applySystemUI()
