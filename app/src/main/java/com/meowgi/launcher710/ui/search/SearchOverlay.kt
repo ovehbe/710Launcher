@@ -678,7 +678,12 @@ class SearchOverlay @JvmOverloads constructor(
                 context.startActivity(intent)
             } catch (_: Exception) {
                 val uri = Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(searchLaunchFlags))
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(searchLaunchFlags))
+                } catch (_: Exception) {
+                    // No search app and no browser: say so rather than crash the launcher.
+                    android.widget.Toast.makeText(context, "No app found to open the search", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
             dismiss()
         }

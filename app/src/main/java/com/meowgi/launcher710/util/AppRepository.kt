@@ -420,7 +420,15 @@ class AppRepository private constructor(private val context: Context) {
             component = app.componentName
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
         }
-        (owner?.get() ?: context).startActivity(intent)
+        try {
+            (owner?.get() ?: context).startActivity(intent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            // Removed since the list was built: rescan instead of crashing, and count no launch.
+            reloadInBackground()
+            return
+        } catch (_: SecurityException) {
+            return
+        }
         appScope.launch { recordLaunch(app) }
     }
 
