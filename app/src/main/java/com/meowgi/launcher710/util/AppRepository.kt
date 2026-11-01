@@ -98,6 +98,8 @@ class AppRepository private constructor(private val context: Context) {
 
     /** densityDpi the loaded raw icons were decoded at; 0 until the first scan completes. */
     @Volatile private var loadedDensityDpi = 0
+    /** True while the launcher is started; set from the activity's onStart/onStop. */
+    @Volatile var visible = false
     /** Set by [invalidate]; the next [needsReload] forces a rescan. */
     @Volatile private var stale = false
 
@@ -107,7 +109,9 @@ class AppRepository private constructor(private val context: Context) {
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            reloadInBackground()
+            // A full rescan costs a PackageManager query plus an icon load per app; not worth
+            // it under another app. Mark stale and let the next onStart catch up.
+            if (visible) reloadInBackground() else stale = true
         }
     }
 
