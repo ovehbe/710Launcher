@@ -37,6 +37,12 @@ class NotifListenerService : NotificationListenerService() {
         mainHandler.postDelayed(dispatchChange, DEBOUNCE_MS)
     }
 
+    override fun onListenerConnected() {
+        // After a rebind the service exists before it may read notifications, so whatever was
+        // refreshed earlier saw nothing. Refresh once the system lets us read them.
+        notifyChange()
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         notifyChange()
     }
