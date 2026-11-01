@@ -71,6 +71,9 @@ class SearchOverlayDecisionTest {
         looper.idle()
     }
 
+    /** Fetched queries, without the empty pre-warm request sent when search opens. */
+    private fun queries() = fetched.filter { it.isNotEmpty() }
+
     private fun type(query: String) {
         overlay.applyQuery(query)
         settle()
@@ -105,7 +108,7 @@ class SearchOverlayDecisionTest {
     fun keypadDigitOnlyMatchesStillGetSuggestions() {
         // "zwj" → keypad digits "71", which match "710 Settings"; that is not a text match.
         type("zwj")
-        assertTrue(fetched.contains("zwj"))
+        assertTrue(queries().contains("zwj"))
         assertEquals(listOf("zwj one", "zwj two"), suggestions())
     }
 
@@ -118,7 +121,7 @@ class SearchOverlayDecisionTest {
     @Test
     fun textMatchesSuppressSuggestions() {
         type("sett")
-        assertTrue(fetched.isEmpty())
+        assertTrue(queries().isEmpty())
         assertEquals(emptyList<String>(), suggestions())
     }
 
@@ -126,7 +129,7 @@ class SearchOverlayDecisionTest {
     fun dialableQueriesGetTheDialRowInsteadOfSuggestions() {
         type("445")
         type("wer")
-        assertTrue(fetched.isEmpty())
+        assertTrue(queries().isEmpty())
         assertEquals(emptyList<String>(), suggestions())
     }
 
@@ -135,11 +138,24 @@ class SearchOverlayDecisionTest {
         LauncherPrefs(context).searchWebSuggestions = false
         overlay.show()
         type("hjkl")
+        assertTrue(queries().isEmpty())
+    }
+
+    @Test
+    fun openingSearchPrewarmsTheConnectionOnlyWhenEnabled() {
+        settle()
+        assertEquals(listOf(""), fetched.toList())
+        fetched.clear()
+        LauncherPrefs(context).searchWebSuggestions = false
+        overlay.show()
+        settle()
         assertTrue(fetched.isEmpty())
     }
 
     @Test
     fun rawNumberKeysOnTheHomeScreenShowTheDialRow() {
+        // The activity's own overlay has no fake fetcher; keep it off the network.
+        LauncherPrefs(context).searchWebSuggestions = false
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         val looper = shadowOf(Looper.getMainLooper())
         looper.idle()

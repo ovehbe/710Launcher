@@ -140,6 +140,7 @@ class SearchOverlay @JvmOverloads constructor(
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
         clearWebSuggestions()
+        if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -230,7 +231,7 @@ class SearchOverlay @JvmOverloads constructor(
                             } ?: dismiss()
                         }
                         is LaunchableItem.LauncherSettings -> {
-                            context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                            context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
                             dismiss()
                         }
                         is LaunchableItem.RefreshCache -> {
@@ -368,7 +369,7 @@ class SearchOverlay @JvmOverloads constructor(
                         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     } catch (_: Exception) { Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show() }
                 }
-                is LaunchableItem.LauncherSettings -> context.startActivity(Intent(context, com.meowgi.launcher710.ui.settings.SettingsActivity::class.java))
+                is LaunchableItem.LauncherSettings -> context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
                 is LaunchableItem.RefreshCache -> onRefreshCache?.invoke()
                 is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
                 is LaunchableItem.SearchCommand -> {
@@ -492,7 +493,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     /**
      * Runs on every publish, so it stays cheap: when suggestions don't apply it only cancels;
-     * otherwise it (re)starts one debounced request, and a repeat for the same query is a no-op.
+     * otherwise it hands the query to [WebSuggestions], where a repeat of the same query is a no-op.
      */
     private fun updateWebSuggestions(results: List<LaunchableItem>) {
         val query = lastQuery.trim()

@@ -84,4 +84,6 @@ dependencies {
     // Drives real views (SearchOverlay, settings insets) on the JVM.
     testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.test:core:1.5.0")
+    // Android's HttpURLConnection is a fork of OkHttp 2.7.5; the latency bench runs through it.
+    testImplementation("com.squareup.okhttp:okhttp-urlconnection:2.7.5")
 }
