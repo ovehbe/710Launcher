@@ -1316,7 +1316,10 @@ class LauncherActivity : AppCompatActivity() {
             soundProfileOverlay.show()
         }
         applyClickHighlight(findViewById(R.id.btnSearch))
-        findViewById<View>(R.id.btnSearch).setOnClickListener { showSearchPageAware() }
+        findViewById<View>(R.id.btnSearch).apply {
+            setOnClickListener { showSearchPageAware() }
+            setOnLongClickListener { triggerAiSearch(); true }
+        }
 
         val contentArea = findViewById<View>(R.id.contentArea)
         contentArea.setOnLongClickListener {

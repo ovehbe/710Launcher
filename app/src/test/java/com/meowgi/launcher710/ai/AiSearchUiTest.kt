@@ -32,6 +32,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
@@ -268,6 +269,43 @@ class AiSearchUiTest {
         activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 1))
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         looper.idle()
+        assertFalse(o.aiSession.isActive)
+    }
+
+    @Test
+    fun longPressOnTheSearchIconAsksAiAboutTheQuery() {
+        val (activity, o) = launcherWithQuery(aiEnabled = true, altEnter = false)
+        val icon = activity.findViewById<View>(R.id.btnSearch)
+        assertTrue(icon.performLongClick())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(AiState.Failed("hj", "AI answers are off."), o.aiSession.state)
+        assertEquals(View.VISIBLE, o.visibility)
+        assertEquals("hj", searchField(activity).text.toString())
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun longPressOnTheSearchIconWithoutAQueryOnlyHints() {
+        LauncherPrefs(context).searchWebSuggestions = false
+        val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        shadowOf(Looper.getMainLooper()).idle()
+        val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
+        assertTrue(activity.findViewById<View>(R.id.btnSearch).performLongClick())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(context.getString(R.string.ai_no_query), ShadowToast.getTextOfLatestToast())
+        assertFalse(o.aiSession.isActive)
+        assertEquals(View.GONE, o.visibility)
+    }
+
+    @Test
+    fun tappingTheSearchIconStillOpensSearch() {
+        LauncherPrefs(context).searchWebSuggestions = false
+        val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        shadowOf(Looper.getMainLooper()).idle()
+        val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
+        assertTrue(activity.findViewById<View>(R.id.btnSearch).performClick())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(View.VISIBLE, o.visibility)
         assertFalse(o.aiSession.isActive)
     }
 
