@@ -63,3 +63,4 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
+- Cheaper onResume (unreleased): `LauncherActivity` rebuilds the page grids, the dock and the click highlights only when a settings write was observed (`uiDirty`, set by a SharedPreferences listener registered in onStart and forced on onStop) or when `AppRepository.refreshStats()` reports changed usage stats (it now returns a Boolean). Otherwise a resume only reloads the stats rows. Known gap: pinned shortcuts removed externally by their owner app are picked up on the next dirty resume rather than immediately.

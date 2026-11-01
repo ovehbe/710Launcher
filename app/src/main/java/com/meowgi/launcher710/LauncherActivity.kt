@@ -123,6 +123,12 @@ class LauncherActivity : AppCompatActivity() {
     private var tickerTypingRunnable: Runnable? = null
     private var tickerDismissRunnable: Runnable? = null
     private var tickerRefreshRunnable: Runnable? = null
+
+    // Set by any settings write; onResume only rebuilds the grids, dock and click highlights
+    // when this is set or the usage stats changed. Starts true so the first resume renders.
+    @Volatile private var uiDirty = true
+    private val prefsChangeListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> uiDirty = true }
     private var currentTickerNotificationKey: String? = null
     private val tickerTypingDelayMs = 45L
     private val tickerDisplayDurationMs = 5000L
@@ -2484,6 +2490,8 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        getSharedPreferences("meowgi_launcher710_settings", MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         widgetHost.startListening()
         // Held in a static on the service, so it must be cleared in onStop or it keeps this
         // activity alive for as long as the notification listener runs.
@@ -2497,6 +2505,9 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        getSharedPreferences("meowgi_launcher710_settings", MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsChangeListener)
+        uiDirty = true // writes made while stopped (Settings) are not observed
         widgetHost.stopListening()
         NotifListenerService.onNotificationsChanged = null
     }
@@ -2551,7 +2562,6 @@ class LauncherActivity : AppCompatActivity() {
             recreate()
             return
         }
-        window.decorView.post { clearHighlightTraces() }
         updateSoundProfileIcon()
         refreshWallpaper()
         applySystemUI()
@@ -2567,6 +2577,8 @@ class LauncherActivity : AppCompatActivity() {
             savedAllPagePack != allPageIconPackManager.currentPackage ||
             savedDockPack != dockIconPackManager.currentPackage
 
+        val dirty = uiDirty
+        uiDirty = false
         if (pagerAdapter?.reloadPageOrder() == true) {
             pagerAdapter?.notifyDataSetChanged()
             buildTabBar()
@@ -2607,12 +2619,14 @@ class LauncherActivity : AppCompatActivity() {
             // Nothing structural changed — pick up launch counts and favourites so the Frequent
             // page stays current, then re-render from the icon cache.
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) { repository.refreshStats() }
-                pagerAdapter?.refreshAll()
-                dockBar.loadDock()
+                val statsChanged = withContext(Dispatchers.IO) { repository.refreshStats() }
+                if (statsChanged || dirty) {
+                    pagerAdapter?.refreshAll()
+                    dockBar.loadDock()
+                }
             }
         }
-        refreshClickHighlights()
+        if (dirty) refreshClickHighlights()
         window.decorView.post { clearHighlightTraces() }
     }
 
