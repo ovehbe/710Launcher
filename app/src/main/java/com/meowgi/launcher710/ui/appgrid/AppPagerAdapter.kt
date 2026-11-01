@@ -22,7 +22,7 @@ class AppPagerAdapter(
 ) : FragmentStateAdapter(activity) {
 
     private val prefs = LauncherPrefs(activity)
-    private var pageOrder = filterPageOrder(prefs.getPageOrder())
+    private var pageOrder = prefs.getFilteredPageOrder()
 
     /**
      * Injects dependencies into every [AppGridFragment] that attaches, not just the ones this
@@ -42,9 +42,6 @@ class AppPagerAdapter(
         super.onDetachedFromRecyclerView(recyclerView)
         activity.supportFragmentManager.removeFragmentOnAttachListener(attachListener)
     }
-
-    private fun filterPageOrder(order: List<String>): List<String> =
-        order.filter { pid -> if (pid == "all") !prefs.hideAllPage else if (pid == "frequent") !prefs.hideFrequentPage else true }
 
     override fun getItemCount() = pageOrder.size
 
@@ -110,7 +107,7 @@ class AppPagerAdapter(
 
     /** @return true if the visible page set actually changed, so callers can skip needless rebuilds. */
     fun reloadPageOrder(): Boolean {
-        val updated = filterPageOrder(prefs.getPageOrder())
+        val updated = prefs.getFilteredPageOrder()
         if (updated == pageOrder) return false
         pageOrder = updated
         return true

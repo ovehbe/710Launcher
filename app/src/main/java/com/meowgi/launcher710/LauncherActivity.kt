@@ -611,7 +611,7 @@ class LauncherActivity : AppCompatActivity() {
         buildTabBar()
         setupFocusOrder()
         setupBottomSwipe()
-        val startTab = adapter.getPositionForPageId(prefs.defaultTabPageId)
+        val startTab = adapter.getPositionForPageId(prefs.effectiveDefaultTabPageId)
         appPager.setCurrentItem(startTab, false)
         updateTabHighlight(startTab)
 
@@ -2222,7 +2222,7 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun getDefaultTabPosition(): Int =
-        pagerAdapter?.getPositionForPageId(prefs.defaultTabPageId) ?: 0
+        pagerAdapter?.getPositionForPageId(prefs.effectiveDefaultTabPageId) ?: 0
 
     private fun lockScreen() {
         val a11y = KeyCaptureAccessibilityService.instance

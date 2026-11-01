@@ -63,3 +63,4 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
+- Hidden pages (unreleased): `LauncherPrefs.getFilteredPageOrder(order)` is the only place that decides which pages are visible; `AppPagerAdapter` no longer carries its own copy. `LauncherPrefs.effectiveDefaultTabPageId` falls back to Favorites (then the first visible page) when the stored `defaultTabPageId` points at a hidden page, and the launcher and the Settings row both read it. Covered by `HiddenPagesTest`.
