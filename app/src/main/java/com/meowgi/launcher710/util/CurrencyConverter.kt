@@ -155,26 +155,93 @@ object CurrencyConverter {
 
     /**
      * Map BB keyboard letters to digits/operators in amount string only.
-     * Similar to Calculator.toExpression but returns the mapped string.
+     * Handles magnitude suffixes (k, m, b) and number words.
+     * 
+     * Context-sensitive mapping:
+     * - m: decimal point when followed by digits, million suffix when trailing
+     * - k: thousand suffix (may also be from BB keyboard)
+     * - b: billion suffix (may also be from BB keyboard)
      */
     private fun mapAmountString(str: String, layout: Int): String? {
         if (str.isEmpty()) return null
-        val sb = StringBuilder(str.length)
-        var hasDigit = false
         
-        for (ch in str) {
+        // First, expand number words (e.g., "one million" -> "1000000")
+        val withWords = expandNumberWords(str)
+        
+        // Then map BB keyboard letters FIRST, handling m/k/b context-sensitively
+        val sb = StringBuilder(withWords.length * 2)
+        var hasDigit = false
+        var i = 0
+        
+        while (i < withWords.length) {
+            val ch = withWords[i]
             when {
-                ch in '0'..'9' -> { sb.append(ch); hasDigit = true }
-                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> sb.append(ch)
-                ch == '.' || ch == ',' -> sb.append(ch)
-                ch == '(' || ch == ')' -> sb.append(ch)
-                ch == ' ' || ch == '\t' -> {} // ignore whitespace
+                ch in '0'..'9' -> { sb.append(ch); hasDigit = true; i++ }
+                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> { sb.append(ch); i++ }
+                ch == '.' || ch == ',' -> { sb.append(ch); i++ }
+                ch == '(' || ch == ')' -> { sb.append(ch); i++ }
+                ch == ' ' || ch == '\t' -> { i++ } // ignore whitespace
+                ch.lowercaseChar() == 'm' -> {
+                    // Check if m should be decimal point (followed by digit/digit-letter) or million (trailing)
+                    val nextChar = if (i + 1 < withWords.length) withWords[i + 1] else null
+                    val isFollowedByDigit = nextChar != null && (
+                        nextChar.isDigit() || 
+                        Calculator.operatorChar(nextChar, layout)?.isDigit() == true
+                    )
+                    if (isFollowedByDigit) {
+                        // m is decimal point
+                        sb.append('.')
+                    } else {
+                        // m is million suffix
+                        sb.append("*1000000")
+                    }
+                    hasDigit = true
+                    i++
+                }
+                ch.lowercaseChar() == 'k' && (i + 1 >= withWords.length || !withWords[i + 1].isDigit()) -> {
+                    // k is thousand suffix only when trailing or not followed by digit
+                    sb.append("*1000")
+                    hasDigit = true
+                    i++
+                }
+                ch.lowercaseChar() == 'b' -> {
+                    // Check if followed by 'n' for 'bn' = billion
+                    if (i + 1 < withWords.length && withWords[i + 1].lowercaseChar() == 'n') {
+                        sb.append("*1000000000")
+                        i += 2
+                    } else {
+                        sb.append("*1000000000")
+                        i++
+                    }
+                    hasDigit = true
+                }
+                ch.lowercaseChar() == 't' -> {
+                    // t could be trillion or left paren (BB keyboard)
+                    // Only use as trillion if not followed by digits (would be part of an expression)
+                    val nextChar = if (i + 1 < withWords.length) withWords[i + 1] else null
+                    if (nextChar == null || !nextChar.isDigit()) {
+                        sb.append("*1000000000000")
+                        hasDigit = true
+                        i++
+                    } else {
+                        // Map as BB keyboard
+                        val mapped = Calculator.operatorChar(ch, layout)
+                        if (mapped != null) {
+                            sb.append(mapped)
+                            if (mapped in '0'..'9') hasDigit = true
+                        } else {
+                            return null
+                        }
+                        i++
+                    }
+                }
                 else -> {
                     // Try to map letter to operator/digit
                     val mapped = Calculator.operatorChar(ch, layout)
                     if (mapped != null) {
                         sb.append(mapped)
                         if (mapped in '0'..'9') hasDigit = true
+                        i++
                     } else {
                         // Character can't be mapped
                         return null
@@ -184,6 +251,244 @@ object CurrencyConverter {
         }
         
         return if (hasDigit) sb.toString() else null
+    }
+
+    /**
+     * Expand magnitude suffixes: k=1e3, m=1e6, b=1e9, bn/mn=billion/million, t=1e12
+     * Examples: "100k" -> "100*1000", "1.5m" -> "1.5*1000000"
+     * 
+     * Context-sensitive handling for BB keyboard:
+     * - m is million when trailing (not followed by digits)
+     * - m is decimal point when followed by digits (handled separately in BB mapping)
+     */
+    private fun expandMagnitudeSuffixes(str: String): String {
+        if (str.isEmpty()) return str
+        
+        val result = StringBuilder()
+        var i = 0
+        
+        while (i < str.length) {
+            // Check if this is a magnitude suffix
+            val remaining = str.substring(i).lowercase()
+            val suffix = when {
+                remaining.startsWith("bn") -> "bn" to 1_000_000_000.0
+                remaining.startsWith("mn") -> "mn" to 1_000_000.0
+                remaining.startsWith("b") && (i + 1 >= str.length || !str[i + 1].isDigit()) -> "b" to 1_000_000_000.0
+                remaining.startsWith("m") && (i + 1 >= str.length || !str[i + 1].isDigit()) -> "m" to 1_000_000.0
+                remaining.startsWith("k") -> "k" to 1_000.0
+                remaining.startsWith("t") && (i + 1 >= str.length || !str[i + 1].isDigit()) -> "t" to 1_000_000_000_000.0
+                else -> null
+            }
+            
+            if (suffix != null) {
+                // We found a suffix - multiply the preceding number
+                result.append("*${suffix.second.toLong()}")
+                i += suffix.first.length
+            } else {
+                result.append(str[i])
+                i++
+            }
+        }
+        
+        return result.toString()
+    }
+
+    /**
+     * Expand number words to digits.
+     * Examples: "one million" -> "1000000", "two thousand" -> "2000", "half a million" -> "500000"
+     * Supports: one-twenty, tens, hundred, thousand, million, billion
+     */
+    private fun expandNumberWords(str: String): String {
+        val words = str.lowercase().trim().split(Regex("\\s+"))
+        val result = mutableListOf<String>()
+        var currentNumber = 0.0
+        var pendingMultiplier = 0.0
+        var i = 0
+        
+        while (i < words.size) {
+            val word = words[i]
+            
+            // Try to parse as a regular number first
+            val numValue = word.toDoubleOrNull()
+            if (numValue != null) {
+                if (pendingMultiplier > 0) {
+                    currentNumber += numValue
+                } else {
+                    currentNumber = numValue
+                }
+                i++
+                continue
+            }
+            
+            val digitValue = when (word) {
+                "zero" -> 0.0
+                "one" -> 1.0
+                "a", "an" -> null // "a"/"an" before multiplier means 1, otherwise skip
+                "two" -> 2.0
+                "three" -> 3.0
+                "four" -> 4.0
+                "five" -> 5.0
+                "six" -> 6.0
+                "seven" -> 7.0
+                "eight" -> 8.0
+                "nine" -> 9.0
+                "ten" -> 10.0
+                "eleven" -> 11.0
+                "twelve" -> 12.0
+                "thirteen" -> 13.0
+                "fourteen" -> 14.0
+                "fifteen" -> 15.0
+                "sixteen" -> 16.0
+                "seventeen" -> 17.0
+                "eighteen" -> 18.0
+                "nineteen" -> 19.0
+                "twenty" -> 20.0
+                "thirty" -> 30.0
+                "forty" -> 40.0
+                "fifty" -> 50.0
+                "sixty" -> 60.0
+                "seventy" -> 70.0
+                "eighty" -> 80.0
+                "ninety" -> 90.0
+                "half" -> 0.5
+                else -> null
+            }
+            
+            val multiplier = when (word) {
+                "hundred" -> 100.0
+                "thousand" -> 1_000.0
+                "million" -> 1_000_000.0
+                "billion" -> 1_000_000_000.0
+                else -> null
+            }
+            
+            when {
+                digitValue != null -> {
+                    if (pendingMultiplier > 0) {
+                        currentNumber += digitValue
+                    } else {
+                        currentNumber = digitValue
+                    }
+                    i++
+                }
+                multiplier != null -> {
+                    if (currentNumber == 0.0) currentNumber = 1.0
+                    
+                    // Handle chained multipliers like "hundred thousand"
+                    if (multiplier <= 1000.0 && pendingMultiplier == 0.0) {
+                        // Small multiplier (hundred) - check if followed by larger one
+                        currentNumber *= multiplier
+                        i++
+                        
+                        // Check if next is a larger multiplier
+                        val nextMult = if (i < words.size) getMultiplier(words[i]) else null
+                        if (nextMult != null && nextMult > multiplier) {
+                            // Continue accumulating (e.g., "hundred thousand")
+                            pendingMultiplier = currentNumber
+                            currentNumber = 0.0
+                        } else {
+                            // Flush this number
+                            val value = if (currentNumber == currentNumber.toLong().toDouble()) {
+                                currentNumber.toLong().toString()
+                            } else {
+                                currentNumber.toString()
+                            }
+                            result.add(value)
+                            currentNumber = 0.0
+                        }
+                    } else {
+                        // Large multiplier or we have pending
+                        if (pendingMultiplier > 0) {
+                            currentNumber = pendingMultiplier + currentNumber
+                            pendingMultiplier = 0.0
+                        }
+                        currentNumber *= multiplier
+                        i++
+                        
+                        // Flush the number
+                        val value = if (currentNumber == currentNumber.toLong().toDouble()) {
+                            currentNumber.toLong().toString()
+                        } else {
+                            currentNumber.toString()
+                        }
+                        result.add(value)
+                        currentNumber = 0.0
+                    }
+                }
+                word == "a" || word == "an" -> {
+                    // Skip article unless it's before a multiplier
+                    i++
+                }
+                else -> {
+                    // Not a number word
+                    if (currentNumber > 0 || pendingMultiplier > 0) {
+                        val value = if (currentNumber == currentNumber.toLong().toDouble()) {
+                            currentNumber.toLong().toString()
+                        } else {
+                            currentNumber.toString()
+                        }
+                        result.add(value)
+                        currentNumber = 0.0
+                        pendingMultiplier = 0.0
+                    }
+                    result.add(word)
+                    i++
+                }
+            }
+        }
+        
+        // Flush any remaining number
+        if (currentNumber > 0 || pendingMultiplier > 0) {
+            val value = if (currentNumber == currentNumber.toLong().toDouble()) {
+                currentNumber.toLong().toString()
+            } else {
+                currentNumber.toString()
+            }
+            result.add(value)
+        }
+        
+        return result.joinToString(" ")
+    }
+    
+    private fun getDigitValue(word: String): Double? = when (word.lowercase()) {
+        "zero" -> 0.0
+        "one", "a", "an" -> 1.0
+        "two" -> 2.0
+        "three" -> 3.0
+        "four" -> 4.0
+        "five" -> 5.0
+        "six" -> 6.0
+        "seven" -> 7.0
+        "eight" -> 8.0
+        "nine" -> 9.0
+        "ten" -> 10.0
+        "eleven" -> 11.0
+        "twelve" -> 12.0
+        "thirteen" -> 13.0
+        "fourteen" -> 14.0
+        "fifteen" -> 15.0
+        "sixteen" -> 16.0
+        "seventeen" -> 17.0
+        "eighteen" -> 18.0
+        "nineteen" -> 19.0
+        "twenty" -> 20.0
+        "thirty" -> 30.0
+        "forty" -> 40.0
+        "fifty" -> 50.0
+        "sixty" -> 60.0
+        "seventy" -> 70.0
+        "eighty" -> 80.0
+        "ninety" -> 90.0
+        "half" -> 0.5
+        else -> null
+    }
+    
+    private fun getMultiplier(word: String): Double? = when (word.lowercase()) {
+        "hundred" -> 100.0
+        "thousand" -> 1_000.0
+        "million" -> 1_000_000.0
+        "billion" -> 1_000_000_000.0
+        else -> null
     }
 
     /**
