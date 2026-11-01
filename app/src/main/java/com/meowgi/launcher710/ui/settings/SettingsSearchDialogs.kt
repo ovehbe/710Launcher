@@ -363,3 +363,117 @@ internal fun SettingsActivity.confirmResetUsageData() {
         .setNegativeButton("Cancel", null)
         .show()
 }
+
+internal fun SettingsActivity.getCurrencyListLabel(): String {
+    val currencies = prefs.getSearchCurrencyList()
+    return if (currencies.size <= 3) {
+        currencies.joinToString(", ")
+    } else {
+        "${currencies.size} currencies"
+    }
+}
+
+internal fun SettingsActivity.showCurrencyListManager() {
+    val currencies = prefs.getSearchCurrencyList().toMutableList()
+    val supportedCurrencies = listOf(
+        "USD", "EUR", "GBP", "TRY", "JPY", "IDR", "AUD", "CAD", "CHF", "CNY", 
+        "HKD", "INR", "KRW", "MXN", "NOK", "NZD", "PLN", "RUB", "SEK", "SGD", 
+        "ZAR", "BGN", "BRL", "CZK", "DKK", "HUF", "ILS", "ISK", "PHP", "RON", "THB"
+    )
+    
+    val layout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+    }
+    val rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    layout.addView(rowsContainer)
+
+    fun refreshList() {
+        rowsContainer.removeAllViews()
+        for ((index, currency) in currencies.withIndex()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(4), 0, dp(4))
+            }
+            val labelView = TextView(this).apply {
+                text = currency
+                setPadding(dp(8), 0, dp(8), 0)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setTextColor(getColor(R.color.bb_text_primary))
+                textSize = 14f
+                typeface = font
+            }
+            val upBtn = Button(this).apply {
+                text = "↑"
+                isEnabled = index > 0
+                setOnClickListener {
+                    if (index > 0) {
+                        val temp = currencies[index]
+                        currencies[index] = currencies[index - 1]
+                        currencies[index - 1] = temp
+                        prefs.setSearchCurrencyList(currencies)
+                        refreshList()
+                    }
+                }
+            }
+            val downBtn = Button(this).apply {
+                text = "↓"
+                isEnabled = index < currencies.size - 1
+                setOnClickListener {
+                    if (index < currencies.size - 1) {
+                        val temp = currencies[index]
+                        currencies[index] = currencies[index + 1]
+                        currencies[index + 1] = temp
+                        prefs.setSearchCurrencyList(currencies)
+                        refreshList()
+                    }
+                }
+            }
+            val removeBtn = Button(this).apply {
+                text = "Remove"
+                setOnClickListener {
+                    currencies.removeAt(index)
+                    prefs.setSearchCurrencyList(currencies)
+                    refreshList()
+                    rebuildSettings()
+                }
+            }
+            row.addView(labelView)
+            row.addView(upBtn)
+            row.addView(downBtn)
+            row.addView(removeBtn)
+            rowsContainer.addView(row)
+        }
+    }
+
+    val addBtn = Button(this).apply {
+        text = "Add currency"
+        setOnClickListener {
+            val availableCurrencies = supportedCurrencies.filter { it !in currencies }
+            if (availableCurrencies.isEmpty()) {
+                Toast.makeText(this@showCurrencyListManager, "All supported currencies added", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            AlertDialog.Builder(this@showCurrencyListManager, dialogTheme)
+                .setTitle("Add currency")
+                .setItems(availableCurrencies.toTypedArray()) { _, which ->
+                    val selected = availableCurrencies[which]
+                    currencies.add(selected)
+                    prefs.setSearchCurrencyList(currencies)
+                    refreshList()
+                    rebuildSettings()
+                }
+                .setNegativeButton(getString(android.R.string.cancel), null)
+                .show()
+        }
+    }
+    layout.addView(addBtn)
+    refreshList()
+    AlertDialog.Builder(this, dialogTheme)
+        .setTitle("Display currencies")
+        .setMessage("Currencies to show when converting without a target")
+        .setView(cappedScroll(layout))
+        .setNegativeButton("Done") { _, _ -> rebuildSettings() }
+        .show()
+}

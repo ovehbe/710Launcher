@@ -509,6 +509,35 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("searchCalculatorEnabled", true)
         set(v) = prefs.edit().putBoolean("searchCalculatorEnabled", v).apply()
 
+    var searchCurrencyEnabled: Boolean
+        get() = prefs.getBoolean("searchCurrencyEnabled", true)
+        set(v) = prefs.edit().putBoolean("searchCurrencyEnabled", v).apply()
+
+    fun getSearchCurrencyList(): List<String> {
+        val json = prefs.getString("searchCurrencyList", null)
+        if (json.isNullOrEmpty()) {
+            return listOf("USD", "EUR", "TRY")
+        }
+        try {
+            val arr = JSONArray(json)
+            val result = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                result.add(arr.getString(i))
+            }
+            return result
+        } catch (e: Exception) {
+            return listOf("USD", "EUR", "TRY")
+        }
+    }
+
+    fun setSearchCurrencyList(currencies: List<String>) {
+        val arr = JSONArray()
+        for (currency in currencies) {
+            arr.put(currency)
+        }
+        prefs.edit().putString("searchCurrencyList", arr.toString()).apply()
+    }
+
     // --- AI answers (the API key is in AiSecrets, never here) ---
     var aiEnabled: Boolean
         get() = prefs.getBoolean("aiEnabled", false)

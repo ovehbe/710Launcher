@@ -29,6 +29,8 @@ import com.meowgi.launcher710.ui.settings.SettingsScreen
 import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.Calculator
 import com.meowgi.launcher710.util.ContactSearchHelper
+import com.meowgi.launcher710.util.CurrencyConverter
+import com.meowgi.launcher710.util.CurrencyRatesCache
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.SearchCommandData
@@ -36,6 +38,9 @@ import com.meowgi.launcher710.util.SearchNormalizer
 import com.meowgi.launcher710.util.SearchRanker
 import com.meowgi.launcher710.util.WebSuggestions
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleCoroutineScope
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -46,10 +51,14 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private val prefs = LauncherPrefs(context)
+    private val ratesCache = CurrencyRatesCache(context)
+    private val lifecycleOwner: androidx.lifecycle.LifecycleOwner?
+        get() = context as? androidx.lifecycle.LifecycleOwner
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val calculatorRow: LinearLayout
     private val calculatorText: TextView
+    private val currencyRowsContainer: LinearLayout
     private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
@@ -139,6 +148,11 @@ class SearchOverlay @JvmOverloads constructor(
     private var queryCalculatorExpression: String? = null
     /** Whether to show calculator row even without a valid result (when no app matches) */
     private var queryCalculatorShowIncomplete: Boolean = false
+    
+    /** Currency conversion results for the current query. */
+    private var queryCurrencyResults: List<CurrencyConverter.ConversionResult> = emptyList()
+    private var currencyRatesAvailable = false
+    private var currencyRatesTimestamp = 0L
     /** Normalized current query, for telling text matches from keypad-digit matches. */
     private var queryNormalized = ""
 
@@ -164,6 +178,7 @@ class SearchOverlay @JvmOverloads constructor(
         queryCalculatorResult = null
         queryCalculatorExpression = null
         queryCalculatorShowIncomplete = false
+        queryCurrencyResults = emptyList()
         queryNormalized = ""
         appliedQuery = null
         currentResults = emptyList()
@@ -190,6 +205,16 @@ class SearchOverlay @JvmOverloads constructor(
         val clip = android.content.ClipData.newPlainText("Calculator", toCopy)
         clipboard.setPrimaryClip(clip)
         Toast.makeText(context, "Copied: $toCopy", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun copyCurrencyResult(index: Int) {
+        val result = queryCurrencyResults.getOrNull(index) ?: return
+        val toCopy = result.toAmount.toString()
+        val clip = android.content.ClipData.newPlainText("Currency", toCopy)
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(clip)
+        val formatted = CurrencyConverter.formatResult(result)
+        Toast.makeText(context, "Copied: $toCopy ($formatted)", Toast.LENGTH_SHORT).show()
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -245,6 +270,12 @@ class SearchOverlay @JvmOverloads constructor(
         calculatorRow.addView(equalsIcon)
         calculatorRow.setOnClickListener { copyCalculatorResult() }
         addView(calculatorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        currencyRowsContainer = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = GONE
+        }
+        addView(currencyRowsContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
             text = "$searchContextLabel search"
@@ -394,6 +425,7 @@ class SearchOverlay @JvmOverloads constructor(
     sealed class NavTarget {
         object Dial : NavTarget() { override fun toString() = "dial" }
         object Calculator : NavTarget() { override fun toString() = "calculator" }
+        data class Currency(val index: Int) : NavTarget() { override fun toString() = "currency:$index" }
         data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
         data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
         object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
@@ -412,6 +444,9 @@ class SearchOverlay @JvmOverloads constructor(
         val rows = mutableListOf<List<NavTarget>>()
         if (dialRow.visibility == VISIBLE) rows += listOf(NavTarget.Dial)
         if (calculatorRow.visibility == VISIBLE) rows += listOf(NavTarget.Calculator)
+        if (currencyRowsContainer.visibility == VISIBLE) {
+            for (i in 0 until currencyRowsContainer.childCount) rows += listOf(NavTarget.Currency(i))
+        }
         if (suggestionsBox.visibility == VISIBLE) {
             for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
         }
@@ -469,6 +504,7 @@ class SearchOverlay @JvmOverloads constructor(
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
             NavTarget.Calculator -> copyCalculatorResult()
+            is NavTarget.Currency -> copyCurrencyResult(target.index)
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
             NavTarget.AiSettings -> aiSettingsLink.performClick()
@@ -494,6 +530,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun navTargetView(target: NavTarget): View? = when (target) {
         NavTarget.Dial -> dialRow
         NavTarget.Calculator -> calculatorRow
+        is NavTarget.Currency -> currencyRowsContainer.getChildAt(target.index)
         is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
         is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
         NavTarget.AiSettings -> aiSettingsLink
@@ -782,6 +819,7 @@ class SearchOverlay @JvmOverloads constructor(
             }
             publish(filtered)
             evaluateCalculator(query, layout, filtered.isNotEmpty())
+            lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
@@ -795,6 +833,7 @@ class SearchOverlay @JvmOverloads constructor(
                 val initialResults = baseResults + carried
                 publish(initialResults)
                 evaluateCalculator(query, layout, initialResults.isNotEmpty())
+                lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
                 val queryForContact = query
                 ContactSearchHelper.searchAsync(
                     context,
@@ -809,12 +848,14 @@ class SearchOverlay @JvmOverloads constructor(
                     val finalResults = baseResults + contactResults
                     publish(finalResults)
                     evaluateCalculator(queryForContact, layout, finalResults.isNotEmpty())
+                    lifecycleOwner?.let { evaluateCurrency(queryForContact, layout, it.lifecycleScope) }
                 }
             } else {
                 ContactSearchHelper.cancel()
                 shownContacts = emptyList()
                 publish(baseResults)
                 evaluateCalculator(query, layout, baseResults.isNotEmpty())
+                lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
             }
         }
         updateDialRow(queryDialNumber ?: "")
@@ -892,6 +933,108 @@ class SearchOverlay @JvmOverloads constructor(
         }
         calculatorRow.visibility = VISIBLE
         calculatorText.text = displayText
+    }
+
+    private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
+        queryCurrencyResults = emptyList()
+        
+        if (!prefs.searchCurrencyEnabled) {
+            updateCurrencyRows()
+            return
+        }
+        
+        // Try to parse as currency query
+        lifecycleScope.launch {
+            val ratesResult = ratesCache.getRates()
+            
+            when (ratesResult) {
+                is CurrencyRatesCache.RatesResult.Success,
+                is CurrencyRatesCache.RatesResult.Cached -> {
+                    val rates = when (ratesResult) {
+                        is CurrencyRatesCache.RatesResult.Success -> {
+                            currencyRatesAvailable = true
+                            currencyRatesTimestamp = ratesResult.timestamp
+                            ratesResult.rates
+                        }
+                        is CurrencyRatesCache.RatesResult.Cached -> {
+                            currencyRatesAvailable = true
+                            currencyRatesTimestamp = ratesResult.timestamp
+                            ratesResult.rates
+                        }
+                        else -> emptyMap()
+                    }
+                    
+                    if (rates.isNotEmpty()) {
+                        val parsedQuery = CurrencyConverter.parse(query, layout, rates.keys)
+                        if (parsedQuery != null) {
+                            val displayCurrencies = prefs.getSearchCurrencyList()
+                            val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies)
+                            queryCurrencyResults = results
+                        }
+                    }
+                    
+                    // Update UI on main thread
+                    post { updateCurrencyRows() }
+                }
+                is CurrencyRatesCache.RatesResult.Error -> {
+                    currencyRatesAvailable = false
+                    post { updateCurrencyRows() }
+                }
+            }
+        }
+    }
+
+    private fun updateCurrencyRows() {
+        currencyRowsContainer.removeAllViews()
+        
+        if (queryCurrencyResults.isEmpty()) {
+            if (currencyRowsContainer.visibility == VISIBLE) clearNavSelection()
+            currencyRowsContainer.visibility = GONE
+            return
+        }
+        
+        // Create a row for each conversion result
+        for ((index, result) in queryCurrencyResults.withIndex()) {
+            val row = LinearLayout(context).apply {
+                orientation = HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(2))
+                setOnClickListener { copyCurrencyResult(index) }
+            }
+            
+            val text = TextView(context).apply {
+                textSize = 14f
+                setTextColor(resources.getColor(R.color.bb_text_primary, null))
+                typeface = font
+                this.text = CurrencyConverter.formatResult(result)
+            }
+            
+            val icon = ImageView(context).apply {
+                setImageResource(android.R.drawable.ic_menu_info_details)
+                setPadding(dp(4), dp(4), dp(8), dp(4))
+            }
+            
+            row.addView(text)
+            row.addView(icon)
+            currencyRowsContainer.addView(row)
+        }
+        
+        // Add "rates as of" hint if we have results
+        if (queryCurrencyResults.isNotEmpty() && currencyRatesTimestamp > 0) {
+            val hintRow = TextView(context).apply {
+                textSize = 11f
+                setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+                typeface = font
+                text = "Rates ${CurrencyConverter.formatRatesDate(currencyRatesTimestamp)}"
+                setPadding(dp(4), 0, 0, dp(4))
+            }
+            currencyRowsContainer.addView(hintRow)
+        }
+        
+        if (currencyRowsContainer.visibility != VISIBLE) {
+            clearNavSelection()
+        }
+        currencyRowsContainer.visibility = VISIBLE
     }
 
     /**
@@ -997,6 +1140,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun handleAtContactSearch(contactQuery: String) {
         dialRow.visibility = GONE
         calculatorRow.visibility = GONE
+        currencyRowsContainer.visibility = GONE
         if (contactQuery.isEmpty()) {
             ContactSearchHelper.cancel()
             shownContacts = emptyList()
@@ -1029,6 +1173,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun handleCommandSearch(commandQuery: String) {
         dialRow.visibility = GONE
         calculatorRow.visibility = GONE
+        currencyRowsContainer.visibility = GONE
         shownContacts = emptyList()
         val commands = commandsProvider?.invoke() ?: emptyList()
         val icon = commandIcon()
