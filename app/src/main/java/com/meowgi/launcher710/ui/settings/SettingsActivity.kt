@@ -24,6 +24,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.meowgi.launcher710.R
+import com.meowgi.launcher710.ai.AiSecrets
 import com.meowgi.launcher710.util.IconPackManager
 import com.meowgi.launcher710.util.LauncherPrefs
 
@@ -46,10 +47,21 @@ class SettingsActivity : AppCompatActivity() {
          */
         fun intent(context: Context): Intent =
             Intent(context, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        /** Opens (or brings back) Settings directly on [screen]. */
+        internal fun intent(context: Context, screen: SettingsScreen): Intent =
+            intent(context)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(EXTRA_SCREEN, screen.name)
+
+        private const val EXTRA_SCREEN = "com.meowgi.launcher710.extra.SETTINGS_SCREEN"
+
+        private fun screenNamed(name: String?) = SettingsScreen.values().firstOrNull { it.name == name }
     }
 
     internal lateinit var prefs: LauncherPrefs
     internal lateinit var iconPackManager: IconPackManager
+    internal val aiSecrets by lazy { AiSecrets(this) }
     internal lateinit var container: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var titleView: TextView
@@ -155,9 +167,13 @@ class SettingsActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, backToHome)
 
         homeScrollY = savedInstanceState?.getInt(STATE_HOME_SCROLL) ?: 0
-        val restored = savedInstanceState?.getString(STATE_SCREEN)
-            ?.let { name -> SettingsScreen.values().firstOrNull { it.name == name } }
-        showScreen(restored ?: SettingsScreen.HOME)
+        val restored = screenNamed(savedInstanceState?.getString(STATE_SCREEN))
+        showScreen(restored ?: screenNamed(intent.getStringExtra(EXTRA_SCREEN)) ?: SettingsScreen.HOME)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        screenNamed(intent.getStringExtra(EXTRA_SCREEN))?.let { showScreen(it) }
     }
 
     private fun applySystemBarInsets(root: View, toolbar: View) {

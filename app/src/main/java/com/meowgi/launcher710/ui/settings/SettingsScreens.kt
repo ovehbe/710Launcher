@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import androidx.appcompat.app.AlertDialog
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.RestartLauncherActivity
+import com.meowgi.launcher710.ai.AiSearchTrigger
 import com.meowgi.launcher710.util.ContactSearchHelper
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -17,6 +18,7 @@ internal enum class SettingsScreen(val title: String, val summary: String) {
     HOME_SCREEN("Home screen & dock", "Status bar, header, action bar, tabs, dock"),
     APPS("Apps & pages", "Pages, grid or list layout, sorting, hidden apps"),
     SEARCH("Search", "Keyboard search, results, contacts, commands"),
+    AI("AI answers", "Answers in search from an OpenAI-compatible API"),
     GESTURES("Gestures & actions", "Swipes, double tap, tap actions"),
     NOTIFICATIONS("Notifications", "Notification hub and applets"),
     BACKUP("Backup & restore", "Back up or restore the whole launcher"),
@@ -30,6 +32,7 @@ internal fun SettingsActivity.buildScreen(screen: SettingsScreen) {
         SettingsScreen.HOME_SCREEN -> buildHomeScreen()
         SettingsScreen.APPS -> buildApps()
         SettingsScreen.SEARCH -> buildSearch()
+        SettingsScreen.AI -> buildAi()
         SettingsScreen.GESTURES -> buildGestures()
         SettingsScreen.NOTIFICATIONS -> buildNotifications()
         SettingsScreen.BACKUP -> buildBackup()
@@ -41,7 +44,7 @@ private fun SettingsActivity.buildHome() {
     group(null) {
         for (screen in listOf(
             SettingsScreen.APPEARANCE, SettingsScreen.HOME_SCREEN, SettingsScreen.APPS,
-            SettingsScreen.SEARCH, SettingsScreen.GESTURES, SettingsScreen.NOTIFICATIONS
+            SettingsScreen.SEARCH, SettingsScreen.AI, SettingsScreen.GESTURES, SettingsScreen.NOTIFICATIONS
         )) categoryRow(screen)
     }
     group(null) {
@@ -262,6 +265,29 @@ private fun SettingsActivity.buildSearch() {
         colorChoiceRow("Overlay background", "Default (black)", 0xFF000000.toInt(),
             prefs.searchOverlayUseDefaultBackground, prefs.searchOverlayCustomBackgroundColor,
             { prefs.searchOverlayUseDefaultBackground = it }, { prefs.searchOverlayCustomBackgroundColor = it })
+    }
+}
+
+private fun SettingsActivity.buildAi() {
+    group(null, footer = "Long-press Enter in search, or fire ${AiSearchTrigger.ACTION} (e.g. from Key Mapper), " +
+        "to answer the current query. Short Enter still searches the web.") {
+        toggleRow("AI answers in search", prefs.aiEnabled) { prefs.aiEnabled = it }
+    }
+    group("Connection", footer = "Any OpenAI-compatible API. The key is encrypted on this device and never included in backups.") {
+        actionRow("Base URL", prefs.aiBaseUrl) { showAiBaseUrlDialog() }
+        actionRow("API key", if (aiSecrets.hasApiKey) "Saved" else "Not set") { showAiApiKeyDialog() }
+    }
+    group("Model") {
+        actionRow("Model", prefs.aiModel.ifBlank { "Not set" }) { showAiModelPicker() }
+        actionRow("Fetch models", prefs.aiFetchedModels.size.let { if (it == 0) "Load the list from the server" else "$it available" }) {
+            fetchAiModels()
+        }
+        actionRow("System prompt", prefs.aiSystemPrompt.ifBlank { "None" }.let { if (it.length > 60) it.take(60) + "…" else it }) {
+            showAiSystemPromptDialog()
+        }
+    }
+    group(null) {
+        actionRow("Test", "Send a short request with these settings", showChevron = false) { testAi() }
     }
 }
 
