@@ -2291,7 +2291,74 @@ class LauncherActivity : AppCompatActivity() {
             }
         }
 
+        if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
+    }
+
+    /** Keys whose ACTION_DOWN search navigation consumed; their ACTION_UP is consumed too. */
+    private val searchNavKeys = mutableSetOf<Int>()
+
+    private val trackballNav by lazy {
+        com.meowgi.launcher710.ui.search.TrackballNavigator(
+            onStep = { dRow, dCol -> if (searchOverlay.navigate(dRow, dCol)) focusSearchField() },
+            onClick = { searchOverlay.activateNavSelection() }
+        )
+    }
+
+    /**
+     * Trackpad navigation of search results. Focus stays on the search field, which the home
+     * pager sits below in focus order: plain focus search would leave the overlay for the pager
+     * behind it, where typed keys are dropped. DPAD moves a highlight drawn by the overlay
+     * instead; DPAD center (or Enter, unless Alt asks AI) opens the highlighted row. Typing while
+     * a row is highlighted clears the highlight and goes to the field.
+     */
+    private fun handleSearchKey(event: KeyEvent): Boolean {
+        if (!::searchOverlay.isInitialized) return false
+        val code = event.keyCode
+        if (event.action == KeyEvent.ACTION_UP) return searchNavKeys.remove(code)
+        if (event.action != KeyEvent.ACTION_DOWN || searchOverlay.visibility != View.VISIBLE) return false
+        val handled = when (code) {
+            KeyEvent.KEYCODE_DPAD_UP -> searchOverlay.navigate(-1, 0)
+            KeyEvent.KEYCODE_DPAD_DOWN -> searchOverlay.navigate(1, 0)
+            KeyEvent.KEYCODE_DPAD_LEFT -> searchOverlay.navigate(0, -1)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> searchOverlay.navigate(0, 1)
+            KeyEvent.KEYCODE_DPAD_CENTER -> searchOverlay.activateNavSelection()
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                searchOverlay.hasNavSelection && !isAltActive(event, searchInputInBar.text) &&
+                    searchOverlay.activateNavSelection()
+            else -> {
+                if (isSearchTypingKey(event)) {
+                    searchOverlay.clearNavSelection()
+                    focusSearchField()
+                }
+                false
+            }
+        }
+        if (handled) {
+            searchNavKeys += code
+            if (searchOverlay.visibility == View.VISIBLE) focusSearchField()
+        }
+        return handled
+    }
+
+    private fun isSearchTypingKey(event: KeyEvent) = when (event.keyCode) {
+        KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.KEYCODE_SPACE -> true
+        else -> !KeyEvent.isModifierKey(event.keyCode) && getTypingChar(event) != null
+    }
+
+    private fun focusSearchField() {
+        if (!searchInputInBar.hasFocus()) searchInputInBar.requestFocus()
+    }
+
+    override fun dispatchTrackballEvent(ev: MotionEvent?): Boolean {
+        if (ev == null || !::searchOverlay.isInitialized) return super.dispatchTrackballEvent(ev)
+        // Consumed whole while search is shown, so the system doesn't also turn it into DPAD keys.
+        if (searchOverlay.visibility == View.VISIBLE || trackballNav.pressed) {
+            trackballNav.onEvent(ev)
+            return true
+        }
+        trackballNav.reset()
+        return super.dispatchTrackballEvent(ev)
     }
 
     private fun isDescendantOf(view: View, root: View): Boolean {

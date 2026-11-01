@@ -164,11 +164,13 @@ class SearchOverlay @JvmOverloads constructor(
         webSuggestionsEnabled = prefs.searchWebSuggestions
         aiSession.cancel()
         clearWebSuggestions()
+        clearNavSelection()
         if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
     private fun publish(results: List<LaunchableItem>) {
         currentResults = results
+        clearNavSelection()
         adapter.submitListDiffed(results)
         updateWebSuggestions(results)
     }
@@ -233,52 +235,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         adapter = AppAdapter(
             context,
-            onClick = { item ->
-                val handler = onLaunchItem
-                if (handler != null) {
-                    handler(item)
-                    dismiss()
-                } else {
-                    when (item) {
-                        is LaunchableItem.App -> {
-                            repository?.launchApp(item.app)
-                            dismiss()
-                        }
-                        is LaunchableItem.Contact -> {
-                            item.phoneNumbers.firstOrNull()?.let { num ->
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-                                    dismiss()
-                                } catch (_: Exception) {
-                                    Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
-                                }
-                            } ?: dismiss()
-                        }
-                        is LaunchableItem.LauncherSettings -> {
-                            context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
-                            dismiss()
-                        }
-                        is LaunchableItem.RefreshCache -> {
-                            onRefreshCache?.invoke()
-                            dismiss()
-                        }
-                        is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
-                        is LaunchableItem.SearchCommand -> {
-                            when (item.actionType) {
-                                0 -> item.actionPackage?.let { pkg ->
-                                    context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                                }
-                                1 -> item.intentUri?.let { uri ->
-                                    try {
-                                        context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                    } catch (_: Exception) { }
-                                }
-                            }
-                            dismiss()
-                        }
-                    }
-                }
-            },
+            onClick = { item -> openResult(item) },
             onLongClick = { item, view -> onItemLongClick?.invoke(item, view) },
             iconResolver = { item -> iconResolver?.invoke(item) ?: item.icon }
         )
@@ -332,6 +289,192 @@ class SearchOverlay @JvmOverloads constructor(
         addView(aiPanel, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
         setOnClickListener { dismiss() }
+
+        resultsRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (navPos != null) invalidate()
+            }
+        })
+        aiPanel.setOnScrollChangeListener { _, _, _, _, _ -> if (navPos != null) invalidate() }
+    }
+
+    private fun openResult(item: LaunchableItem) {
+        val handler = onLaunchItem
+        if (handler != null) {
+            handler(item)
+            dismiss()
+            return
+        }
+        when (item) {
+            is LaunchableItem.App -> {
+                repository?.launchApp(item.app)
+                dismiss()
+            }
+            is LaunchableItem.Contact -> {
+                item.phoneNumbers.firstOrNull()?.let { num ->
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                        dismiss()
+                    } catch (_: Exception) {
+                        Toast.makeText(context, R.string.dial_no_app, Toast.LENGTH_SHORT).show()
+                    }
+                } ?: dismiss()
+            }
+            is LaunchableItem.LauncherSettings -> {
+                context.startActivity(com.meowgi.launcher710.ui.settings.SettingsActivity.intent(context))
+                dismiss()
+            }
+            is LaunchableItem.RefreshCache -> {
+                onRefreshCache?.invoke()
+                dismiss()
+            }
+            is LaunchableItem.Shortcut, is LaunchableItem.IntentShortcut -> { }
+            is LaunchableItem.SearchCommand -> {
+                when (item.actionType) {
+                    0 -> item.actionPackage?.let { pkg ->
+                        context.packageManager.getLaunchIntentForPackage(pkg)?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    }
+                    1 -> item.intentUri?.let { uri ->
+                        try {
+                            context.startActivity(Intent.parseUri(uri, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) { }
+                    }
+                }
+                dismiss()
+            }
+        }
+    }
+
+    /** Something the trackpad highlight can rest on. */
+    sealed class NavTarget {
+        object Dial : NavTarget() { override fun toString() = "dial" }
+        data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
+        data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
+        object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
+    }
+
+    /**
+     * Trackpad highlight. Keyboard focus never leaves the search field (so typing always lands
+     * there); this is a virtual selection over the rows below it, drawn by [dispatchDraw].
+     */
+    private var navPos: NavPos? = null
+    private val navPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val navRect = android.graphics.Rect()
+    private val navRectF = android.graphics.RectF()
+
+    private fun navTargetRows(): List<List<NavTarget>> {
+        val rows = mutableListOf<List<NavTarget>>()
+        if (dialRow.visibility == VISIBLE) rows += listOf(NavTarget.Dial)
+        if (suggestionsBox.visibility == VISIBLE) {
+            for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
+        }
+        if (resultsRecycler.visibility == VISIBLE) {
+            val span = (resultsRecycler.layoutManager as? GridLayoutManager)?.spanCount ?: 1
+            currentResults.indices.chunked(span).forEach { chunk -> rows += chunk.map { NavTarget.Result(it) } }
+        }
+        if (aiPanel.visibility == VISIBLE && aiSettingsLink.visibility == VISIBLE) rows += listOf(NavTarget.AiSettings)
+        return rows
+    }
+
+    private fun navRows(rows: List<List<NavTarget>>) =
+        rows.mapIndexed { i, row -> NavRow(row.size, if (row.first() is NavTarget.Result) -1 else i) }
+
+    internal val navSelection: NavTarget?
+        get() = navPos?.let { p -> navTargetRows().getOrNull(p.row)?.getOrNull(p.col) }
+
+    val hasNavSelection: Boolean get() = navSelection != null
+
+    fun clearNavSelection() {
+        if (navPos == null) return
+        navPos = null
+        invalidate()
+    }
+
+    /**
+     * Moves the trackpad highlight. Up/down are always consumed while search is shown, so focus
+     * can't wander to the home screen behind it; left/right only while a row is highlighted,
+     * otherwise they move the field's cursor. In an AI answer, up/down past the rows scroll it.
+     */
+    fun navigate(dRow: Int, dCol: Int): Boolean {
+        if (visibility != VISIBLE) return false
+        val targets = navTargetRows()
+        val rows = navRows(targets)
+        val from = navPos?.takeIf { it.row in rows.indices && it.col < rows[it.row].size }
+        if (dRow == 0 && from == null) return false
+        if (aiPanel.visibility == VISIBLE && dRow != 0) {
+            val atEnd = if (dRow > 0) from?.row == rows.lastIndex || rows.isEmpty() else from == null
+            if (atEnd && aiPanel.canScrollVertically(dRow)) {
+                aiPanel.scrollBy(0, dRow * maxOf(aiPanel.height / 3, dp(48)))
+                return true
+            }
+        }
+        navPos = SearchNavigation.move(rows, from, dRow, dCol)
+        navPos?.let { revealNavTarget(targets[it.row][it.col]) }
+        invalidate()
+        return true
+    }
+
+    /** Activates the highlighted row as a tap would. False when nothing is highlighted. */
+    fun activateNavSelection(): Boolean {
+        val target = navSelection ?: return false
+        navPos = null
+        invalidate()
+        when (target) {
+            NavTarget.Dial -> dial(currentDialDigits)
+            is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
+            is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
+            NavTarget.AiSettings -> aiSettingsLink.performClick()
+        }
+        return true
+    }
+
+    private fun revealNavTarget(target: NavTarget) {
+        when (target) {
+            is NavTarget.Result -> {
+                resultsRecycler.scrollToPosition(target.position)
+                // The item may only be laid out on the next pass; redraw the highlight then.
+                resultsRecycler.post { invalidate() }
+            }
+            NavTarget.AiSettings -> {
+                val content = aiSettingsLink.parent as View
+                aiPanel.scrollTo(0, maxOf(0, aiSettingsLink.bottom + content.paddingBottom - aiPanel.height))
+            }
+            else -> {}
+        }
+    }
+
+    private fun navTargetView(target: NavTarget): View? = when (target) {
+        NavTarget.Dial -> dialRow
+        is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
+        is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
+        NavTarget.AiSettings -> aiSettingsLink
+    }
+
+    override fun dispatchDraw(canvas: android.graphics.Canvas) {
+        super.dispatchDraw(canvas)
+        val target = navSelection ?: return
+        val view = navTargetView(target)?.takeIf { it.isShown } ?: return
+        navRect.set(0, 0, view.width, view.height)
+        offsetDescendantRectToMyCoords(view, navRect)
+        val clipTo: View? = when (target) {
+            is NavTarget.Result -> resultsRecycler
+            NavTarget.AiSettings -> aiPanel
+            else -> null
+        }
+        canvas.save()
+        if (clipTo != null) canvas.clipRect(clipTo.left, clipTo.top, clipTo.right, clipTo.bottom)
+        navRectF.set(navRect)
+        navRectF.inset(dp(1).toFloat(), dp(1).toFloat())
+        val radius = dp(6).toFloat()
+        val accent = prefs.accentColor
+        navPaint.style = android.graphics.Paint.Style.FILL
+        navPaint.color = Color.argb(0x40, Color.red(accent), Color.green(accent), Color.blue(accent))
+        canvas.drawRoundRect(navRectF, radius, radius, navPaint)
+        navPaint.style = android.graphics.Paint.Style.STROKE
+        navPaint.strokeWidth = dp(2).toFloat()
+        navPaint.color = accent
+        canvas.drawRoundRect(navRectF, radius, radius, navPaint)
+        canvas.restore()
     }
 
     /**
@@ -348,6 +491,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun renderAi(state: AiState) {
         val active = state !is AiState.Idle
+        clearNavSelection()
         aiPanel.visibility = if (active) VISIBLE else GONE
         resultsRecycler.visibility = if (active) GONE else VISIBLE
         if (!active) return
@@ -405,6 +549,7 @@ class SearchOverlay @JvmOverloads constructor(
         ContactSearchHelper.cancel()
         aiSession.cancel()
         clearWebSuggestions()
+        clearNavSelection()
         visibility = GONE
         onDismiss?.invoke()
     }
@@ -641,6 +786,7 @@ class SearchOverlay @JvmOverloads constructor(
         if (visibility != VISIBLE || query != lastQuery.trim() || !webSuggestionsAllowed || queryDialNumber != null || aiSession.isActive ||
             currentResults.any(::matchesText)
         ) return
+        clearNavSelection()
         suggestionsBox.removeAllViews()
         for (s in suggestions) suggestionsBox.addView(webSuggestionRow(s), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         suggestionsBox.visibility = if (suggestions.isEmpty()) GONE else VISIBLE
@@ -648,6 +794,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun clearWebSuggestions() {
         webSuggestions.cancel()
+        if (suggestionsBox.visibility == VISIBLE) clearNavSelection()
         if (suggestionsBox.childCount > 0) suggestionsBox.removeAllViews()
         suggestionsBox.visibility = GONE
     }
@@ -678,9 +825,11 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun updateDialRow(dialDigits: String) {
         if (dialDigits.isEmpty()) {
+            if (dialRow.visibility == VISIBLE) clearNavSelection()
             dialRow.visibility = GONE
             return
         }
+        if (dialRow.visibility != VISIBLE || dialDigits != currentDialDigits) clearNavSelection()
         dialRow.visibility = VISIBLE
         // setText always requests a layout, so skip it when the digits didn't change.
         if (dialDigits != currentDialDigits) {
