@@ -90,21 +90,37 @@ object Calculator {
      * Evaluates an arithmetic expression and returns the formatted result, or null on error.
      * The expression should already be mapped (use toExpression first).
      *
+     * Set allowPlainNumber to true to return the number itself when there are no operators.
+     * 
      * Returns null for:
      * - Parse errors (malformed expression)
      * - Division by zero
-     * - No operators present (just a plain number)
+     * - No operators present (just a plain number) - unless allowPlainNumber is true
      * - Expression doesn't contain at least one digit
      */
-    fun evaluate(expression: String): String? {
+    fun evaluate(expression: String, allowPlainNumber: Boolean = false): String? {
         if (expression.isBlank()) return null
         try {
             // Normalize commas: apply context-sensitive comma rule
             val normalized = normalizeCommas(expression)
             // Check if expression contains at least one digit
             if (!normalized.any { it.isDigit() }) return null
-            // Check if expression contains at least one operator
-            if (!normalized.any { it in "+-*/%"}) return null
+            
+            val hasOperator = normalized.any { it in "+-*/%"}
+            
+            // If no operator and allowPlainNumber is false, return null
+            if (!hasOperator && !allowPlainNumber) return null
+            
+            // If no operator but allowPlainNumber is true, just return the normalized number
+            if (!hasOperator && allowPlainNumber) {
+                // Parse as a plain number and format it
+                return try {
+                    val number = normalized.toDouble()
+                    formatResult(number)
+                } catch (e: Exception) {
+                    null
+                }
+            }
             
             val result = evaluateExpression(normalized)
             return formatResult(result)

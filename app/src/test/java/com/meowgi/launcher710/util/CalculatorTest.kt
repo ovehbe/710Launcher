@@ -53,10 +53,17 @@ class CalculatorTest {
     }
 
     @Test
-    fun `evaluate returns null for plain numbers without operators`() {
-        assertNull(Calculator.evaluate("42"))
-        assertNull(Calculator.evaluate("123"))
-        assertNull(Calculator.evaluate("1.5"))
+    fun `evaluate returns null for plain numbers without operators when allowPlainNumber is false`() {
+        assertNull(Calculator.evaluate("42", allowPlainNumber = false))
+        assertNull(Calculator.evaluate("123", allowPlainNumber = false))
+        assertNull(Calculator.evaluate("1.5", allowPlainNumber = false))
+    }
+
+    @Test
+    fun `evaluate returns number for plain numbers when allowPlainNumber is true`() {
+        assertEquals("42", Calculator.evaluate("42", allowPlainNumber = true))
+        assertEquals("123", Calculator.evaluate("123", allowPlainNumber = true))
+        assertEquals("1.5", Calculator.evaluate("1.5", allowPlainNumber = true))
     }
 
     @Test
@@ -224,5 +231,35 @@ class CalculatorTest {
         val expr3 = Calculator.toExpression("tsi1yge")
         assertEquals("(4-1)/2", expr3)
         assertEquals("1.5", Calculator.evaluate(expr3!!))
+    }
+
+    @Test
+    fun `toExpression produces valid expressions for incomplete input`() {
+        // Incomplete expressions should still map
+        assertEquals("2+", Calculator.toExpression("eo"))
+        assertEquals("2(", Calculator.toExpression("et"))
+        assertEquals("1+1", Calculator.toExpression("wow"))
+        assertEquals("123", Calculator.toExpression("wer"))
+    }
+
+    @Test
+    fun `incomplete expressions return null when evaluated`() {
+        // Incomplete expressions should not evaluate
+        assertNull(Calculator.evaluate("2+", allowPlainNumber = false))
+        assertNull(Calculator.evaluate("2(", allowPlainNumber = false))
+        assertNull(Calculator.evaluate("(1+1", allowPlainNumber = false))
+    }
+
+    @Test
+    fun `plain number expressions work with allowPlainNumber`() {
+        // "wer" = "123"
+        val expr = Calculator.toExpression("wer")
+        assertEquals("123", expr)
+        assertEquals("123", Calculator.evaluate(expr!!, allowPlainNumber = true))
+        
+        // "wow" = "1+1"
+        val expr2 = Calculator.toExpression("wow")
+        assertEquals("1+1", expr2)
+        assertEquals("2", Calculator.evaluate(expr2!!, allowPlainNumber = true))
     }
 }
