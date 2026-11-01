@@ -49,4 +49,13 @@ sealed class LaunchableItem {
     ) : LaunchableItem() {
         override val label: CharSequence get() = commandName
     }
+
+    /** Calculator result: arithmetic expression evaluated to a number. Tap copies result to clipboard. */
+    data class CalculatorResult(
+        val expression: String,
+        val result: String,
+        override val icon: Drawable
+    ) : LaunchableItem() {
+        override val label: CharSequence get() = "$expression = $result"
+    }
 }

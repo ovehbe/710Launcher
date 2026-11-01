@@ -598,6 +598,7 @@ class LauncherActivity : AppCompatActivity() {
                     is LaunchableItem.RefreshCache -> { }
                     is LaunchableItem.Contact -> { }
                     is LaunchableItem.SearchCommand -> { }
+                    is LaunchableItem.CalculatorResult -> { }
                 }
             },
             onEmptySpaceLongClick = { showHomeContextMenu(tabBarContainer) }

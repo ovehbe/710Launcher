@@ -35,6 +35,7 @@ class AppAdapter(
             is LaunchableItem.RefreshCache -> "refresh_cache_710"
             is LaunchableItem.Contact -> item.displayName.toString()
             is LaunchableItem.SearchCommand -> "search_cmd_${item.commandName}"
+            is LaunchableItem.CalculatorResult -> "calculator_${item.expression}"
         }
     }
 

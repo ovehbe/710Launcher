@@ -27,6 +27,7 @@ import com.meowgi.launcher710.ui.appgrid.AppAdapter
 import com.meowgi.launcher710.ui.settings.SettingsActivity
 import com.meowgi.launcher710.ui.settings.SettingsScreen
 import com.meowgi.launcher710.util.AppRepository
+import com.meowgi.launcher710.util.Calculator
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
@@ -47,6 +48,8 @@ class SearchOverlay @JvmOverloads constructor(
     private val prefs = LauncherPrefs(context)
     private val dialRow: LinearLayout
     private val dialText: TextView
+    private val calculatorRow: LinearLayout
+    private val calculatorText: TextView
     private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
@@ -131,6 +134,9 @@ class SearchOverlay @JvmOverloads constructor(
     }
     /** Number the current query dials (dial row, Enter), or null; set before results are published. */
     private var queryDialNumber: String? = null
+    /** Calculator result for the current query, or null; set before results are published. */
+    private var queryCalculatorResult: String? = null
+    private var queryCalculatorExpression: String? = null
     /** Normalized current query, for telling text matches from keypad-digit matches. */
     private var queryNormalized = ""
 
@@ -153,6 +159,8 @@ class SearchOverlay @JvmOverloads constructor(
     private fun resetSession() {
         lastQuery = ""
         queryDialNumber = null
+        queryCalculatorResult = null
+        queryCalculatorExpression = null
         queryNormalized = ""
         appliedQuery = null
         currentResults = emptyList()
@@ -169,6 +177,14 @@ class SearchOverlay @JvmOverloads constructor(
         resultsRecycler.scrollToPosition(0)
         aiPanel.scrollTo(0, 0)
         if (webSuggestionsEnabled) webSuggestions.prewarm()
+    }
+
+    private fun copyCalculatorResult() {
+        val result = queryCalculatorResult ?: return
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("Calculator result", result)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Copied: $result", Toast.LENGTH_SHORT).show()
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -204,6 +220,26 @@ class SearchOverlay @JvmOverloads constructor(
         dialRow.addView(phoneIcon)
         dialRow.setOnClickListener { dial(currentDialDigits) }
         addView(dialRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        calculatorRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = GONE
+            setPadding(0, dp(6), 0, dp(2))
+        }
+        calculatorText = TextView(context).apply {
+            textSize = 14f
+            setTextColor(resources.getColor(R.color.bb_text_primary, null))
+            typeface = font
+        }
+        val equalsIcon = ImageView(context).apply {
+            setImageResource(android.R.drawable.ic_menu_info_details)
+            setPadding(dp(4), dp(4), dp(8), dp(4))
+        }
+        calculatorRow.addView(calculatorText)
+        calculatorRow.addView(equalsIcon)
+        calculatorRow.setOnClickListener { copyCalculatorResult() }
+        addView(calculatorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         extendedSearchBtn = TextView(context).apply {
             text = "$searchContextLabel search"
@@ -345,12 +381,14 @@ class SearchOverlay @JvmOverloads constructor(
                 }
                 dismiss()
             }
+            is LaunchableItem.CalculatorResult -> { }
         }
     }
 
     /** Something the trackpad highlight can rest on. */
     sealed class NavTarget {
         object Dial : NavTarget() { override fun toString() = "dial" }
+        object Calculator : NavTarget() { override fun toString() = "calculator" }
         data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
         data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
         object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
@@ -368,6 +406,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun navTargetRows(): List<List<NavTarget>> {
         val rows = mutableListOf<List<NavTarget>>()
         if (dialRow.visibility == VISIBLE) rows += listOf(NavTarget.Dial)
+        if (calculatorRow.visibility == VISIBLE) rows += listOf(NavTarget.Calculator)
         if (suggestionsBox.visibility == VISIBLE) {
             for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
         }
@@ -424,6 +463,7 @@ class SearchOverlay @JvmOverloads constructor(
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
+            NavTarget.Calculator -> copyCalculatorResult()
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
             NavTarget.AiSettings -> aiSettingsLink.performClick()
@@ -448,6 +488,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun navTargetView(target: NavTarget): View? = when (target) {
         NavTarget.Dial -> dialRow
+        NavTarget.Calculator -> calculatorRow
         is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
         is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
         NavTarget.AiSettings -> aiSettingsLink
@@ -656,6 +697,7 @@ class SearchOverlay @JvmOverloads constructor(
                         }
                     }
                 }
+                is LaunchableItem.CalculatorResult -> { }
             }
             dismiss()
         } else {
@@ -692,6 +734,8 @@ class SearchOverlay @JvmOverloads constructor(
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
             webSuggestionsAllowed = false
             queryDialNumber = null
+            queryCalculatorResult = null
+            queryCalculatorExpression = null
             ContactSearchHelper.cancel()
             handleCommandSearch(query.removePrefix(trigger))
             return
@@ -700,6 +744,8 @@ class SearchOverlay @JvmOverloads constructor(
         if (contactMode == 2 && query.startsWith("@")) {
             webSuggestionsAllowed = false
             queryDialNumber = null
+            queryCalculatorResult = null
+            queryCalculatorExpression = null
             handleAtContactSearch(query.removePrefix("@").trimStart())
             return
         }
@@ -710,6 +756,24 @@ class SearchOverlay @JvmOverloads constructor(
         val nq = SearchNormalizer.normalize(query)
         queryDialNumber = DialNumber.dialable(query, layout)
         queryNormalized = nq
+        
+        // Try calculator if enabled
+        queryCalculatorResult = null
+        queryCalculatorExpression = null
+        if (prefs.searchCalculatorEnabled) {
+            val expression = Calculator.toExpression(query, layout)
+            if (expression != null) {
+                // Only show calculator if expression contains at least one digit (mapped or raw)
+                val hasDigit = expression.any { it.isDigit() }
+                if (hasDigit) {
+                    val result = Calculator.evaluate(expression)
+                    if (result != null) {
+                        queryCalculatorResult = result
+                        queryCalculatorExpression = expression
+                    }
+                }
+            }
+        }
 
         val filter = filterIndex
         if (filter != null) {
@@ -761,6 +825,22 @@ class SearchOverlay @JvmOverloads constructor(
             }
         }
         updateDialRow(queryDialNumber ?: "")
+        updateCalculatorRow()
+    }
+
+    private fun updateCalculatorRow() {
+        val result = queryCalculatorResult
+        val expression = queryCalculatorExpression
+        if (result == null || expression == null) {
+            if (calculatorRow.visibility == VISIBLE) clearNavSelection()
+            calculatorRow.visibility = GONE
+            return
+        }
+        if (calculatorRow.visibility != VISIBLE || calculatorText.text.toString() != "$expression = $result") {
+            clearNavSelection()
+        }
+        calculatorRow.visibility = VISIBLE
+        calculatorText.text = "$expression = $result"
     }
 
     /**
@@ -865,6 +945,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun handleAtContactSearch(contactQuery: String) {
         dialRow.visibility = GONE
+        calculatorRow.visibility = GONE
         if (contactQuery.isEmpty()) {
             ContactSearchHelper.cancel()
             shownContacts = emptyList()
@@ -896,6 +977,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun handleCommandSearch(commandQuery: String) {
         dialRow.visibility = GONE
+        calculatorRow.visibility = GONE
         shownContacts = emptyList()
         val commands = commandsProvider?.invoke() ?: emptyList()
         val icon = commandIcon()
