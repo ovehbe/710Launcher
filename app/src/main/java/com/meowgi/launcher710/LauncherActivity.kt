@@ -1171,6 +1171,11 @@ class LauncherActivity : AppCompatActivity() {
             return true
         }
         if (searchOverlay.activateNavSelection()) return true
+        // If a command row is visible with no selection, activate it automatically
+        if (searchOverlay.hasCommand()) {
+            searchOverlay.activateCommand()
+            return true
+        }
         if (!runQuery) return false
         searchOverlay.performExtendedSearch()
         return true
@@ -1205,10 +1210,15 @@ class LauncherActivity : AppCompatActivity() {
         else -> false
     }
 
-    private fun isAltActive(metaState: Int, text: CharSequence) = AiSearchTrigger.altActive(
-        metaState,
-        android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
-    )
+    private fun isAltActive(metaState: Int, text: CharSequence): Boolean {
+        // Check local tracked alt state for BB keyboards where Alt arrives as separate event
+        if (altKeyPressed) return true
+        // Check standard event metaState and sticky/locked state in field text
+        return AiSearchTrigger.altActive(
+            metaState,
+            android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
+        )
+    }
 
     private fun isShiftActive(metaState: Int, text: CharSequence): Boolean {
         val eventShift = (metaState and KeyEvent.META_SHIFT_ON) != 0
@@ -2351,12 +2361,25 @@ class LauncherActivity : AppCompatActivity() {
             }
         }
 
+        // Track Alt key state for BB keyboards where ALT_LEFT/ALT_RIGHT arrive as separate events
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
+                when (event.action) {
+                    KeyEvent.ACTION_DOWN -> altKeyPressed = true
+                    KeyEvent.ACTION_UP -> altKeyPressed = false
+                }
+            }
+        }
+
         if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
     }
 
     /** Keys whose ACTION_DOWN search navigation consumed; their ACTION_UP is consumed too. */
     private val searchNavKeys = mutableSetOf<Int>()
+    
+    /** Track Alt key state for BB keyboards where ALT_LEFT/ALT_RIGHT arrive as separate events */
+    private var altKeyPressed = false
 
     private val trackballNav by lazy {
         com.meowgi.launcher710.ui.search.TrackballNavigator(

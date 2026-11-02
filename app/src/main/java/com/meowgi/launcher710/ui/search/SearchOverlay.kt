@@ -1029,19 +1029,34 @@ class SearchOverlay @JvmOverloads constructor(
             // Only show calculator if expression contains at least one digit (mapped or raw)
             val hasDigit = expression.any { it.isDigit() }
             if (hasDigit) {
-                // When there are no app/contact matches, always show the expression even if incomplete
-                // When there are matches, only show when we have a valid result
+                // Check if query genuinely looks like math:
+                // 1. Original query contains real digits or operators (not just plain letters)
+                // 2. Expression is evaluable (has operators, not just a mapped plain number)
+                val queryHasDigitOrOperator = query.any { it.isDigit() || it in "+-*/%().,=" }
+                val expressionIsPlainNumber = expression.all { it.isDigit() || it == '.' }
+                val isPlainWord = query.all { it.isLetter() || it.isWhitespace() }
+                
+                // Skip calculator if original query is plain word with no digits/operators
+                if (isPlainWord && !queryHasDigitOrOperator) {
+                    updateCalculatorRow()
+                    return
+                }
+                
+                // When there are no app/contact matches, show expression if it's evaluable
                 if (!hasResults) {
-                    // Always show the mapped expression when no results
+                    // Don't show plain mapped numbers from pure letter strings
+                    if (expressionIsPlainNumber && isPlainWord) {
+                        updateCalculatorRow()
+                        return
+                    }
                     queryCalculatorExpression = expression
                     queryCalculatorShowIncomplete = true
                     // Try to evaluate - if successful, show the result
-                    val allowPlainNumber = true
+                    val allowPlainNumber = queryHasDigitOrOperator
                     val result = Calculator.evaluate(expression, allowPlainNumber)
                     if (result != null) {
                         queryCalculatorResult = result
                     }
-                    // If result is null, we still show just the expression (incomplete)
                 } else {
                     // When there are matches, require a valid evaluation
                     val allowPlainNumber = false
@@ -1061,6 +1076,13 @@ class SearchOverlay @JvmOverloads constructor(
         val result = queryCalculatorResult
         val expression = queryCalculatorExpression
         val showIncomplete = queryCalculatorShowIncomplete
+        
+        // Hide row if a command is present (commands take precedence)
+        if (currentCommand != null) {
+            if (calculatorRow.visibility == VISIBLE) clearNavSelection()
+            calculatorRow.visibility = GONE
+            return
+        }
         
         // Hide row if no expression
         if (expression == null) {
@@ -1224,6 +1246,12 @@ class SearchOverlay @JvmOverloads constructor(
         commandRow.visibility = VISIBLE
     }
 
+    fun hasCommand(): Boolean = currentCommand != null
+
+    fun activateCommand() {
+        executeCommand()
+    }
+
     private fun executeCommand() {
         val command = currentCommand?.command ?: return
         when (command) {
@@ -1383,6 +1411,12 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun updateDialRow(dialDigits: String) {
+        // Hide row if a command is present (commands take precedence)
+        if (currentCommand != null) {
+            if (dialRow.visibility == VISIBLE) clearNavSelection()
+            dialRow.visibility = GONE
+            return
+        }
         if (dialDigits.isEmpty()) {
             if (dialRow.visibility == VISIBLE) clearNavSelection()
             dialRow.visibility = GONE
