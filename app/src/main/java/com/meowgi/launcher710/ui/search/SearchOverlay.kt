@@ -1,5 +1,7 @@
 package com.meowgi.launcher710.ui.search
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
@@ -65,6 +67,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val aiPanel: ScrollView
     private val aiProgress: ProgressBar
     private val aiText: TextView
+    private val aiContentContainer: LinearLayout
     private val aiError: TextView
     private val aiSettingsLink: TextView
     private val adapter: AppAdapter
@@ -328,6 +331,9 @@ class SearchOverlay @JvmOverloads constructor(
             typeface = font
             setLineSpacing(dp(2).toFloat(), 1f)
         }
+        aiContentContainer = LinearLayout(context).apply {
+            orientation = VERTICAL
+        }
         aiError = TextView(context).apply {
             textSize = 14f
             setTextColor(resources.getColor(R.color.bb_text_secondary, null))
@@ -350,6 +356,7 @@ class SearchOverlay @JvmOverloads constructor(
             setPadding(dp(8), dp(8), dp(8), dp(16))
             addView(aiProgress, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(12) })
             addView(aiText, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(aiContentContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             addView(aiError, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             addView(aiSettingsLink, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         }
@@ -581,6 +588,70 @@ class SearchOverlay @JvmOverloads constructor(
         return true
     }
 
+    /**
+     * Returns the current AI answer text if one exists for the current query, null otherwise.
+     * Used for long-press copy functionality.
+     */
+    fun getCurrentAiAnswerForCopy(): String? {
+        val currentQuery = lastQuery.trim()
+        if (currentQuery.isEmpty()) return null
+        val state = aiSession.state
+        if (state !is AiState.Answer) return null
+        if (state.query != currentQuery) return null
+        if (state.text.isEmpty()) return null
+        val rendered = AiMarkdown.parse(state.text)
+        return AiMarkdown.toPlainText(rendered)
+    }
+
+    /**
+     * Copies the current AI answer to clipboard and shows a toast. Returns false if no answer to copy.
+     */
+    fun copyCurrentAiAnswer(): Boolean {
+        val text = getCurrentAiAnswerForCopy() ?: return false
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("AI Answer", text))
+        Toast.makeText(context, R.string.ai_answer_copied, Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    private fun createTableView(table: AiMarkdown.Table): View {
+        val scrollView = HorizontalScrollView(context).apply {
+            isFillViewport = false
+            isHorizontalScrollBarEnabled = true
+        }
+        val tableLayout = TableLayout(context).apply {
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        for ((rowIdx, row) in table.rows.withIndex()) {
+            val tableRow = TableRow(context)
+            for (cell in row) {
+                val cellView = TextView(context).apply {
+                    text = AiMarkdown.toSpanned(
+                        AiMarkdown.Rendered(cell.text, cell.spans),
+                        markdownStyle
+                    )
+                    textSize = 14f
+                    setTextColor(resources.getColor(R.color.bb_text_primary, null))
+                    typeface = font
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    if (rowIdx == 0 && table.hasHeader) {
+                        setTypeface(typeface, Typeface.BOLD)
+                        setBackgroundColor(0x20FFFFFF)
+                    }
+                }
+                tableRow.addView(cellView)
+            }
+            if (rowIdx == 0 && table.hasHeader) {
+                tableRow.setBackgroundColor(0x10FFFFFF)
+            } else if (rowIdx % 2 == 1) {
+                tableRow.setBackgroundColor(0x08FFFFFF)
+            }
+            tableLayout.addView(tableRow)
+        }
+        scrollView.addView(tableLayout)
+        return scrollView
+    }
+
     private fun renderAi(state: AiState) {
         val active = state !is AiState.Idle
         clearNavSelection()
@@ -596,21 +667,67 @@ class SearchOverlay @JvmOverloads constructor(
                 aiSettingsLink.visibility = GONE
                 if (state.done && state.text.isBlank()) {
                     aiText.visibility = GONE
+                    aiContentContainer.visibility = GONE
                     aiError.visibility = VISIBLE
                     aiError.text = context.getString(R.string.ai_empty_answer)
                 } else {
-                    aiText.visibility = if (state.text.isEmpty()) GONE else VISIBLE
-                    aiText.text = AiMarkdown.toSpanned(AiMarkdown.parse(state.text), markdownStyle)
+                    val rendered = AiMarkdown.parse(state.text)
+                    if (rendered.tables.isEmpty()) {
+                        aiText.visibility = if (state.text.isEmpty()) GONE else VISIBLE
+                        aiText.text = AiMarkdown.toSpanned(rendered, markdownStyle)
+                        aiContentContainer.visibility = GONE
+                        aiContentContainer.removeAllViews()
+                    } else {
+                        aiText.visibility = GONE
+                        aiContentContainer.visibility = VISIBLE
+                        aiContentContainer.removeAllViews()
+                        val tablePlaceholder = Regex("\\[Table: \\d+ rows × \\d+ columns\\]")
+                        val parts = rendered.text.split(tablePlaceholder)
+                        var offset = 0
+                        for ((partIdx, part) in parts.withIndex()) {
+                            if (part.isNotEmpty()) {
+                                val partSpans = rendered.spans.filter { span ->
+                                    span.start >= offset && span.end <= offset + part.length
+                                }.map { span ->
+                                    AiMarkdown.Span(span.start - offset, span.end - offset, span.kind, span.level)
+                                }
+                                val partRendered = AiMarkdown.Rendered(part, partSpans)
+                                val textView = TextView(context).apply {
+                                    text = AiMarkdown.toSpanned(partRendered, markdownStyle)
+                                    textSize = 15f
+                                    setTextColor(resources.getColor(R.color.bb_text_primary, null))
+                                    typeface = font
+                                    setLineSpacing(dp(2).toFloat(), 1f)
+                                }
+                                aiContentContainer.addView(textView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+                            }
+                            offset += part.length
+                            if (partIdx < parts.size - 1 && partIdx < rendered.tables.size) {
+                                aiContentContainer.addView(createTableView(rendered.tables[partIdx]), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+                                val placeholder = rendered.text.substring(offset).indexOf("[Table:")
+                                if (placeholder >= 0) {
+                                    val endPlaceholder = rendered.text.indexOf("]", offset + placeholder)
+                                    if (endPlaceholder >= 0) {
+                                        offset = endPlaceholder + 1
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             is AiState.Failed -> {
                 aiText.visibility = GONE
+                aiContentContainer.visibility = GONE
+                aiContentContainer.removeAllViews()
                 aiError.visibility = VISIBLE
                 aiError.text = state.message
                 aiSettingsLink.visibility = VISIBLE
             }
             else -> {
                 aiText.visibility = GONE
+                aiContentContainer.visibility = GONE
+                aiContentContainer.removeAllViews()
                 aiError.visibility = GONE
                 aiSettingsLink.visibility = GONE
                 aiPanel.scrollTo(0, 0)
