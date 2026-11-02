@@ -538,6 +538,14 @@ class LauncherPrefs(context: Context) {
         prefs.edit().putString("searchCurrencyList", arr.toString()).apply()
     }
 
+    var notesDestinationApp: String?
+        get() = prefs.getString("notesDestinationApp", null)
+        set(v) = prefs.edit().putString("notesDestinationApp", v).apply()
+
+    var notesDestinationPhone: String?
+        get() = prefs.getString("notesDestinationPhone", null)
+        set(v) = prefs.edit().putString("notesDestinationPhone", v).apply()
+
     // --- AI answers (the API key is in AiSecrets, never here) ---
     var aiEnabled: Boolean
         get() = prefs.getBoolean("aiEnabled", false)
