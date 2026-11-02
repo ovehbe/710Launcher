@@ -368,6 +368,9 @@ private fun SettingsActivity.buildBackup() {
         actionRow("Restore from backup", "Replace everything from a backup file") {
             restoreLauncher.launch(arrayOf("application/zip", "application/json", "application/octet-stream", "*/*"))
         }
+        actionRow("Reset to default style", "Restore the factory default appearance") {
+            showResetToDefaultsDialog()
+        }
     }
 }
 
