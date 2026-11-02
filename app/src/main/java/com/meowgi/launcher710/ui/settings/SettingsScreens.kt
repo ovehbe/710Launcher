@@ -475,15 +475,3 @@ private fun SettingsActivity.showWhatsAppPhoneDialog() {
         .show()
 }
 
-private fun SettingsActivity.getCurrencyListLabel(): String {
-    val list = prefs.getSearchCurrencyList()
-    return list.joinToString(", ")
-}
-
-private fun SettingsActivity.showCurrencyListManager() {
-    AlertDialog.Builder(this, dialogTheme)
-        .setTitle("Display currencies")
-        .setMessage("Currency list manager UI coming soon. Current list: ${getCurrencyListLabel()}")
-        .setPositiveButton("OK", null)
-        .show()
-}
