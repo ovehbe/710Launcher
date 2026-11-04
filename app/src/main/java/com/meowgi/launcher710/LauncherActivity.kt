@@ -1151,21 +1151,31 @@ class LauncherActivity : AppCompatActivity() {
      * The one decision for every Enter-like submit from search, whichever path it arrives on:
      * a key through the activity, a key delivered straight to the field, or an IME editor action
      * (an IME sees hardware keys first and may turn Enter into `performEditorAction`, which only
-     * reaches the editor-action listener). Alt+Enter asks AI; otherwise a highlighted row opens;
-     * otherwise [runQuery] runs the query as before (Google fallback / first result).
+     * reaches the editor-action listener). Alt+Enter asks AI; Shift+Enter inserts note break marker;
+     * otherwise a highlighted row opens; otherwise [runQuery] runs the query as before (Google fallback / first result).
      *
-     * Alt counts when held (event meta state, including a system Alt lock) or when the field's
-     * key listener has it sticky or locked (tap / double-tap Alt); a sticky Alt is spent here.
+     * Alt/Shift count when held (event meta state, including system locks) or when the field's
+     * key listener has them sticky or locked (tap / double-tap); a sticky meta is spent here.
      */
     private fun submitSearch(metaState: Int, runQuery: Boolean): Boolean {
         if (searchOverlay.visibility != View.VISIBLE) return false
         val text = searchInputInBar.text
+        if (isShiftActive(metaState, text)) {
+            android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
+            insertNoteBreakMarker()
+            return true
+        }
         if (prefs.aiAltEnter && isAltActive(metaState, text)) {
             android.text.method.MetaKeyKeyListener.adjustMetaAfterKeypress(text)
             triggerAiSearch()
             return true
         }
         if (searchOverlay.activateNavSelection()) return true
+        // If a command row is visible with no selection, activate it automatically
+        if (searchOverlay.hasCommand()) {
+            searchOverlay.activateCommand()
+            return true
+        }
         if (!runQuery) return false
         searchOverlay.performExtendedSearch()
         return true
@@ -1200,10 +1210,33 @@ class LauncherActivity : AppCompatActivity() {
         else -> false
     }
 
-    private fun isAltActive(metaState: Int, text: CharSequence) = AiSearchTrigger.altActive(
-        metaState,
-        android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
-    )
+    private fun isAltActive(metaState: Int, text: CharSequence): Boolean {
+        // Check local tracked alt state for BB keyboards where Alt arrives as separate event
+        if (altKeyPressed) return true
+        // Check standard event metaState and sticky/locked state in field text
+        return AiSearchTrigger.altActive(
+            metaState,
+            android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_ALT_ON)
+        )
+    }
+
+    private fun isShiftActive(metaState: Int, text: CharSequence): Boolean {
+        val eventShift = (metaState and KeyEvent.META_SHIFT_ON) != 0
+        val stickyShift = android.text.method.MetaKeyKeyListener.getMetaState(text, android.text.method.MetaKeyKeyListener.META_SHIFT_ON) != 0
+        return eventShift || stickyShift
+    }
+
+    private fun insertNoteBreakMarker() {
+        val field = searchInputInBar
+        val start = field.selectionStart
+        val end = field.selectionEnd
+        val text = field.text.toString()
+        val before = text.substring(0, start)
+        val after = text.substring(end)
+        val newText = before + "↵" + after
+        field.setText(newText)
+        field.setSelection(start + 1)
+    }
 
     internal fun triggerAiSearch() {
         if (!searchOverlay.copyCurrentAiAnswer()) {
@@ -2328,12 +2361,25 @@ class LauncherActivity : AppCompatActivity() {
             }
         }
 
+        // Track Alt key state for BB keyboards where ALT_LEFT/ALT_RIGHT arrive as separate events
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
+                when (event.action) {
+                    KeyEvent.ACTION_DOWN -> altKeyPressed = true
+                    KeyEvent.ACTION_UP -> altKeyPressed = false
+                }
+            }
+        }
+
         if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
     }
 
     /** Keys whose ACTION_DOWN search navigation consumed; their ACTION_UP is consumed too. */
     private val searchNavKeys = mutableSetOf<Int>()
+    
+    /** Track Alt key state for BB keyboards where ALT_LEFT/ALT_RIGHT arrive as separate events */
+    private var altKeyPressed = false
 
     private val trackballNav by lazy {
         com.meowgi.launcher710.ui.search.TrackballNavigator(

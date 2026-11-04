@@ -235,6 +235,7 @@ private fun SettingsActivity.buildSearch() {
         toggleRow("Inline calculator", prefs.searchCalculatorEnabled, "Evaluate arithmetic expressions") { prefs.searchCalculatorEnabled = it }
         toggleRow("Currency converter", prefs.searchCurrencyEnabled, "Convert currencies in search") { prefs.searchCurrencyEnabled = it }
         actionRow("Display currencies", getCurrencyListLabel()) { showCurrencyListManager() }
+        actionRow("Notes go to", getNotesDestinationLabel()) { showNotesDestinationPicker() }
         actionRow("Reset usage data", "Launch counts and last-opened times; favorites are kept", showChevron = false) { confirmResetUsageData() }
         choiceRow(getString(R.string.search_contacts), listOf("Enabled", "Disabled", "Enable only with @"), prefs.searchContactsMode.coerceIn(0, 2)) {
             prefs.searchContactsMode = it
@@ -413,3 +414,64 @@ private fun SettingsActivity.buildAbout() {
         }
     }
 }
+
+private fun SettingsActivity.getNotesDestinationLabel(): String {
+    val phone = prefs.notesDestinationPhone
+    if (phone != null && phone.isNotEmpty()) return "WhatsApp ($phone)"
+    val app = prefs.notesDestinationApp
+    return when (app) {
+        null, "" -> "Google Keep"
+        "share" -> "Share sheet (ask each time)"
+        else -> "Custom app"
+    }
+}
+
+private fun SettingsActivity.showNotesDestinationPicker() {
+    val options = listOf("Google Keep (com.google.android.keep)", "Share sheet (ask each time)", "WhatsApp phone number")
+    val builder = AlertDialog.Builder(this, dialogTheme)
+        .setTitle("Notes go to")
+        .setItems(options.toTypedArray()) { _, which ->
+            when (which) {
+                0 -> {
+                    prefs.notesDestinationApp = null
+                    prefs.notesDestinationPhone = null
+                    rebuildSettings()
+                }
+                1 -> {
+                    prefs.notesDestinationApp = "share"
+                    prefs.notesDestinationPhone = null
+                    rebuildSettings()
+                }
+                2 -> showWhatsAppPhoneDialog()
+            }
+        }
+        .setNegativeButton("Cancel", null)
+    builder.show()
+}
+
+private fun SettingsActivity.showWhatsAppPhoneDialog() {
+    val field = android.widget.EditText(this).apply {
+        setText(prefs.notesDestinationPhone ?: "")
+        hint = "e.g. +14155551234"
+        inputType = android.text.InputType.TYPE_CLASS_PHONE
+        setPadding(dp(16), dp(8), dp(16), dp(8))
+    }
+    AlertDialog.Builder(this, dialogTheme)
+        .setTitle("WhatsApp phone number")
+        .setMessage("Enter the number in international format with country code (e.g. +14155551234)")
+        .setView(field)
+        .setPositiveButton("OK") { _, _ ->
+            val phone = field.text.toString().trim()
+            if (phone.isNotEmpty()) {
+                prefs.notesDestinationApp = null
+                prefs.notesDestinationPhone = phone
+            } else {
+                prefs.notesDestinationApp = null
+                prefs.notesDestinationPhone = null
+            }
+            rebuildSettings()
+        }
+        .setNegativeButton("Cancel", null)
+        .show()
+}
+

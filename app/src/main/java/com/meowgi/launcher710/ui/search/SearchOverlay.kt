@@ -35,6 +35,7 @@ import com.meowgi.launcher710.util.CurrencyConverter
 import com.meowgi.launcher710.util.CurrencyRatesCache
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
+import com.meowgi.launcher710.util.PlainWordsCommands
 import com.meowgi.launcher710.util.SearchCommandData
 import com.meowgi.launcher710.util.SearchNormalizer
 import com.meowgi.launcher710.util.SearchRanker
@@ -61,6 +62,9 @@ class SearchOverlay @JvmOverloads constructor(
     private val calculatorRow: LinearLayout
     private val calculatorText: TextView
     private val currencyRowsContainer: LinearLayout
+    private val commandRow: LinearLayout
+    private val commandText: TextView
+    private val commandSecondary: TextView
     private val extendedSearchBtn: TextView
     private val suggestionsBox: LinearLayout
     private val resultsRecycler: RecyclerView
@@ -122,6 +126,7 @@ class SearchOverlay @JvmOverloads constructor(
     private var currentResults: List<LaunchableItem> = emptyList()
     private var searchContextLabel: String = "Extended"
     private var currentDialDigits = ""
+    private var currentCommand: PlainWordsCommands.CommandResult? = null
 
     // Per-session caches, cleared in show()/showFilter(). Building these touches icon packs,
     // bitmap shaping and PackageManager, which used to happen on every keystroke.
@@ -280,6 +285,29 @@ class SearchOverlay @JvmOverloads constructor(
         }
         addView(currencyRowsContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        commandRow = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = GONE
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            isFocusable = true
+            isFocusableInTouchMode = false
+        }
+        commandText = TextView(context).apply {
+            textSize = 15f
+            setTextColor(resources.getColor(R.color.bb_text_primary, null))
+            typeface = font
+        }
+        commandSecondary = TextView(context).apply {
+            textSize = 13f
+            setTextColor(resources.getColor(R.color.bb_text_secondary, null))
+            typeface = font
+            setPadding(0, dp(2), 0, 0)
+        }
+        commandRow.addView(commandText)
+        commandRow.addView(commandSecondary)
+        commandRow.setOnClickListener { executeCommand() }
+        addView(commandRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
         extendedSearchBtn = TextView(context).apply {
             text = "$searchContextLabel search"
             textSize = 13f
@@ -433,6 +461,7 @@ class SearchOverlay @JvmOverloads constructor(
         object Dial : NavTarget() { override fun toString() = "dial" }
         object Calculator : NavTarget() { override fun toString() = "calculator" }
         data class Currency(val index: Int) : NavTarget() { override fun toString() = "currency:$index" }
+        object Command : NavTarget() { override fun toString() = "command" }
         data class Suggestion(val index: Int) : NavTarget() { override fun toString() = "suggestion:$index" }
         data class Result(val position: Int) : NavTarget() { override fun toString() = "result:$position" }
         object AiSettings : NavTarget() { override fun toString() = "ai-settings" }
@@ -454,6 +483,7 @@ class SearchOverlay @JvmOverloads constructor(
         if (currencyRowsContainer.visibility == VISIBLE) {
             for (i in 0 until currencyRowsContainer.childCount) rows += listOf(NavTarget.Currency(i))
         }
+        if (commandRow.visibility == VISIBLE) rows += listOf(NavTarget.Command)
         if (suggestionsBox.visibility == VISIBLE) {
             for (i in 0 until suggestionsBox.childCount) rows += listOf(NavTarget.Suggestion(i))
         }
@@ -512,6 +542,7 @@ class SearchOverlay @JvmOverloads constructor(
             NavTarget.Dial -> dial(currentDialDigits)
             NavTarget.Calculator -> copyCalculatorResult()
             is NavTarget.Currency -> copyCurrencyResult(target.index)
+            NavTarget.Command -> executeCommand()
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
             NavTarget.AiSettings -> aiSettingsLink.performClick()
@@ -538,6 +569,7 @@ class SearchOverlay @JvmOverloads constructor(
         NavTarget.Dial -> dialRow
         NavTarget.Calculator -> calculatorRow
         is NavTarget.Currency -> currencyRowsContainer.getChildAt(target.index)
+        NavTarget.Command -> commandRow
         is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)
         is NavTarget.Result -> resultsRecycler.findViewHolderForAdapterPosition(target.position)?.itemView
         NavTarget.AiSettings -> aiSettingsLink
@@ -937,6 +969,7 @@ class SearchOverlay @JvmOverloads constructor(
             publish(filtered)
             evaluateCalculator(query, layout, filtered.isNotEmpty())
             lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
+            updateCommandRow()
         } else {
             val repo = repository ?: return
             val appResults = repo.searchApps(query, dialDigitsForAppSearch).map { LaunchableItem.App(it) }
@@ -951,6 +984,7 @@ class SearchOverlay @JvmOverloads constructor(
                 publish(initialResults)
                 evaluateCalculator(query, layout, initialResults.isNotEmpty())
                 lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
+                updateCommandRow()
                 val queryForContact = query
                 ContactSearchHelper.searchAsync(
                     context,
@@ -966,6 +1000,7 @@ class SearchOverlay @JvmOverloads constructor(
                     publish(finalResults)
                     evaluateCalculator(queryForContact, layout, finalResults.isNotEmpty())
                     lifecycleOwner?.let { evaluateCurrency(queryForContact, layout, it.lifecycleScope) }
+                    updateCommandRow()
                 }
             } else {
                 ContactSearchHelper.cancel()
@@ -973,6 +1008,7 @@ class SearchOverlay @JvmOverloads constructor(
                 publish(baseResults)
                 evaluateCalculator(query, layout, baseResults.isNotEmpty())
                 lifecycleOwner?.let { evaluateCurrency(query, layout, it.lifecycleScope) }
+                updateCommandRow()
             }
         }
         updateDialRow(queryDialNumber ?: "")
@@ -993,19 +1029,34 @@ class SearchOverlay @JvmOverloads constructor(
             // Only show calculator if expression contains at least one digit (mapped or raw)
             val hasDigit = expression.any { it.isDigit() }
             if (hasDigit) {
-                // When there are no app/contact matches, always show the expression even if incomplete
-                // When there are matches, only show when we have a valid result
+                // Check if query genuinely looks like math:
+                // 1. Original query contains real digits or operators (not just plain letters)
+                // 2. Expression is evaluable (has operators, not just a mapped plain number)
+                val queryHasDigitOrOperator = query.any { it.isDigit() || it in "+-*/%().,=" }
+                val expressionIsPlainNumber = expression.all { it.isDigit() || it == '.' }
+                val isPlainWord = query.all { it.isLetter() || it.isWhitespace() }
+                
+                // Skip calculator if original query is plain word with no digits/operators
+                if (isPlainWord && !queryHasDigitOrOperator) {
+                    updateCalculatorRow()
+                    return
+                }
+                
+                // When there are no app/contact matches, show expression if it's evaluable
                 if (!hasResults) {
-                    // Always show the mapped expression when no results
+                    // Don't show plain mapped numbers from pure letter strings
+                    if (expressionIsPlainNumber && isPlainWord) {
+                        updateCalculatorRow()
+                        return
+                    }
                     queryCalculatorExpression = expression
                     queryCalculatorShowIncomplete = true
                     // Try to evaluate - if successful, show the result
-                    val allowPlainNumber = true
+                    val allowPlainNumber = queryHasDigitOrOperator
                     val result = Calculator.evaluate(expression, allowPlainNumber)
                     if (result != null) {
                         queryCalculatorResult = result
                     }
-                    // If result is null, we still show just the expression (incomplete)
                 } else {
                     // When there are matches, require a valid evaluation
                     val allowPlainNumber = false
@@ -1025,6 +1076,13 @@ class SearchOverlay @JvmOverloads constructor(
         val result = queryCalculatorResult
         val expression = queryCalculatorExpression
         val showIncomplete = queryCalculatorShowIncomplete
+        
+        // Hide row if a command is present (commands take precedence)
+        if (currentCommand != null) {
+            if (calculatorRow.visibility == VISIBLE) clearNavSelection()
+            calculatorRow.visibility = GONE
+            return
+        }
         
         // Hide row if no expression
         if (expression == null) {
@@ -1169,6 +1227,135 @@ class SearchOverlay @JvmOverloads constructor(
         webSuggestions.request(query)
     }
 
+    private fun updateCommandRow() {
+        val command = PlainWordsCommands.detect(lastQuery)
+        currentCommand = command
+        
+        if (command == null) {
+            if (commandRow.visibility == VISIBLE) clearNavSelection()
+            commandRow.visibility = GONE
+            return
+        }
+        
+        if (commandRow.visibility != VISIBLE || commandText.text.toString() != command.displayText) {
+            clearNavSelection()
+        }
+        commandText.text = command.displayText
+        commandSecondary.text = command.secondaryText
+        commandSecondary.visibility = if (command.secondaryText != null) VISIBLE else GONE
+        commandRow.visibility = VISIBLE
+    }
+
+    fun hasCommand(): Boolean = currentCommand != null
+
+    fun activateCommand() {
+        executeCommand()
+    }
+
+    private fun executeCommand() {
+        val command = currentCommand?.command ?: return
+        when (command) {
+            is PlainWordsCommands.Command.Timer -> {
+                val intent = Intent(android.provider.AlarmClock.ACTION_SET_TIMER).apply {
+                    putExtra(android.provider.AlarmClock.EXTRA_LENGTH, command.seconds)
+                    putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                    dismiss()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No clock app found", Toast.LENGTH_SHORT).show()
+                }
+            }
+            is PlainWordsCommands.Command.ShowTimers -> {
+                val intent = Intent(android.provider.AlarmClock.ACTION_SHOW_TIMERS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                    dismiss()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No clock app found", Toast.LENGTH_SHORT).show()
+                }
+            }
+            is PlainWordsCommands.Command.TimeZone -> {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Time", currentCommand?.displayText ?: ""))
+                Toast.makeText(context, "Time copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
+            is PlainWordsCommands.Command.Note -> {
+                sendNote(command.breaksAsNewlines)
+                dismiss()
+            }
+        }
+    }
+
+    private fun sendNote(text: String) {
+        val notesApp = prefs.notesDestinationApp
+        val notesPhone = prefs.notesDestinationPhone
+        
+        when {
+            notesPhone != null && notesPhone.isNotEmpty() -> {
+                val url = "https://wa.me/$notesPhone?text=${Uri.encode(text)}"
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                        setPackage("com.whatsapp")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (e2: Exception) {
+                        Toast.makeText(context, "WhatsApp not found", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            notesApp == "share" -> {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(Intent.createChooser(intent, "Save note to...").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            notesApp != null && notesApp.isNotEmpty() -> {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    setPackage(notesApp)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "App not found", Toast.LENGTH_SHORT).show()
+                }
+            }
+            else -> {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    setPackage("com.google.android.keep")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    val fallback = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(Intent.createChooser(fallback, "Save note to...").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+        }
+    }
+
     private fun matchesText(item: LaunchableItem): Boolean {
         val nq = queryNormalized
         if (nq.isEmpty()) return false
@@ -1224,6 +1411,12 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun updateDialRow(dialDigits: String) {
+        // Hide row if a command is present (commands take precedence)
+        if (currentCommand != null) {
+            if (dialRow.visibility == VISIBLE) clearNavSelection()
+            dialRow.visibility = GONE
+            return
+        }
         if (dialDigits.isEmpty()) {
             if (dialRow.visibility == VISIBLE) clearNavSelection()
             dialRow.visibility = GONE
