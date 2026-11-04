@@ -469,9 +469,25 @@ class LauncherPrefs(context: Context) {
         }
         set(v) = prefs.edit().putString("defaultTabPageId", v).apply()
 
-    /** Filtered page order (excludes hidden All/Frequent). */
-    fun getFilteredPageOrder(): List<String> =
-        getPageOrder().filter { pid -> if (pid == "all") !hideAllPage else if (pid == "frequent") !hideFrequentPage else true }
+    /** Page order without the hidden All/Frequent pages: the one place that decides what is visible. */
+    fun getFilteredPageOrder(order: List<String> = getPageOrder()): List<String> =
+        order.filter { pid -> if (pid == "all") !hideAllPage else if (pid == "frequent") !hideFrequentPage else true }
+
+    /**
+     * [defaultTabPageId] when that page is visible. Hiding it leaves the stored id pointing at a
+     * page that no longer exists, which used to land on position 0 whatever that was; fall back
+     * to Favorites, then to the first visible page.
+     */
+    val effectiveDefaultTabPageId: String
+        get() {
+            val visible = getFilteredPageOrder()
+            val id = defaultTabPageId
+            return when {
+                id in visible -> id
+                "favorites" in visible -> "favorites"
+                else -> visible.firstOrNull() ?: "favorites"
+            }
+        }
 
     /** 0 = alphabetical, 1 = last opened, 2 = last installed, 3 = most used */
     var appSortMode: Int

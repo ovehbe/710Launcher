@@ -139,7 +139,7 @@ private fun SettingsActivity.buildApps() {
         toggleRow("Show Frequent apps page", !prefs.hideFrequentPage) { prefs.hideFrequentPage = !it; rebuildSettings() }
         val filteredOrder = prefs.getFilteredPageOrder()
         val pageNames = filteredOrder.map { pageName(it) }
-        val defaultIdx = filteredOrder.indexOf(prefs.defaultTabPageId).coerceAtLeast(0)
+        val defaultIdx = filteredOrder.indexOf(prefs.effectiveDefaultTabPageId).coerceAtLeast(0)
         choiceRow("Default home tab", pageNames, defaultIdx.coerceIn(0, (pageNames.size - 1).coerceAtLeast(0))) {
             prefs.defaultTabPageId = filteredOrder[it.coerceIn(0, filteredOrder.size - 1)]
         }
