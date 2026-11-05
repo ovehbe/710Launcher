@@ -118,6 +118,9 @@ class LauncherActivity : AppCompatActivity() {
     private var keyRoleLongPressTriggered = false
     private var keyRoleLongPressRunnable: Runnable? = null
     private var keyRoleDoublePressRunnable: Runnable? = null
+    
+    private var key0LongPressTriggered = false
+    private var key0LongPressRunnable: Runnable? = null
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -393,6 +396,10 @@ class LauncherActivity : AppCompatActivity() {
             searchInputInBar.setText("")
             refreshNotificationTicker()
             appPager.visibility = View.VISIBLE
+        }
+        searchOverlay.onUpdateSearchText = { text ->
+            searchInputInBar.setText(text)
+            searchInputInBar.setSelection(text.length)
         }
         searchOverlay.onLaunchItem = { item ->
             when (item) {
@@ -2611,6 +2618,8 @@ class LauncherActivity : AppCompatActivity() {
         } catch (e: Exception) {
             // Ignore if not registered
         }
+        // Stop voice dictation if active to release microphone
+        searchOverlay.stopVoiceDictation()
     }
 
     /**

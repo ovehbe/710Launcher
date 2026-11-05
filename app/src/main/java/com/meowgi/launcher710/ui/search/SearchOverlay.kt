@@ -82,6 +82,8 @@ class SearchOverlay @JvmOverloads constructor(
     var onDismiss: (() -> Unit)? = null
     var onLaunchItem: ((LaunchableItem) -> Unit)? = null
     var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
+    /** Called to update search field text from voice (bypasses manual edit detection) */
+    var onUpdateSearchText: ((String) -> Unit)? = null
     /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used to convert letters to dial digits. */
     var dialerLayoutProvider: () -> Int = { 0 }
     /** 0 = always, 1 = disabled, 2 = @ prefix only */
@@ -1586,6 +1588,7 @@ class SearchOverlay @JvmOverloads constructor(
     private var voiceDictationHelper: VoiceDictationHelper? = null
     private var voiceIsOwner = false
     private var lastVoiceResult = ""
+    private var updatingFromVoice = false
     
     /**
      * Starts voice dictation if available and permission granted. Returns false if voice is not available
@@ -1635,8 +1638,10 @@ class SearchOverlay @JvmOverloads constructor(
     
     /**
      * Called when user types manually - cancels voice ownership so late results don't overwrite.
+     * Ignores programmatic updates (from voice itself).
      */
     internal fun onManualEdit() {
+        if (updatingFromVoice) return
         if (voiceIsOwner) {
             voiceIsOwner = false
             voiceDictationHelper?.stopListening()
@@ -1648,8 +1653,14 @@ class SearchOverlay @JvmOverloads constructor(
         if (visibility != VISIBLE || !voiceIsOwner || text == lastVoiceResult) return
         
         lastVoiceResult = text
-        // Update search with partial result - applyQuery already handles dedupe
-        applyQuery(text)
+        // Update search field text AND query results
+        updatingFromVoice = true
+        try {
+            onUpdateSearchText?.invoke(text)
+            applyQuery(text)
+        } finally {
+            updatingFromVoice = false
+        }
     }
     
     private fun handleVoiceFinalResult(text: String) {
@@ -1658,8 +1669,14 @@ class SearchOverlay @JvmOverloads constructor(
         
         lastVoiceResult = text
         voiceIsOwner = false
-        // Update search with final result
-        applyQuery(text)
+        // Update search field text AND query results
+        updatingFromVoice = true
+        try {
+            onUpdateSearchText?.invoke(text)
+            applyQuery(text)
+        } finally {
+            updatingFromVoice = false
+        }
     }
     
     private fun handleVoiceError(error: String) {
@@ -1683,6 +1700,7 @@ class SearchOverlay @JvmOverloads constructor(
  * Helper class that manages Android SpeechRecognizer lifecycle for voice dictation.
  * Handles permission requests, recognizer availability, partial/final results, and errors.
  * Recognizer instance is reused across listening sessions for performance.
+ * Session ID prevents callbacks from previous sessions.
  */
 private class VoiceDictationHelper(
     private val context: Context,
@@ -1692,6 +1710,7 @@ private class VoiceDictationHelper(
 ) {
     private var speechRecognizer: android.speech.SpeechRecognizer? = null
     private var recognizerAvailable = false
+    private var sessionId = 0
     var isListening = false
         private set
     
@@ -1722,13 +1741,29 @@ private class VoiceDictationHelper(
             }
         }
         
+        // Increment session ID to invalidate any pending callbacks
+        sessionId++
+        val currentSession = sessionId
+        
         // Create recognizer once and reuse for performance
+        // This MUST be called on the main thread per Android SpeechRecognizer requirements
         if (speechRecognizer == null) {
-            speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(recognitionListener)
+            try {
+                speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+                if (speechRecognizer == null) {
+                    onError(context.getString(R.string.voice_not_available))
+                    return false
+                }
+            } catch (e: Exception) {
+                onError(context.getString(R.string.voice_error))
+                return false
+            }
         }
         
-        // Start listening
+        // Set listener with current session ID
+        speechRecognizer?.setRecognitionListener(createRecognitionListener(currentSession))
+        
+        // Start listening (must be on main thread)
         val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, 
                 android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -1750,6 +1785,8 @@ private class VoiceDictationHelper(
     
     fun stopListening() {
         if (!isListening) return
+        // Increment session to invalidate callbacks
+        sessionId++
         try {
             speechRecognizer?.stopListening()
         } catch (e: Exception) {
@@ -1768,7 +1805,7 @@ private class VoiceDictationHelper(
         isListening = false
     }
     
-    private val recognitionListener = object : android.speech.RecognitionListener {
+    private fun createRecognitionListener(expectedSession: Int) = object : android.speech.RecognitionListener {
         override fun onReadyForSpeech(params: android.os.Bundle?) {}
         
         override fun onBeginningOfSpeech() {}
@@ -1778,10 +1815,13 @@ private class VoiceDictationHelper(
         override fun onBufferReceived(buffer: ByteArray?) {}
         
         override fun onEndOfSpeech() {
-            isListening = false
+            // Don't clear isListening yet - wait for results/error
         }
         
         override fun onError(error: Int) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) return
+            
             isListening = false
             
             // Only report real errors, not normal flow like timeout or no match
@@ -1803,6 +1843,9 @@ private class VoiceDictationHelper(
         }
         
         override fun onResults(results: android.os.Bundle?) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) return
+            
             isListening = false
             
             val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
@@ -1813,6 +1856,9 @@ private class VoiceDictationHelper(
         }
         
         override fun onPartialResults(partialResults: android.os.Bundle?) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) return
+            
             // Partial results arrive during speech - feed to search for live updates
             val matches = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
             val bestMatch = matches?.firstOrNull()
