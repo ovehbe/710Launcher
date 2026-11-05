@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="voice_search"
+        android:enabled="true"
+        android:icon="@drawable/ic_microphone"
+        android:shortcutShortLabel="@string/voice_search_label"
+        android:shortcutLongLabel="@string/voice_search_label_long">
+        <intent
+            android:action="com.meowgi.launcher710.action.VOICE_SEARCH"
+            android:targetPackage="com.meowgi.launcher710"
+            android:targetClass="com.meowgi.launcher710.voice.VoiceSearchActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>
