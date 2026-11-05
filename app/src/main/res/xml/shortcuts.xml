@@ -8,7 +8,7 @@
         android:shortcutLongLabel="@string/voice_search_label_long">
         <intent
             android:action="com.meowgi.launcher710.action.VOICE_SEARCH"
-            android:targetPackage="com.meowgi.launcher710"
+            android:targetPackage="${applicationId}"
             android:targetClass="com.meowgi.launcher710.voice.VoiceSearchActivity" />
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
