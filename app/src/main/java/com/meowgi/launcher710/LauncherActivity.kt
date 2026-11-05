@@ -2485,7 +2485,8 @@ class LauncherActivity : AppCompatActivity() {
                 triggerVoiceSearch()
             }
             keyHandler.postDelayed(key0LongPressRunnable!!, LONG_PRESS_MS)
-            return true
+            // Don't consume event - let it propagate so '0' can be typed if released quickly
+            // Voice trigger (if long-press) happens via timer, and onKeyUp will consume to prevent typing
         }
         
         val role = getKeyRole(keyCode)
@@ -2528,11 +2529,11 @@ class LauncherActivity : AppCompatActivity() {
             key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
             key0LongPressRunnable = null
             if (key0LongPressTriggered) {
-                // Long press was triggered, consume the key up
+                key0LongPressTriggered = false
+                // Long press was triggered, consume the key up to prevent typing '0'
                 return true
             }
-            // Short press - let it type '0' normally
-            return super.onKeyUp(keyCode, event)
+            // Short press - fall through to normal handling so '0' gets typed
         }
         
         val role = getKeyRole(keyCode)
