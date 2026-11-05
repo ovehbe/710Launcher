@@ -63,3 +63,4 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
+- Launch guards (unreleased): `AppRepository.launchApp` catches `ActivityNotFoundException` (the app was removed since the list was built: it triggers a rescan) and `SecurityException`, and records no launch for a start that failed. The web search fallback in `SearchOverlay.openWebSearchWithQuery` toasts when neither a search app nor a browser exists. Covered by `LaunchGuardsTest` (Robolectric, `checkActivities(true)`). Other launch sites that go through `getLaunchIntentForPackage` or `Intent.parseUri` already catch or null-check.
