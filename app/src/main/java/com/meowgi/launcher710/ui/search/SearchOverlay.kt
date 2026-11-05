@@ -1588,6 +1588,7 @@ class SearchOverlay @JvmOverloads constructor(
     private var voiceDictationHelper: VoiceDictationHelper? = null
     private var voiceIsOwner = false
     private var lastVoiceResult = ""
+    private var voiceTypedPrefix = ""  // Text typed before voice started
     private var updatingFromVoice = false
     
     /**

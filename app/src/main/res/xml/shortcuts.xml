@@ -10,6 +10,9 @@
             android:action="com.meowgi.launcher710.action.VOICE_SEARCH"
             android:targetPackage="${applicationId}"
             android:targetClass="com.meowgi.launcher710.voice.VoiceSearchActivity" />
+            <!-- NOTE: ${applicationId} substitution DOES NOT WORK in XML resources.
+                 Debug variant will have wrong package. Needs manifestPlaceholders or dynamic shortcuts.
+                 BROKEN: Debug APK will target 'com.meowgi.launcher710' instead of '.debug' variant. -->
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 </shortcuts>
