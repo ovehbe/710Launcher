@@ -14,7 +14,6 @@
     <string name="ai_answer_copied">Answer copied to clipboard</string>
     <string name="dial_prefix">Dial:</string>
     <string name="dial_no_app">No app to place call</string>
-    <string name="voice_listening">Listening…</string>
     <string name="voice_not_available">Voice input not available</string>
     <string name="voice_permission_denied">Microphone permission denied</string>
     <string name="voice_error">Voice recognition error</string>

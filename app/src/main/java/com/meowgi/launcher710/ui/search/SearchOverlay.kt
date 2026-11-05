@@ -1602,6 +1602,9 @@ class SearchOverlay @JvmOverloads constructor(
         // Check if already listening
         if (voiceDictationHelper?.isListening == true) return true
         
+        // Save current typed text as prefix before voice starts
+        voiceTypedPrefix = lastQuery
+        
         // Create helper if needed (reused across sessions for performance)
         if (voiceDictationHelper == null) {
             voiceDictationHelper = VoiceDictationHelper(
@@ -1626,15 +1629,17 @@ class SearchOverlay @JvmOverloads constructor(
     fun stopVoiceDictation() {
         voiceDictationHelper?.stopListening()
         voiceIsOwner = false
+        voiceTypedPrefix = ""
     }
     
     /**
      * Cancels voice dictation. Does not restore original query since typing may have happened.
      */
     fun cancelVoiceDictation() {
-        voiceDictationHelper?.stopListening()
+        voiceDictationHelper?.cancelListening()
         voiceIsOwner = false
         lastVoiceResult = ""
+        voiceTypedPrefix = ""
     }
     
     /**
@@ -1654,11 +1659,12 @@ class SearchOverlay @JvmOverloads constructor(
         if (visibility != VISIBLE || !voiceIsOwner || text == lastVoiceResult) return
         
         lastVoiceResult = text
-        // Update search field text AND query results
+        // Append voice text to saved prefix, update field via callback
+        // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true
         try {
-            onUpdateSearchText?.invoke(text)
-            applyQuery(text)
+            val combinedText = voiceTypedPrefix + text
+            onUpdateSearchText?.invoke(combinedText)
         } finally {
             updatingFromVoice = false
         }
@@ -1670,11 +1676,12 @@ class SearchOverlay @JvmOverloads constructor(
         
         lastVoiceResult = text
         voiceIsOwner = false
-        // Update search field text AND query results
+        // Append voice text to saved prefix, update field via callback
+        // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true
         try {
-            onUpdateSearchText?.invoke(text)
-            applyQuery(text)
+            val combinedText = voiceTypedPrefix + text
+            onUpdateSearchText?.invoke(combinedText)
         } finally {
             updatingFromVoice = false
         }
@@ -1683,6 +1690,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun handleVoiceError(error: String) {
         voiceIsOwner = false
         lastVoiceResult = ""
+        voiceTypedPrefix = ""
         // Only show error for permission/availability issues, not timeouts
         if (error.isNotEmpty()) {
             android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_SHORT).show()
@@ -1792,6 +1800,18 @@ private class VoiceDictationHelper(
             speechRecognizer?.stopListening()
         } catch (e: Exception) {
             // Ignore errors on stop
+        }
+        isListening = false
+    }
+    
+    fun cancelListening() {
+        if (!isListening) return
+        // Increment session to invalidate callbacks
+        sessionId++
+        try {
+            speechRecognizer?.cancel()  // Cancel immediately without waiting for final result
+        } catch (e: Exception) {
+            // Ignore errors on cancel
         }
         isListening = false
     }

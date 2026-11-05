@@ -2661,6 +2661,12 @@ class LauncherActivity : AppCompatActivity() {
             intent.removeExtra(OPEN_HOME_MENU_EXTRA)
             return
         }
+        // Check for voice trigger (warm start / background case)
+        if (intent.getBooleanExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH, false)) {
+            intent.removeExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH)
+            tabBarContainer.post { triggerVoiceSearch() }
+            return
+        }
         if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
         if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
@@ -2672,6 +2678,10 @@ class LauncherActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         clearHighlightTraces()
+        // Cancel 0-key long-press timer to prevent voice triggering when backgrounded
+        key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+        key0LongPressRunnable = null
+        key0LongPressTriggered = false
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -2770,8 +2780,11 @@ class LauncherActivity : AppCompatActivity() {
         // Handle voice permission result
         if (requestCode == 1001 && grantResults.isNotEmpty()) {
             if (grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                // Permission granted, try starting voice again
-                triggerVoiceSearch()
+                // Permission granted - only retry if search is still visible
+                // (don't reopen if user closed search during permission dialog)
+                if (searchOverlay.visibility == View.VISIBLE) {
+                    searchOverlay.startVoiceDictation()
+                }
             } else {
                 android.widget.Toast.makeText(this, R.string.voice_permission_denied, android.widget.Toast.LENGTH_SHORT).show()
             }
