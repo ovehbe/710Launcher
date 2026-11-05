@@ -36,6 +36,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.meowgi.launcher710.ai.AiSearchTrigger
 import com.meowgi.launcher710.backup.BackupManager
+import com.meowgi.launcher710.voice.VoiceSearchActivity
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
@@ -473,6 +474,14 @@ class LauncherActivity : AppCompatActivity() {
             tabBarContainer.post { showHomeContextMenu(tabBarContainer) }
             intent?.removeExtra(OPEN_HOME_MENU_EXTRA)
         }
+        
+        // Check if launched via voice search shortcut (from VoiceSearchActivity)
+        if (intent?.getBooleanExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH, false) == true) {
+            intent.removeExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH)
+            // Trigger voice after layout is ready
+            tabBarContainer.post { triggerVoiceSearch() }
+        }
+        
         applyOpacitySettings()
         applySystemUI()
         updateSoundProfileIcon()
@@ -2606,13 +2615,6 @@ class LauncherActivity : AppCompatActivity() {
         doBackAction()
     }
 
-    private val voiceSearchReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            if (intent?.action == com.meowgi.launcher710.voice.VoiceSearchActivity.ACTION_TRIGGER_VOICE_SEARCH) {
-                triggerVoiceSearch()
-            }
-        }
-    }
     
     override fun onStart() {
         super.onStart()
@@ -2625,24 +2627,12 @@ class LauncherActivity : AppCompatActivity() {
                 scheduleTickerRefresh()
             }
         }
-        // Register voice search broadcast receiver
-        val filter = android.content.IntentFilter(com.meowgi.launcher710.voice.VoiceSearchActivity.ACTION_TRIGGER_VOICE_SEARCH)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(voiceSearchReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(voiceSearchReceiver, filter)
-        }
     }
 
     override fun onStop() {
         super.onStop()
         widgetHost.stopListening()
         NotifListenerService.onNotificationsChanged = null
-        try {
-            unregisterReceiver(voiceSearchReceiver)
-        } catch (e: Exception) {
-            // Ignore if not registered
-        }
         // Stop voice dictation if active to release microphone
         searchOverlay.stopVoiceDictation()
     }
