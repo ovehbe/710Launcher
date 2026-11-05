@@ -2536,6 +2536,8 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        repository.visible = true
+        if (repository.needsReload()) repository.reloadInBackground()
         widgetHost.startListening()
         // Held in a static on the service, so it must be cleared in onStop or it keeps this
         // activity alive for as long as the notification listener runs.
@@ -2549,6 +2551,7 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        repository.visible = false
         widgetHost.stopListening()
         NotifListenerService.onNotificationsChanged = null
     }
