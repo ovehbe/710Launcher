@@ -179,6 +179,7 @@ private fun SettingsActivity.buildSearch() {
     }
     group("Physical keyboard") {
         toggleRow("Search on physical keyboard", prefs.searchOnType, "Typing on the home screen starts a search") { prefs.searchOnType = it }
+        toggleRow("Voice search (hold 0 key)", prefs.voiceSearchLongPress0, "Hold 0 for 500ms to start voice dictation") { prefs.voiceSearchLongPress0 = it }
         choiceRow("Physical keyboard search",
             listOf("Built-in search", "Launch app", "Launch app with query", "Launch shortcut", "Launch app/shortcut and inject key", "Disabled"),
             prefs.searchEngineMode.coerceIn(0, 5)) {
