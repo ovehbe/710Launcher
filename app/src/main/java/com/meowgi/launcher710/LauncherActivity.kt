@@ -2475,18 +2475,26 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // Handle long-press 0 for voice search (if enabled and search is open or can be opened)
+        // Handle long-press 0 for voice search (if enabled)
+        // Only process initial key down (repeatCount == 0), ignore key repeats from holding
         if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
-            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0 && event?.repeatCount == 0) {
-            key0LongPressTriggered = false
-            key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
-            key0LongPressRunnable = Runnable {
-                key0LongPressTriggered = true
-                triggerVoiceSearch()
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
+            if (event?.repeatCount == 0) {
+                // Initial press - start timer
+                key0LongPressTriggered = false
+                key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+                key0LongPressRunnable = Runnable {
+                    key0LongPressTriggered = true
+                    triggerVoiceSearch()
+                }
+                keyHandler.postDelayed(key0LongPressRunnable!!, LONG_PRESS_MS)
+                // MUST consume event to prevent type-to-search from handling '0' immediately
+                // If short press, onKeyUp will manually insert '0'
+                return true
+            } else {
+                // Key repeat (user still holding) - consume to prevent repeated typing
+                return true
             }
-            keyHandler.postDelayed(key0LongPressRunnable!!, LONG_PRESS_MS)
-            // Don't consume event - let it propagate so '0' can be typed if released quickly
-            // Voice trigger (if long-press) happens via timer, and onKeyUp will consume to prevent typing
         }
         
         val role = getKeyRole(keyCode)
@@ -2523,17 +2531,33 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        // Handle 0 key up
+        // Handle 0 key up - only if we started a timer (runnable != null)
         if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
-            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
-            key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0 && key0LongPressRunnable != null) {
+            keyHandler.removeCallbacks(key0LongPressRunnable!!)
             key0LongPressRunnable = null
+            
             if (key0LongPressTriggered) {
                 key0LongPressTriggered = false
                 // Long press was triggered, consume the key up to prevent typing '0'
                 return true
             }
-            // Short press - fall through to normal handling so '0' gets typed
+            
+            // Short press - manually insert '0' since onKeyDown consumed the event
+            if (searchOverlay.visibility != View.VISIBLE) {
+                // Search not open - open it with '0'
+                searchInputInBar.requestFocus()
+                searchInputInBar.setText("0")
+                searchInputInBar.setSelection(1)
+                showSearchPageAware(initialChar = null, preserveText = true)
+            } else {
+                // Search already open - append '0' to current text
+                val currentText = searchInputInBar.text.toString()
+                val newText = currentText + "0"
+                searchInputInBar.setText(newText)
+                searchInputInBar.setSelection(newText.length)
+            }
+            return true
         }
         
         val role = getKeyRole(keyCode)
