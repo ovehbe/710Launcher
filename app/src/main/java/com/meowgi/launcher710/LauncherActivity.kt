@@ -1114,7 +1114,10 @@ class LauncherActivity : AppCompatActivity() {
     private fun setupSearchInputBar() {
         searchInputInBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Cancel voice ownership if user types manually
+                searchOverlay.onManualEdit()
+            }
             override fun afterTextChanged(s: Editable?) {
                 val text = s?.toString() ?: ""
                 searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
@@ -1243,6 +1246,17 @@ class LauncherActivity : AppCompatActivity() {
             if (!searchOverlay.startAiAnswer()) {
                 android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+    
+    internal fun triggerVoiceSearch() {
+        // Open search if not already open
+        if (searchOverlay.visibility != View.VISIBLE) {
+            showSearchPageAware(initialChar = null, preserveText = false)
+        }
+        // Start voice dictation
+        if (!searchOverlay.startVoiceDictation()) {
+            // Error already shown by startVoiceDictation if needed
         }
     }
 
@@ -2454,6 +2468,19 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // Handle long-press 0 for voice search (if enabled and search is open or can be opened)
+        if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0 && event?.repeatCount == 0) {
+            key0LongPressTriggered = false
+            key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+            key0LongPressRunnable = Runnable {
+                key0LongPressTriggered = true
+                triggerVoiceSearch()
+            }
+            keyHandler.postDelayed(key0LongPressRunnable!!, LONG_PRESS_MS)
+            return true
+        }
+        
         val role = getKeyRole(keyCode)
         if (role != null) {
             keyRoleLongPressTriggered = false
@@ -2488,6 +2515,19 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        // Handle 0 key up
+        if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
+            key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+            key0LongPressRunnable = null
+            if (key0LongPressTriggered) {
+                // Long press was triggered, consume the key up
+                return true
+            }
+            // Short press - let it type '0' normally
+            return super.onKeyUp(keyCode, event)
+        }
+        
         val role = getKeyRole(keyCode)
         if (role != null) {
             keyRoleLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
@@ -2534,6 +2574,14 @@ class LauncherActivity : AppCompatActivity() {
         doBackAction()
     }
 
+    private val voiceSearchReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == com.meowgi.launcher710.voice.VoiceSearchActivity.ACTION_TRIGGER_VOICE_SEARCH) {
+                triggerVoiceSearch()
+            }
+        }
+    }
+    
     override fun onStart() {
         super.onStart()
         widgetHost.startListening()
@@ -2545,12 +2593,24 @@ class LauncherActivity : AppCompatActivity() {
                 scheduleTickerRefresh()
             }
         }
+        // Register voice search broadcast receiver
+        val filter = android.content.IntentFilter(com.meowgi.launcher710.voice.VoiceSearchActivity.ACTION_TRIGGER_VOICE_SEARCH)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(voiceSearchReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(voiceSearchReceiver, filter)
+        }
     }
 
     override fun onStop() {
         super.onStop()
         widgetHost.stopListening()
         NotifListenerService.onNotificationsChanged = null
+        try {
+            unregisterReceiver(voiceSearchReceiver)
+        } catch (e: Exception) {
+            // Ignore if not registered
+        }
     }
 
     /**
@@ -2674,9 +2734,23 @@ class LauncherActivity : AppCompatActivity() {
         NotifListenerService.onNotificationsChanged = null
         keyHandler.removeCallbacksAndMessages(null)
         pagerAdapter = null
+        searchOverlay.cleanupVoiceDictation()
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(aiSearchReceiver) } catch (_: Exception) {}
         AiSearchTrigger.unregister(aiSearchHandler)
+    }
+    
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Handle voice permission result
+        if (requestCode == 1001 && grantResults.isNotEmpty()) {
+            if (grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Permission granted, try starting voice again
+                triggerVoiceSearch()
+            } else {
+                android.widget.Toast.makeText(this, R.string.voice_permission_denied, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }

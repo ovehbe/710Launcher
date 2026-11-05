@@ -199,6 +199,7 @@ class SearchOverlay @JvmOverloads constructor(
         aiSession.cancel()
         clearWebSuggestions()
         clearNavSelection()
+        cancelVoiceDictation()
         // The overlay is only hidden between sessions, so its lists keep their scroll position.
         resultsRecycler.scrollToPosition(0)
         aiPanel.scrollTo(0, 0)
@@ -791,6 +792,7 @@ class SearchOverlay @JvmOverloads constructor(
         aiSession.cancel()
         clearWebSuggestions()
         clearNavSelection()
+        cancelVoiceDictation()
         visibility = GONE
         onDismiss?.invoke()
     }
@@ -1578,4 +1580,251 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    
+    // --- Voice Dictation ---
+    
+    private var voiceDictationHelper: VoiceDictationHelper? = null
+    private var voiceIsOwner = false
+    private var lastVoiceResult = ""
+    
+    /**
+     * Starts voice dictation if available and permission granted. Returns false if voice is not available
+     * or permission denied. Partial results update the search field in real-time.
+     * No visual indicator - the live transcribed text IS the feedback.
+     */
+    fun startVoiceDictation(): Boolean {
+        if (visibility != VISIBLE) return false
+        
+        // Check if already listening
+        if (voiceDictationHelper?.isListening == true) return true
+        
+        // Create helper if needed (reused across sessions for performance)
+        if (voiceDictationHelper == null) {
+            voiceDictationHelper = VoiceDictationHelper(
+                context = context,
+                onPartialResult = { text -> handleVoicePartialResult(text) },
+                onFinalResult = { text -> handleVoiceFinalResult(text) },
+                onError = { error -> handleVoiceError(error) }
+            )
+        }
+        
+        val started = voiceDictationHelper?.startListening() ?: false
+        if (started) {
+            voiceIsOwner = true
+            lastVoiceResult = ""
+        }
+        return started
+    }
+    
+    /**
+     * Stops voice dictation and keeps the current transcribed text.
+     */
+    fun stopVoiceDictation() {
+        voiceDictationHelper?.stopListening()
+        voiceIsOwner = false
+    }
+    
+    /**
+     * Cancels voice dictation. Does not restore original query since typing may have happened.
+     */
+    fun cancelVoiceDictation() {
+        voiceDictationHelper?.stopListening()
+        voiceIsOwner = false
+        lastVoiceResult = ""
+    }
+    
+    /**
+     * Called when user types manually - cancels voice ownership so late results don't overwrite.
+     */
+    internal fun onManualEdit() {
+        if (voiceIsOwner) {
+            voiceIsOwner = false
+            voiceDictationHelper?.stopListening()
+        }
+    }
+    
+    private fun handleVoicePartialResult(text: String) {
+        // Ignore if search closed, voice lost ownership, or result unchanged
+        if (visibility != VISIBLE || !voiceIsOwner || text == lastVoiceResult) return
+        
+        lastVoiceResult = text
+        // Update search with partial result - applyQuery already handles dedupe
+        applyQuery(text)
+    }
+    
+    private fun handleVoiceFinalResult(text: String) {
+        // Ignore if search closed or voice lost ownership
+        if (visibility != VISIBLE || !voiceIsOwner) return
+        
+        lastVoiceResult = text
+        voiceIsOwner = false
+        // Update search with final result
+        applyQuery(text)
+    }
+    
+    private fun handleVoiceError(error: String) {
+        voiceIsOwner = false
+        lastVoiceResult = ""
+        // Only show error for permission/availability issues, not timeouts
+        if (error.isNotEmpty()) {
+            android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    internal fun cleanupVoiceDictation() {
+        voiceDictationHelper?.destroy()
+        voiceDictationHelper = null
+        voiceIsOwner = false
+        lastVoiceResult = ""
+    }
+}
+
+/**
+ * Helper class that manages Android SpeechRecognizer lifecycle for voice dictation.
+ * Handles permission requests, recognizer availability, partial/final results, and errors.
+ * Recognizer instance is reused across listening sessions for performance.
+ */
+private class VoiceDictationHelper(
+    private val context: Context,
+    private val onPartialResult: (String) -> Unit,
+    private val onFinalResult: (String) -> Unit,
+    private val onError: (String) -> Unit
+) {
+    private var speechRecognizer: android.speech.SpeechRecognizer? = null
+    private var recognizerAvailable = false
+    var isListening = false
+        private set
+    
+    init {
+        recognizerAvailable = android.speech.SpeechRecognizer.isRecognitionAvailable(context)
+    }
+    
+    fun startListening(): Boolean {
+        // Check if recognition is available
+        if (!recognizerAvailable) {
+            onError(context.getString(R.string.voice_not_available))
+            return false
+        }
+        
+        // Check microphone permission (Android 6.0+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val permission = android.Manifest.permission.RECORD_AUDIO
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, permission) 
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Request permission from activity
+                val activity = context as? android.app.Activity
+                if (activity != null) {
+                    androidx.core.app.ActivityCompat.requestPermissions(activity, arrayOf(permission), REQUEST_CODE_RECORD_AUDIO)
+                } else {
+                    onError(context.getString(R.string.voice_permission_denied))
+                }
+                return false
+            }
+        }
+        
+        // Create recognizer once and reuse for performance
+        if (speechRecognizer == null) {
+            speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+            speechRecognizer?.setRecognitionListener(recognitionListener)
+        }
+        
+        // Start listening
+        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, 
+                android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // Use system default language, prefer network for better accuracy
+            putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+        
+        try {
+            speechRecognizer?.startListening(intent)
+            isListening = true
+            return true
+        } catch (e: Exception) {
+            onError(context.getString(R.string.voice_error))
+            return false
+        }
+    }
+    
+    fun stopListening() {
+        if (!isListening) return
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {
+            // Ignore errors on stop
+        }
+        isListening = false
+    }
+    
+    fun destroy() {
+        try {
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            // Ignore errors on destroy
+        }
+        speechRecognizer = null
+        isListening = false
+    }
+    
+    private val recognitionListener = object : android.speech.RecognitionListener {
+        override fun onReadyForSpeech(params: android.os.Bundle?) {}
+        
+        override fun onBeginningOfSpeech() {}
+        
+        override fun onRmsChanged(rmsdB: Float) {}
+        
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        
+        override fun onEndOfSpeech() {
+            isListening = false
+        }
+        
+        override fun onError(error: Int) {
+            isListening = false
+            
+            // Only report real errors, not normal flow like timeout or no match
+            val errorMessage = when (error) {
+                android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> context.getString(R.string.voice_permission_denied)
+                android.speech.SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                android.speech.SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                android.speech.SpeechRecognizer.ERROR_SERVER -> "Server error"
+                android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice recognizer busy"
+                // Normal flow - don't show errors
+                android.speech.SpeechRecognizer.ERROR_NO_MATCH,
+                android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
+                android.speech.SpeechRecognizer.ERROR_CLIENT,
+                android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> ""
+                else -> ""
+            }
+            
+            onError(errorMessage)
+        }
+        
+        override fun onResults(results: android.os.Bundle?) {
+            isListening = false
+            
+            val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            val bestMatch = matches?.firstOrNull()
+            if (bestMatch != null && bestMatch.isNotEmpty()) {
+                onFinalResult(bestMatch)
+            }
+        }
+        
+        override fun onPartialResults(partialResults: android.os.Bundle?) {
+            // Partial results arrive during speech - feed to search for live updates
+            val matches = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            val bestMatch = matches?.firstOrNull()
+            if (bestMatch != null && bestMatch.isNotEmpty()) {
+                onPartialResult(bestMatch)
+            }
+        }
+        
+        override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+    }
+    
+    companion object {
+        private const val REQUEST_CODE_RECORD_AUDIO = 1001
+    }
 }

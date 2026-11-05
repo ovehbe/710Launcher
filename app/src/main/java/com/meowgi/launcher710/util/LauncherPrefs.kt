@@ -496,6 +496,14 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("searchOnType", true)
         set(v) = prefs.edit().putBoolean("searchOnType", v).apply()
 
+    var voiceSearchEnabled: Boolean
+        get() = prefs.getBoolean("voiceSearchEnabled", true)
+        set(v) = prefs.edit().putBoolean("voiceSearchEnabled", v).apply()
+
+    var voiceSearchLongPress0: Boolean
+        get() = prefs.getBoolean("voiceSearchLongPress0", true)
+        set(v) = prefs.edit().putBoolean("voiceSearchLongPress0", v).apply()
+
     /** Show Google query suggestions when a search matches nothing locally. */
     var searchWebSuggestions: Boolean
         get() = prefs.getBoolean("searchWebSuggestions", true)
