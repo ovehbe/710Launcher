@@ -63,3 +63,4 @@
 - Notification applet icons can look pixelated or worse with custom icons.
 - Some features (e.g. grid/list switch) may require launcher restart to apply fully.
 - Notification hub: individual items not selectable; trackpad selection only highlights hub, not items (to be addressed later).
+- Listener reconnect (unreleased): `NotifListenerService.onListenerConnected` triggers the same debounced refresh as a post or removal, so the hub and ticker are filled after a rebind instead of staying empty until the next change. Covered by `NotifListenerServiceTest`. The ticker's own filter is still inline in `LauncherActivity.refreshNotificationTicker`; extracting it for a unit test is left for the LauncherActivity split.
