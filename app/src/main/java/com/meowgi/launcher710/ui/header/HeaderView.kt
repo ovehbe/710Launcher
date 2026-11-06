@@ -12,6 +12,9 @@ import androidx.core.content.res.ResourcesCompat
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.util.LauncherPrefs
 import java.text.SimpleDateFormat
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import java.util.*
 
 class HeaderView @JvmOverloads constructor(
@@ -28,7 +31,7 @@ class HeaderView @JvmOverloads constructor(
     private val ticker = object : Runnable {
         override fun run() {
             updateTime()
-            handler.postDelayed(this, 1000)
+            handler.postDelayed(this, msToNextMinute(System.currentTimeMillis()))
         }
     }
 
@@ -57,14 +60,42 @@ class HeaderView @JvmOverloads constructor(
         addView(clockText, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        ticker.run()
+    // The next tick is planned for a minute boundary computed once, so a manual time change or a
+    // time zone change would leave the clock wrong for up to a minute. Resync on both.
+    private var receiverRegistered = false
+    private val timeChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            dateFormat.timeZone = TimeZone.getDefault()
+            timeFormat.timeZone = TimeZone.getDefault()
+            handler.removeCallbacks(ticker)
+            ticker.run()
+        }
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
+    // Ticks only while the window is visible, so nothing runs once another app is on top.
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
         handler.removeCallbacks(ticker)
+        if (isVisible) {
+            dateFormat.timeZone = TimeZone.getDefault()
+            timeFormat.timeZone = TimeZone.getDefault()
+            ticker.run()
+            if (!receiverRegistered) {
+                receiverRegistered = true
+                context.registerReceiver(timeChangedReceiver, IntentFilter().apply {
+                    addAction(Intent.ACTION_TIME_CHANGED)
+                    addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                })
+            }
+        } else if (receiverRegistered) {
+            receiverRegistered = false
+            try { context.unregisterReceiver(timeChangedReceiver) } catch (_: Exception) {}
+        }
+    }
+
+    companion object {
+        /** Delay until the next wall-clock minute boundary (the clock only shows HH:mm). */
+        fun msToNextMinute(nowMs: Long): Long = 60_000L - nowMs % 60_000L
     }
 
     private fun updateTime() {

@@ -85,21 +85,29 @@ class BBStatusBar @JvmOverloads constructor(
         addView(networkText, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
     }
 
+    private var started = false
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        ContextCompat.registerReceiver(
-            context, batteryReceiver,
-            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        handler.post(clockRunnable)
-        refresh()
+        refresh() // later returns to the foreground are refreshed by LauncherActivity.onResume
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        handler.removeCallbacks(clockRunnable)
-        try { context.unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
+    // Receiver and clock run only while the window is visible, so nothing runs in the background.
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (isVisible == started) return
+        started = isVisible
+        if (isVisible) {
+            ContextCompat.registerReceiver(
+                context, batteryReceiver,
+                IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            handler.post(clockRunnable)
+        } else {
+            handler.removeCallbacks(clockRunnable)
+            try { context.unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
+        }
     }
 
     fun refresh() {
