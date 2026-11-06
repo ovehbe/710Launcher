@@ -1,5 +1,6 @@
 package com.meowgi.launcher710.voice
 
+import android.Manifest
 import android.content.Context
 import android.os.Looper
 import android.os.SystemClock
@@ -34,9 +35,15 @@ class VoiceDictationKeyEventsTest {
     private lateinit var prefs: LauncherPrefs
     private lateinit var searchField: EditText
     private lateinit var searchOverlay: SearchOverlay
+    private lateinit var fakeRecognizer: FakeSpeechRecognizer
 
     @Before
     fun setup() {
+        // Grant microphone permission for tests
+        val application = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val shadowApp = shadowOf(application)
+        shadowApp.grantPermissions(Manifest.permission.RECORD_AUDIO)
+        
         prefs = LauncherPrefs(context)
         prefs.voiceSearchEnabled = true
         prefs.voiceSearchLongPress0 = true
@@ -46,6 +53,10 @@ class VoiceDictationKeyEventsTest {
         
         searchField = activity.findViewById(R.id.searchInputInBar)
         searchOverlay = activity.findViewById(R.id.searchOverlay)
+        
+        // Inject fake recognizer for testing
+        fakeRecognizer = FakeSpeechRecognizer()
+        searchOverlay.speechRecognizerFactory = FakeSpeechRecognizerFactory(fakeRecognizer)
     }
 
     @Test
@@ -123,6 +134,24 @@ class VoiceDictationKeyEventsTest {
     }
 
     @Test
+    fun longPress0ActuallyTriggersVoice() {
+        // Hold 0 for 600ms (longer than 500ms threshold)
+        val downTime = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        
+        // Advance time to trigger long-press timer (500ms)
+        looper.idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+        
+        // Release key
+        activity.dispatchKeyEvent(KeyEvent(downTime, downTime + 600, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        
+        // Verify voice recognition actually started
+        assertEquals("voice recognition started exactly once", 1, fakeRecognizer.startListenCallCount)
+        assertTrue("recognizer is listening", fakeRecognizer.isListening)
+    }
+
+    @Test
     fun longPress0WithRepeatsFiresOnlyOnce() {
         // Hold 0 with key repeats (simulates continuous hold)
         val downTime = SystemClock.uptimeMillis()
@@ -135,10 +164,13 @@ class VoiceDictationKeyEventsTest {
         }
         
         // Voice should trigger only once (not multiple times)
-        // We can't easily test voice trigger count without mocking, but we can verify NO zeros typed
         activity.dispatchKeyEvent(KeyEvent(downTime, downTime + 600, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
         looper.idle()
         
+        // Verify voice started exactly once despite repeats
+        assertEquals("voice recognition started exactly once despite key repeats", 1, fakeRecognizer.startListenCallCount)
+        
+        // Also verify NO zeros typed
         val text = searchField.text.toString()
         assertFalse("no 0s typed from held key with repeats", text.contains("0"))
     }

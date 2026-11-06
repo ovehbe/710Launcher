@@ -1591,6 +1591,9 @@ class SearchOverlay @JvmOverloads constructor(
     private var voiceTypedPrefix = ""  // Text typed before voice started
     private var updatingFromVoice = false
     
+    // For testing: allows injection of fake SpeechRecognizer
+    internal var speechRecognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
+    
     /**
      * Starts voice dictation if available and permission granted. Returns false if voice is not available
      * or permission denied. Partial results update the search field in real-time.
@@ -1611,7 +1614,8 @@ class SearchOverlay @JvmOverloads constructor(
                 context = context,
                 onPartialResult = { text -> handleVoicePartialResult(text) },
                 onFinalResult = { text -> handleVoiceFinalResult(text) },
-                onError = { error -> handleVoiceError(error) }
+                onError = { error -> handleVoiceError(error) },
+                recognizerFactory = speechRecognizerFactory
             )
         }
         
@@ -1711,20 +1715,82 @@ class SearchOverlay @JvmOverloads constructor(
  * Recognizer instance is reused across listening sessions for performance.
  * Session ID prevents callbacks from previous sessions.
  */
+/**
+ * Wrapper interface for SpeechRecognizer operations.
+ * Allows injection of test doubles for unit testing.
+ */
+interface SpeechRecognizerWrapper {
+    fun setRecognitionListener(listener: android.speech.RecognitionListener?)
+    fun startListening(intent: android.content.Intent)
+    fun stopListening()
+    fun cancel()
+    fun destroy()
+}
+
+/**
+ * Production wrapper using real Android SpeechRecognizer.
+ */
+private class RealSpeechRecognizerWrapper(
+    private val recognizer: android.speech.SpeechRecognizer
+) : SpeechRecognizerWrapper {
+    override fun setRecognitionListener(listener: android.speech.RecognitionListener?) {
+        recognizer.setRecognitionListener(listener)
+    }
+    
+    override fun startListening(intent: android.content.Intent) {
+        recognizer.startListening(intent)
+    }
+    
+    override fun stopListening() {
+        recognizer.stopListening()
+    }
+    
+    override fun cancel() {
+        recognizer.cancel()
+    }
+    
+    override fun destroy() {
+        recognizer.destroy()
+    }
+}
+
+/**
+ * Factory interface for creating SpeechRecognizer instances.
+ * Allows injection of test doubles for unit testing.
+ */
+interface SpeechRecognizerFactory {
+    fun createRecognizer(context: Context): SpeechRecognizerWrapper?
+    fun isRecognitionAvailable(context: Context): Boolean
+}
+
+/**
+ * Default production implementation using Android system SpeechRecognizer.
+ */
+private class DefaultSpeechRecognizerFactory : SpeechRecognizerFactory {
+    override fun createRecognizer(context: Context): SpeechRecognizerWrapper? {
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+        return recognizer?.let { RealSpeechRecognizerWrapper(it) }
+    }
+    
+    override fun isRecognitionAvailable(context: Context): Boolean =
+        android.speech.SpeechRecognizer.isRecognitionAvailable(context)
+}
+
 private class VoiceDictationHelper(
     private val context: Context,
     private val onPartialResult: (String) -> Unit,
     private val onFinalResult: (String) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    private val recognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
 ) {
-    private var speechRecognizer: android.speech.SpeechRecognizer? = null
+    private var speechRecognizer: SpeechRecognizerWrapper? = null
     private var recognizerAvailable = false
     private var sessionId = 0
     var isListening = false
         private set
     
     init {
-        recognizerAvailable = android.speech.SpeechRecognizer.isRecognitionAvailable(context)
+        recognizerAvailable = recognizerFactory.isRecognitionAvailable(context)
     }
     
     fun startListening(): Boolean {
@@ -1758,7 +1824,7 @@ private class VoiceDictationHelper(
         // This MUST be called on the main thread per Android SpeechRecognizer requirements
         if (speechRecognizer == null) {
             try {
-                speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+                speechRecognizer = recognizerFactory.createRecognizer(context)
                 if (speechRecognizer == null) {
                     onError(context.getString(R.string.voice_not_available))
                     return false

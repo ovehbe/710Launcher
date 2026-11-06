@@ -1,0 +1,81 @@
+package com.meowgi.launcher710.voice
+
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.SpeechRecognizer
+import com.meowgi.launcher710.ui.search.SpeechRecognizerFactory
+import com.meowgi.launcher710.ui.search.SpeechRecognizerWrapper
+
+/**
+ * Fake SpeechRecognizer for testing voice dictation without real hardware.
+ * Allows tests to control when callbacks fire and what results are returned.
+ */
+class FakeSpeechRecognizer : SpeechRecognizerWrapper {
+    var listener: RecognitionListener? = null
+    var isListening = false
+        private set
+    var startListenCallCount = 0
+        private set
+    var cancelCallCount = 0
+        private set
+    var stopListenCallCount = 0
+        private set
+    
+    override fun setRecognitionListener(listener: RecognitionListener?) {
+        this.listener = listener
+    }
+
+    override fun startListening(intent: Intent) {
+        isListening = true
+        startListenCallCount++
+        listener?.onReadyForSpeech(Bundle.EMPTY)
+    }
+
+    override fun stopListening() {
+        stopListenCallCount++
+        isListening = false
+    }
+
+    override fun cancel() {
+        cancelCallCount++
+        isListening = false
+    }
+
+    override fun destroy() {
+        isListening = false
+        listener = null
+    }
+    
+    // Test helper methods to simulate recognition events
+    fun simulatePartialResult(text: String) {
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(text))
+        }
+        listener?.onPartialResults(bundle)
+    }
+    
+    fun simulateFinalResult(text: String) {
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(text))
+        }
+        listener?.onResults(bundle)
+        isListening = false
+    }
+    
+    fun simulateError(errorCode: Int) {
+        listener?.onError(errorCode)
+        isListening = false
+    }
+}
+
+/**
+ * Factory that creates FakeSpeechRecognizer instances for testing.
+ */
+class FakeSpeechRecognizerFactory(
+    private val recognizer: FakeSpeechRecognizer
+) : SpeechRecognizerFactory {
+    override fun createRecognizer(context: Context): SpeechRecognizerWrapper = recognizer
+    override fun isRecognitionAvailable(context: Context): Boolean = true
+}
