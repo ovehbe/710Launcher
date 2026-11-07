@@ -110,7 +110,11 @@ class SearchEnterPathsTest {
         launch()
         highlightSecondSuggestion()
         press()
-        assertOpenedOnly("hjkl two")
+        // NEW BEHAVIOR: Suggestions are accepted into the field, not launched directly
+        settle()
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Suggestion acceptance does not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
     }
 
     private fun assertQuerySearchedWithoutHighlight(press: () -> Unit) {
@@ -131,9 +135,23 @@ class SearchEnterPathsTest {
     @Test fun imeActionUnspecified() = assertHighlightedRowOpens { imeAction(EditorInfo.IME_ACTION_UNSPECIFIED) }
 
     @Test
-    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() = assertHighlightedRowOpens {
-        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
-        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() {
+        // This test verifies that a double editor action behaves correctly.
+        // OLD BEHAVIOR: First action launches web search for "hjkl two", second action ignored (overlay already dismissed).
+        // NEW BEHAVIOR: First action accepts "hjkl two" into field (overlay stays open), second action searches for "hjkl two" (not original "hjkl").
+        launch()
+        highlightSecondSuggestion()
+        imeAction(EditorInfo.IME_ACTION_SEARCH)
+        imeAction(EditorInfo.IME_ACTION_SEARCH)
+        settle()
+        // Second action launches web search for the accepted suggestion
+        val search = shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_WEB_SEARCH, search?.action)
+        assertEquals("hjkl two", search?.getStringExtra("query"))
+        // And overlay is dismissed after web search
+        assertEquals(View.GONE, overlay.visibility)
+        // Field is cleared on dismiss
+        assertEquals("", field.text.toString())
     }
 
     @Test fun noHighlightActivityEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_ENTER) }
