@@ -57,7 +57,6 @@ class SearchOverlay @JvmOverloads constructor(
     private val ratesCache = CurrencyRatesCache(context)
     private val lifecycleOwner: androidx.lifecycle.LifecycleOwner?
         get() = context as? androidx.lifecycle.LifecycleOwner
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val calculatorRow: LinearLayout
@@ -538,25 +537,9 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     /** Activates the highlighted row as a tap would. False when nothing is highlighted. */
-    /**
-     * Set when activateNavSelection clears nav state, cleared on next event loop iteration.
-     * Prevents duplicate editor actions from the same physical keypress.
-     */
-    private var navJustCleared = false
-    private val clearNavFlag = Runnable { navJustCleared = false }
-    
     fun activateNavSelection(): Boolean {
         val target = navSelection ?: return false
         navPos = null
-        
-        // Set flag and schedule it to clear after current event loop iteration completes.
-        // This blocks editor actions that arrive synchronously or in the same iteration
-        // (like IME sending action for keyup after we handled keydown), but allows
-        // actions from distinct keypresses (next iteration).
-        navJustCleared = true
-        handler.removeCallbacks(clearNavFlag)
-        handler.post(clearNavFlag)
-        
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
@@ -569,9 +552,6 @@ class SearchOverlay @JvmOverloads constructor(
         }
         return true
     }
-    
-    /** Returns true if an editor action should be blocked because nav was just cleared. */
-    fun wasNavJustCleared(): Boolean = navJustCleared
 
     private fun revealNavTarget(target: NavTarget) {
         when (target) {

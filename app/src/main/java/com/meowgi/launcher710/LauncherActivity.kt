@@ -1206,11 +1206,6 @@ class LauncherActivity : AppCompatActivity() {
         // A late action for a search that the same press already closed.
         if (searchOverlay.visibility != View.VISIBLE) return true
         
-        // If nav selection was just cleared (within same event loop iteration), this action
-        // is likely from the same physical keypress that already activated something.
-        // Block it to prevent duplicate execution.
-        if (searchOverlay.wasNavJustCleared()) return true
-        
         return submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
     }
 

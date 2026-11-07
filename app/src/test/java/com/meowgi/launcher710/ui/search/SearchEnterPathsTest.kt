@@ -146,32 +146,6 @@ class SearchEnterPathsTest {
         assertEquals(View.VISIBLE, overlay.visibility)
     }
 
-    @Test
-    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() {
-        // This test simulates a single Enter keypress that may trigger editor action twice
-        // (once from keydown handler, once from keyup IME). The second action from the SAME
-        // keypress should not execute another action - it should see the action was already consumed.
-        launch()
-        highlightSecondSuggestion()
-        
-        // Drain any previous intents
-        drainStarted()
-        
-        // First editor action (from keydown): accepts suggestion
-        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
-        
-        // Second editor action (from keyup of SAME press): should be blocked
-        // because it arrives in the same event loop iteration
-        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
-        
-        // Now process all events
-        settle()
-        
-        // After second action from same keypress: still no browser, suggestion still in field
-        assertEquals("hjkl two", field.text.toString())
-        assertNull("Second action from same keypress should not launch browser", shadowOf(activity).nextStartedActivity)
-        assertEquals(View.VISIBLE, overlay.visibility)
-    }
 
     @Test fun noHighlightActivityEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_ENTER) }
     @Test fun noHighlightActivityNumpadEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_NUMPAD_ENTER) }
