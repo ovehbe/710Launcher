@@ -36,6 +36,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.meowgi.launcher710.ai.AiSearchTrigger
 import com.meowgi.launcher710.backup.BackupManager
+import com.meowgi.launcher710.voice.VoiceSearchActivity
 import com.meowgi.launcher710.model.AppInfo
 import com.meowgi.launcher710.ui.appgrid.AppGridFragment
 import com.meowgi.launcher710.ui.appgrid.AppPagerAdapter
@@ -118,6 +119,12 @@ class LauncherActivity : AppCompatActivity() {
     private var keyRoleLongPressTriggered = false
     private var keyRoleLongPressRunnable: Runnable? = null
     private var keyRoleDoublePressRunnable: Runnable? = null
+    
+    private var key0LongPressTriggered = false
+    private var key0LongPressRunnable: Runnable? = null
+    private var key0PreHoldSearchText: String? = null
+    private var key0SearchVisibleAtDown = false
+    private var key0PhysicalInsert = false  // Tracks if '0' insert is from physical key (not IME)
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -394,6 +401,10 @@ class LauncherActivity : AppCompatActivity() {
             refreshNotificationTicker()
             appPager.visibility = View.VISIBLE
         }
+        searchOverlay.onUpdateSearchText = { text ->
+            searchInputInBar.setText(text)
+            searchInputInBar.setSelection(text.length)
+        }
         searchOverlay.onLaunchItem = { item ->
             when (item) {
                 is LaunchableItem.App -> repository.launchApp(item.app)
@@ -466,6 +477,14 @@ class LauncherActivity : AppCompatActivity() {
             tabBarContainer.post { showHomeContextMenu(tabBarContainer) }
             intent?.removeExtra(OPEN_HOME_MENU_EXTRA)
         }
+        
+        // Check if launched via voice search shortcut (from VoiceSearchActivity)
+        if (intent?.getBooleanExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH, false) == true) {
+            intent.removeExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH)
+            // Trigger voice after layout is ready
+            tabBarContainer.post { triggerVoiceSearch() }
+        }
+        
         applyOpacitySettings()
         applySystemUI()
         updateSoundProfileIcon()
@@ -1114,7 +1133,11 @@ class LauncherActivity : AppCompatActivity() {
     private fun setupSearchInputBar() {
         searchInputInBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Cancel voice ownership if user types manually
+                val currentText = s?.toString() ?: ""
+                searchOverlay.onManualEdit(currentText, key0PhysicalInsert)
+            }
             override fun afterTextChanged(s: Editable?) {
                 val text = s?.toString() ?: ""
                 searchApplyRunnable?.let { keyHandler.removeCallbacks(it) }
@@ -1186,6 +1209,7 @@ class LauncherActivity : AppCompatActivity() {
         if (event != null && event.action != KeyEvent.ACTION_DOWN) return true
         // A late action for a search that the same press already closed.
         if (searchOverlay.visibility != View.VISIBLE) return true
+        
         return submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
     }
 
@@ -1244,6 +1268,20 @@ class LauncherActivity : AppCompatActivity() {
                 android.widget.Toast.makeText(this, R.string.ai_no_query, android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+    }
+    
+    internal fun triggerVoiceSearch() {
+        // Open search if not already open
+        if (searchOverlay.visibility != View.VISIBLE) {
+            showSearchPageAware(initialChar = null, preserveText = false)
+        }
+        
+        // Start voice dictation, passing saved pre-hold text to preserve intentional prefix
+        val preHoldText = key0PreHoldSearchText
+        key0PreHoldSearchText = null  // Clear saved text
+        
+        // Voice activation will handle rejecting IME commits from the gesture
+        searchOverlay.startVoiceDictation(preHoldText)
     }
 
     private fun handleTypeToSearchFromText(text: CharSequence) {
@@ -2370,6 +2408,18 @@ class LauncherActivity : AppCompatActivity() {
                 }
             }
         }
+        
+        // When voice long-press is enabled, KEYCODE_0 must reach onKeyDown/onKeyUp directly
+        // to set/cancel timer, bypassing focused EditText which would consume it for typing.
+        // This allows hold-0 voice activation even when search field has existing text and focus.
+        if ((event.keyCode == KeyEvent.KEYCODE_0 || event.keyCode == KeyEvent.KEYCODE_NUMPAD_0) &&
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
+            return when (event.action) {
+                KeyEvent.ACTION_DOWN -> onKeyDown(event.keyCode, event)
+                KeyEvent.ACTION_UP -> onKeyUp(event.keyCode, event)
+                else -> super.dispatchKeyEvent(event)
+            }
+        }
 
         if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
@@ -2454,6 +2504,32 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // Handle long-press 0 for voice search (if enabled)
+        // Only process initial key down (repeatCount == 0), ignore key repeats from holding
+        if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
+            if (event?.repeatCount == 0) {
+                // Initial press - start timer
+                key0LongPressTriggered = false
+                key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+                // Save current search text before any IME commits happen
+                // This preserves intentional text (including zeros) typed before this gesture
+                key0PreHoldSearchText = searchInputInBar.text.toString()
+                key0SearchVisibleAtDown = searchOverlay.visibility == View.VISIBLE
+                key0LongPressRunnable = Runnable {
+                    key0LongPressTriggered = true
+                    triggerVoiceSearch()
+                }
+                keyHandler.postDelayed(key0LongPressRunnable!!, LONG_PRESS_MS)
+                // MUST consume event to prevent type-to-search from handling '0' immediately
+                // If short press, onKeyUp will manually insert '0'
+                return true
+            } else {
+                // Key repeat (user still holding) - consume to prevent repeated typing
+                return true
+            }
+        }
+        
         val role = getKeyRole(keyCode)
         if (role != null) {
             keyRoleLongPressTriggered = false
@@ -2488,6 +2564,48 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        // Handle 0 key up - only if we started a timer (runnable != null)
+        if ((keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) && 
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0 && key0LongPressRunnable != null) {
+            keyHandler.removeCallbacks(key0LongPressRunnable!!)
+            key0LongPressRunnable = null
+            
+            if (key0LongPressTriggered) {
+                key0LongPressTriggered = false
+                key0PreHoldSearchText = null
+                // Long press was triggered, consume the key up to prevent typing '0'
+                return true
+            }
+            
+            // Short press - manually insert '0' since onKeyDown consumed the event
+            // But only if search visibility hasn't changed (dismiss cancels insertion)
+            key0PreHoldSearchText = null
+            val searchVisibleNow = searchOverlay.visibility == View.VISIBLE
+            if (searchVisibleNow == key0SearchVisibleAtDown) {
+                // Search state unchanged - safe to insert '0'
+                // Mark this as physical key insert (not IME) for onManualEdit
+                key0PhysicalInsert = true
+                try {
+                    if (!searchVisibleNow) {
+                        // Search not open - open it with '0'
+                        searchInputInBar.requestFocus()
+                        searchInputInBar.setText("0")
+                        searchInputInBar.setSelection(1)
+                        showSearchPageAware(initialChar = null, preserveText = true)
+                    } else {
+                        // Search already open - append '0' to current text
+                        val currentText = searchInputInBar.text.toString()
+                        val newText = currentText + "0"
+                        searchInputInBar.setText(newText)
+                        searchInputInBar.setSelection(newText.length)
+                    }
+                } finally {
+                    key0PhysicalInsert = false
+                }
+            }
+            return true
+        }
+        
         val role = getKeyRole(keyCode)
         if (role != null) {
             keyRoleLongPressRunnable?.let { keyHandler.removeCallbacks(it) }
@@ -2534,6 +2652,7 @@ class LauncherActivity : AppCompatActivity() {
         doBackAction()
     }
 
+    
     override fun onStart() {
         super.onStart()
         widgetHost.startListening()
@@ -2551,6 +2670,8 @@ class LauncherActivity : AppCompatActivity() {
         super.onStop()
         widgetHost.stopListening()
         NotifListenerService.onNotificationsChanged = null
+        // Stop voice dictation if active to release microphone
+        searchOverlay.stopVoiceDictation()
     }
 
     /**
@@ -2577,6 +2698,12 @@ class LauncherActivity : AppCompatActivity() {
             intent.removeExtra(OPEN_HOME_MENU_EXTRA)
             return
         }
+        // Check for voice trigger (warm start / background case)
+        if (intent.getBooleanExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH, false)) {
+            intent.removeExtra(VoiceSearchActivity.EXTRA_TRIGGER_VOICE_SEARCH)
+            tabBarContainer.post { triggerVoiceSearch() }
+            return
+        }
         if (soundProfileOverlay.visibility == View.VISIBLE) soundProfileOverlay.hide()
         if (searchOverlay.visibility == View.VISIBLE) searchOverlay.dismiss()
         if (notificationHub.visibility == View.VISIBLE) notificationHub.hide()
@@ -2588,6 +2715,11 @@ class LauncherActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         clearHighlightTraces()
+        // Cancel 0-key long-press timer to prevent voice triggering when backgrounded
+        key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+        key0LongPressRunnable = null
+        key0LongPressTriggered = false
+        key0PreHoldSearchText = null
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -2674,9 +2806,26 @@ class LauncherActivity : AppCompatActivity() {
         NotifListenerService.onNotificationsChanged = null
         keyHandler.removeCallbacksAndMessages(null)
         pagerAdapter = null
+        searchOverlay.cleanupVoiceDictation()
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(ringerModeReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(aiSearchReceiver) } catch (_: Exception) {}
         AiSearchTrigger.unregister(aiSearchHandler)
+    }
+    
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Handle voice permission result
+        if (requestCode == 1001 && grantResults.isNotEmpty()) {
+            if (grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Permission granted - only retry if search is still visible
+                // (don't reopen if user closed search during permission dialog)
+                if (searchOverlay.visibility == View.VISIBLE) {
+                    searchOverlay.startVoiceDictation()
+                }
+            } else {
+                android.widget.Toast.makeText(this, R.string.voice_permission_denied, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }

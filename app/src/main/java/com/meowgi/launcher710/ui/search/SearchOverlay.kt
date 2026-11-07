@@ -45,6 +45,86 @@ import androidx.lifecycle.LifecycleCoroutineScope
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
+// Voice dictation diagnostics (privacy-safe, no transcripts or queries)
+internal object VoiceDiagnostics {
+    private val diagnosticLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private const val MAX_DIAGNOSTIC_ENTRIES = 50
+    
+    private var totalStarts = 0
+    private var totalPartialResults = 0
+    private var totalFinalResults = 0
+    private var totalErrors = 0
+    private var totalManualEdits = 0
+    private var totalFieldUpdates = 0
+    
+    fun addVoiceDiagnostic(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        diagnosticLog.offer("[$timestamp] $message")
+        while (diagnosticLog.size > MAX_DIAGNOSTIC_ENTRIES) {
+            diagnosticLog.poll()
+        }
+        
+        when {
+            message.contains("Voice is now owner") -> totalStarts++
+            message.contains("Partial results:") -> totalPartialResults++
+            message.contains("Final results:") || message.contains("Final:") -> totalFinalResults++
+            message.contains("Error:") -> totalErrors++
+            message.contains("Manual edit") -> totalManualEdits++
+            message.contains("Updating field") -> totalFieldUpdates++
+        }
+    }
+    
+    fun clear() {
+        diagnosticLog.clear()
+        totalStarts = 0
+        totalPartialResults = 0
+        totalFinalResults = 0
+        totalErrors = 0
+        totalManualEdits = 0
+        totalFieldUpdates = 0
+    }
+    
+    fun getDiagnosticLog(context: Context): String {
+        val sb = StringBuilder()
+        
+        sb.append("=== Voice Recognition Service ===\n")
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+        sb.append("Available: ${android.speech.SpeechRecognizer.isRecognitionAvailable(context)}\n")
+        recognizer?.destroy()
+        
+        sb.append("\n=== Request Configuration ===\n")
+        sb.append("Partial results: requested\n")
+        sb.append("Language model: FREE_FORM\n")
+        sb.append("Max results: 1\n")
+        sb.append("Prefer offline: false\n")
+        
+        sb.append("\n=== Session Aggregates ===\n")
+        sb.append("Total starts: $totalStarts\n")
+        sb.append("Partial results received: $totalPartialResults\n")
+        sb.append("Final results received: $totalFinalResults\n")
+        sb.append("Errors encountered: $totalErrors\n")
+        sb.append("Manual edits: $totalManualEdits\n")
+        sb.append("Field updates: $totalFieldUpdates\n")
+        
+        sb.append("\n=== Recent Events (last ${diagnosticLog.size}) ===\n")
+        if (diagnosticLog.isEmpty()) {
+            sb.append("No voice dictation activity recorded yet.\n")
+        } else {
+            diagnosticLog.forEach { sb.append(it).append("\n") }
+        }
+        
+        sb.append("\n=== Privacy Notice ===\n")
+        sb.append("No transcripts, queries, or audio recorded.\n")
+        sb.append("Log bounded to $MAX_DIAGNOSTIC_ENTRIES most recent events.\n")
+        
+        return sb.toString()
+    }
+}
+
+private fun addVoiceDiagnostic(message: String) = VoiceDiagnostics.addVoiceDiagnostic(message)
+fun getVoiceDiagnosticLog(context: Context) = VoiceDiagnostics.getDiagnosticLog(context)
+
 class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
@@ -82,6 +162,8 @@ class SearchOverlay @JvmOverloads constructor(
     var onDismiss: (() -> Unit)? = null
     var onLaunchItem: ((LaunchableItem) -> Unit)? = null
     var onItemLongClick: ((LaunchableItem, View) -> Unit)? = null
+    /** Called to update search field text from voice (bypasses manual edit detection) */
+    var onUpdateSearchText: ((String) -> Unit)? = null
     /** 0 = Qwerty (BlackBerry Bold style), 1 = T9. Used to convert letters to dial digits. */
     var dialerLayoutProvider: () -> Int = { 0 }
     /** 0 = always, 1 = disabled, 2 = @ prefix only */
@@ -199,6 +281,7 @@ class SearchOverlay @JvmOverloads constructor(
         aiSession.cancel()
         clearWebSuggestions()
         clearNavSelection()
+        cancelVoiceDictation()
         // The overlay is only hidden between sessions, so its lists keep their scroll position.
         resultsRecycler.scrollToPosition(0)
         aiPanel.scrollTo(0, 0)
@@ -791,6 +874,7 @@ class SearchOverlay @JvmOverloads constructor(
         aiSession.cancel()
         clearWebSuggestions()
         clearNavSelection()
+        cancelVoiceDictation()
         visibility = GONE
         onDismiss?.invoke()
     }
@@ -894,6 +978,16 @@ class SearchOverlay @JvmOverloads constructor(
         } else {
             openWebSearchWithQuery(lastQuery)
         }
+    }
+
+    /**
+     * Accepts a web suggestion into the search field, keeping search open with cursor at the end.
+     * Called when user clicks a Google suggestion or activates one with Enter.
+     */
+    private fun acceptWebSuggestion(suggestionText: String) {
+        // Update the search field with the suggestion text
+        onUpdateSearchText?.invoke(suggestionText)
+        // Search overlay remains open, search results will update automatically via the text watcher
     }
 
     fun openWebSearchWithQuery(query: String) {
@@ -1407,7 +1501,7 @@ class SearchOverlay @JvmOverloads constructor(
         val outValue = android.util.TypedValue()
         context.theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
         setBackgroundResource(outValue.resourceId)
-        setOnClickListener { openWebSearchWithQuery(text) }
+        setOnClickListener { acceptWebSuggestion(text) }
     }
 
     private fun updateDialRow(dialDigits: String) {
@@ -1578,4 +1672,500 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    
+    // --- Voice Dictation ---
+    
+    private var voiceDictationHelper: VoiceDictationHelper? = null
+    internal var voiceIsOwner = false  // Internal for testing
+    private var lastVoiceResult = ""
+    private var voiceTypedPrefix = ""  // Text typed before voice started
+    private var updatingFromVoice = false
+    // Activation gesture state: reject IME commit from hold-0 gesture, not genuine edits
+    private var activationGestureCommitExpected = false
+    private var activationExpectedPrefix = ""
+    
+    // For testing: allows injection of fake SpeechRecognizer
+    internal var speechRecognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
+    
+    /**
+     * Starts voice dictation if available and permission granted. Returns false if voice is not available
+     * or permission denied. Partial results update the search field in real-time.
+     * No visual indicator - the live transcribed text IS the feedback.
+     */
+    fun startVoiceDictation(restoredPrefix: String? = null): Boolean {
+        addVoiceDiagnostic("startVoiceDictation called, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, hasRestoredPrefix=${restoredPrefix != null}")
+        if (visibility != VISIBLE) return false
+        
+        // Check if already listening
+        if (voiceDictationHelper?.isListening == true) {
+            addVoiceDiagnostic("Already listening, returning true")
+            return true
+        }
+        
+        // Handle prefix preservation for hold-0 gesture
+        if (restoredPrefix != null) {
+            // User held 0 to activate. The saved prefix is from keyDown time.
+            // But user might have typed DURING the hold (before activation).
+            // Check if current field has more content than saved prefix.
+            val currentQuery = lastQuery
+            if (currentQuery.length > restoredPrefix.length && currentQuery.startsWith(restoredPrefix)) {
+                // User typed during hold - preserve the additional text as prefix
+                voiceTypedPrefix = currentQuery
+                addVoiceDiagnostic("Preserving text typed during hold: len=${currentQuery.length} (saved was ${restoredPrefix.length})")
+            } else {
+                // Restore saved prefix (removes any late IME commits)
+                updatingFromVoice = true
+                try {
+                    onUpdateSearchText?.invoke(restoredPrefix)
+                    voiceTypedPrefix = restoredPrefix
+                    addVoiceDiagnostic("Restored prefix: len=${restoredPrefix.length}")
+                } finally {
+                    updatingFromVoice = false
+                }
+            }
+        } else {
+            // Save current typed text as prefix before voice starts
+            voiceTypedPrefix = lastQuery
+            addVoiceDiagnostic("Saved prefix: len=${voiceTypedPrefix.length}")
+        }
+        
+        // Create helper if needed (reused across sessions for performance)
+        if (voiceDictationHelper == null) {
+            voiceDictationHelper = VoiceDictationHelper(
+                context = context,
+                onPartialResult = { text -> handleVoicePartialResult(text) },
+                onFinalResult = { text -> handleVoiceFinalResult(text) },
+                onError = { error -> handleVoiceError(error) },
+                recognizerFactory = speechRecognizerFactory
+            )
+        }
+        
+        val started = voiceDictationHelper?.startListening() ?: false
+        addVoiceDiagnostic("startListening returned: $started")
+        if (started) {
+            voiceIsOwner = true
+            lastVoiceResult = ""
+            // Expect potential IME commit from activation gesture (hold-0)
+            // Will reject first change if it's appending single '0', but allow genuine edits
+            activationGestureCommitExpected = true
+            activationExpectedPrefix = voiceTypedPrefix
+            addVoiceDiagnostic("Voice is now owner, expecting activation commit, prefix len=${activationExpectedPrefix.length}")
+        }
+        return started
+    }
+    
+    /**
+     * Stops voice dictation and keeps the current transcribed text.
+     */
+    fun stopVoiceDictation() {
+        voiceDictationHelper?.stopListening()
+        voiceIsOwner = false
+        voiceTypedPrefix = ""
+    }
+    
+    /**
+     * Cancels voice dictation. Does not restore original query since typing may have happened.
+     */
+    fun cancelVoiceDictation() {
+        voiceDictationHelper?.cancelListening()
+        voiceIsOwner = false
+        lastVoiceResult = ""
+        voiceTypedPrefix = ""
+    }
+    
+    /**
+     * Called when user types manually - cancels voice ownership so late results don't overwrite.
+     * Ignores programmatic updates (from voice itself).
+     * Rejects ONLY the first IME commit from activation gesture, treating subsequent edits as genuine.
+     *
+     * @param currentFieldText The current text in the search field after this change
+     * @param fromPhysicalKey True if this edit is from a physical key event (not IME commitText)
+     */
+    internal fun onManualEdit(currentFieldText: String, fromPhysicalKey: Boolean = false) {
+        if (updatingFromVoice) return
+        
+        // Check if this is the FIRST edit after activation (potential activation gesture commit)
+        if (activationGestureCommitExpected) {
+            activationGestureCommitExpected = false  // Clear flag immediately - only check once
+            
+            val expectedActivationText = activationExpectedPrefix + "0"
+            
+            // Physical key events are genuine user actions, never reject them
+            if (!fromPhysicalKey && currentFieldText == expectedActivationText) {
+                // This is likely the IME commit from hold-0 gesture - reject it
+                addVoiceDiagnostic("Activation gesture '0' commit detected and rejected (fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=true)")
+                // Remove the activation '0'
+                updatingFromVoice = true
+                try {
+                    onUpdateSearchText?.invoke(activationExpectedPrefix)
+                } finally {
+                    updatingFromVoice = false
+                }
+                return
+            } else {
+                // First edit but not the activation commit, OR physical key - this is a genuine edit, cancel voice
+                val reason = if (fromPhysicalKey) "physical key" else "field mismatch"
+                addVoiceDiagnostic("First edit after activation is genuine ($reason, fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=${currentFieldText == expectedActivationText}), canceling voice")
+                // Fall through to cancel voice
+            }
+        }
+        
+        if (voiceIsOwner) {
+            addVoiceDiagnostic("Manual edit detected, canceling voice ownership")
+            voiceIsOwner = false
+            voiceDictationHelper?.stopListening()
+        }
+    }
+    
+    private fun handleVoicePartialResult(text: String) {
+        addVoiceDiagnostic("handleVoicePartialResult: len=${text.length}, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner, unchanged=${text == lastVoiceResult}")
+        // Ignore if search closed, voice lost ownership, or result unchanged
+        if (visibility != VISIBLE || !voiceIsOwner || text == lastVoiceResult) {
+            addVoiceDiagnostic("Partial result ignored")
+            return
+        }
+        
+        lastVoiceResult = text
+        // Append voice text to saved prefix, update field via callback
+        // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
+        updatingFromVoice = true
+        try {
+            val combinedText = voiceTypedPrefix + text
+            addVoiceDiagnostic("Updating field: prefixLen=${voiceTypedPrefix.length}, totalLen=${combinedText.length}")
+            onUpdateSearchText?.invoke(combinedText)
+        } finally {
+            updatingFromVoice = false
+        }
+    }
+    
+    private fun handleVoiceFinalResult(text: String) {
+        addVoiceDiagnostic("handleVoiceFinalResult: len=${text.length}, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner")
+        // Ignore if search closed or voice lost ownership
+        if (visibility != VISIBLE || !voiceIsOwner) {
+            addVoiceDiagnostic("Final result ignored")
+            return
+        }
+        
+        lastVoiceResult = text
+        voiceIsOwner = false
+        // Append voice text to saved prefix, update field via callback
+        // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
+        updatingFromVoice = true
+        try {
+            val combinedText = voiceTypedPrefix + text
+            addVoiceDiagnostic("Final: prefixLen=${voiceTypedPrefix.length}, totalLen=${combinedText.length}")
+            onUpdateSearchText?.invoke(combinedText)
+        } finally {
+            updatingFromVoice = false
+        }
+    }
+    
+    private fun handleVoiceError(error: String) {
+        voiceIsOwner = false
+        lastVoiceResult = ""
+        voiceTypedPrefix = ""
+        // Only show error for permission/availability issues, not timeouts
+        if (error.isNotEmpty()) {
+            android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    internal fun cleanupVoiceDictation() {
+        voiceDictationHelper?.destroy()
+        voiceDictationHelper = null
+        voiceIsOwner = false
+        lastVoiceResult = ""
+    }
+}
+
+/**
+ * Helper class that manages Android SpeechRecognizer lifecycle for voice dictation.
+ * Handles permission requests, recognizer availability, partial/final results, and errors.
+ * Recognizer instance is reused across listening sessions for performance.
+ * Session ID prevents callbacks from previous sessions.
+ */
+/**
+ * Wrapper interface for SpeechRecognizer operations.
+ * Allows injection of test doubles for unit testing.
+ */
+interface SpeechRecognizerWrapper {
+    fun setRecognitionListener(listener: android.speech.RecognitionListener?)
+    fun startListening(intent: android.content.Intent)
+    fun stopListening()
+    fun cancel()
+    fun destroy()
+}
+
+/**
+ * Production wrapper using real Android SpeechRecognizer.
+ */
+private class RealSpeechRecognizerWrapper(
+    private val recognizer: android.speech.SpeechRecognizer
+) : SpeechRecognizerWrapper {
+    override fun setRecognitionListener(listener: android.speech.RecognitionListener?) {
+        recognizer.setRecognitionListener(listener)
+    }
+    
+    override fun startListening(intent: android.content.Intent) {
+        recognizer.startListening(intent)
+    }
+    
+    override fun stopListening() {
+        recognizer.stopListening()
+    }
+    
+    override fun cancel() {
+        recognizer.cancel()
+    }
+    
+    override fun destroy() {
+        recognizer.destroy()
+    }
+}
+
+/**
+ * Factory interface for creating SpeechRecognizer instances.
+ * Allows injection of test doubles for unit testing.
+ */
+interface SpeechRecognizerFactory {
+    fun createRecognizer(context: Context): SpeechRecognizerWrapper?
+    fun isRecognitionAvailable(context: Context): Boolean
+}
+
+/**
+ * Default production implementation using Android system SpeechRecognizer.
+ */
+private class DefaultSpeechRecognizerFactory : SpeechRecognizerFactory {
+    override fun createRecognizer(context: Context): SpeechRecognizerWrapper? {
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+        return recognizer?.let { RealSpeechRecognizerWrapper(it) }
+    }
+    
+    override fun isRecognitionAvailable(context: Context): Boolean =
+        android.speech.SpeechRecognizer.isRecognitionAvailable(context)
+}
+
+private class VoiceDictationHelper(
+    private val context: Context,
+    private val onPartialResult: (String) -> Unit,
+    private val onFinalResult: (String) -> Unit,
+    private val onError: (String) -> Unit,
+    private val recognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
+) {
+    private var speechRecognizer: SpeechRecognizerWrapper? = null
+    private var recognizerAvailable = false
+    private var sessionId = 0
+    var isListening = false
+        private set
+    
+    init {
+        recognizerAvailable = recognizerFactory.isRecognitionAvailable(context)
+    }
+    
+    fun startListening(): Boolean {
+        // Check if recognition is available
+        if (!recognizerAvailable) {
+            onError(context.getString(R.string.voice_not_available))
+            return false
+        }
+        
+        // Check microphone permission (Android 6.0+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val permission = android.Manifest.permission.RECORD_AUDIO
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, permission) 
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Request permission from activity
+                val activity = context as? android.app.Activity
+                if (activity != null) {
+                    androidx.core.app.ActivityCompat.requestPermissions(activity, arrayOf(permission), REQUEST_CODE_RECORD_AUDIO)
+                } else {
+                    onError(context.getString(R.string.voice_permission_denied))
+                }
+                return false
+            }
+        }
+        
+        // Increment session ID to invalidate any pending callbacks
+        sessionId++
+        val currentSession = sessionId
+        
+        // Create recognizer once and reuse for performance
+        // This MUST be called on the main thread per Android SpeechRecognizer requirements
+        if (speechRecognizer == null) {
+            try {
+                speechRecognizer = recognizerFactory.createRecognizer(context)
+                if (speechRecognizer == null) {
+                    onError(context.getString(R.string.voice_not_available))
+                    return false
+                }
+            } catch (e: Exception) {
+                onError(context.getString(R.string.voice_error))
+                return false
+            }
+        }
+        
+        // Set listener with current session ID
+        speechRecognizer?.setRecognitionListener(createRecognitionListener(currentSession))
+        
+        // Start listening (must be on main thread)
+        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, 
+                android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // Use system default language, prefer network for better accuracy
+            putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+        
+        try {
+            speechRecognizer?.startListening(intent)
+            isListening = true
+            return true
+        } catch (e: Exception) {
+            onError(context.getString(R.string.voice_error))
+            return false
+        }
+    }
+    
+    fun stopListening() {
+        if (!isListening) return
+        // Increment session to invalidate callbacks
+        sessionId++
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {
+            // Ignore errors on stop
+        }
+        isListening = false
+    }
+    
+    fun cancelListening() {
+        if (!isListening) return
+        // Increment session to invalidate callbacks
+        sessionId++
+        try {
+            speechRecognizer?.cancel()  // Cancel immediately without waiting for final result
+        } catch (e: Exception) {
+            // Ignore errors on cancel
+        }
+        isListening = false
+    }
+    
+    fun destroy() {
+        try {
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            // Ignore errors on destroy
+        }
+        speechRecognizer = null
+        isListening = false
+    }
+    
+    private fun createRecognitionListener(expectedSession: Int) = object : android.speech.RecognitionListener {
+        override fun onReadyForSpeech(params: android.os.Bundle?) {
+            addVoiceDiagnostic("Ready for speech, session=$expectedSession")
+        }
+        
+        override fun onBeginningOfSpeech() {
+            addVoiceDiagnostic("Speech started")
+        }
+        
+        override fun onRmsChanged(rmsdB: Float) {}
+        
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        
+        override fun onEndOfSpeech() {
+            addVoiceDiagnostic("Speech ended")
+            // Don't clear isListening yet - wait for results/error
+        }
+        
+        override fun onError(error: Int) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) {
+                addVoiceDiagnostic("Error from old session: $error (expected=$expectedSession, current=$sessionId)")
+                return
+            }
+            
+            isListening = false
+            
+            // Log all errors for diagnostics
+            val errorName = when (error) {
+                android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "INSUFFICIENT_PERMISSIONS"
+                android.speech.SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
+                android.speech.SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
+                android.speech.SpeechRecognizer.ERROR_SERVER -> "SERVER"
+                android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "RECOGNIZER_BUSY"
+                android.speech.SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
+                android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
+                android.speech.SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
+                android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
+                else -> "UNKNOWN($error)"
+            }
+            addVoiceDiagnostic("Error: $errorName")
+            
+            // Only report user-facing errors, not normal flow like timeout or no match
+            val errorMessage = when (error) {
+                android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> context.getString(R.string.voice_permission_denied)
+                android.speech.SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                android.speech.SpeechRecognizer.ERROR_NETWORK -> "Network error. Check internet connection."
+                android.speech.SpeechRecognizer.ERROR_SERVER -> "Speech service error. Try again."
+                android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice recognizer busy. Try again."
+                // Normal flow - don't show errors but give helpful hint
+                android.speech.SpeechRecognizer.ERROR_NO_MATCH -> {
+                    addVoiceDiagnostic("No speech recognized - user may need to speak louder/clearer")
+                    "No speech recognized. Try speaking clearly."
+                }
+                android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    addVoiceDiagnostic("Speech timeout - waiting for user to speak")
+                    ""  // Don't show error for timeout (user just didn't speak)
+                }
+                android.speech.SpeechRecognizer.ERROR_CLIENT,
+                android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> ""
+                else -> ""
+            }
+            
+            onError(errorMessage)
+        }
+        
+        override fun onResults(results: android.os.Bundle?) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) {
+                addVoiceDiagnostic("Final results from old session (expected=$expectedSession, current=$sessionId)")
+                return
+            }
+            
+            isListening = false
+            
+            val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            addVoiceDiagnostic("Final results: matches=${matches?.size ?: 0}, hasText=${!matches.isNullOrEmpty()}")
+            val bestMatch = matches?.firstOrNull()
+            if (bestMatch != null && bestMatch.isNotEmpty()) {
+                onFinalResult(bestMatch)
+            } else {
+                addVoiceDiagnostic("Final result empty - no transcription")
+            }
+        }
+        
+        override fun onPartialResults(partialResults: android.os.Bundle?) {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) {
+                addVoiceDiagnostic("Partial results from old session (expected=$expectedSession, current=$sessionId)")
+                return
+            }
+            
+            // Partial results arrive during speech - feed to search for live updates
+            val matches = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+            addVoiceDiagnostic("Partial results: matches=${matches?.size ?: 0}, hasText=${!matches.isNullOrEmpty()}")
+            val bestMatch = matches?.firstOrNull()
+            if (bestMatch != null && bestMatch.isNotEmpty()) {
+                onPartialResult(bestMatch)
+            }
+        }
+        
+        override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+    }
+    
+    companion object {
+        private const val REQUEST_CODE_RECORD_AUDIO = 1001
+    }
 }
