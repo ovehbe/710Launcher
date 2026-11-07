@@ -1660,7 +1660,9 @@ class SearchOverlay @JvmOverloads constructor(
     private var lastVoiceResult = ""
     private var voiceTypedPrefix = ""  // Text typed before voice started
     private var updatingFromVoice = false
-    private var ignoreNextManualEdit = false  // Protect from late IME commits after voice starts
+    // Activation gesture state: reject IME commit from hold-0 gesture, not genuine edits
+    private var activationGestureCommitExpected = false
+    private var activationExpectedPrefix = ""
     
     // For testing: allows injection of fake SpeechRecognizer
     internal var speechRecognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
@@ -1680,16 +1682,26 @@ class SearchOverlay @JvmOverloads constructor(
             return true
         }
         
-        // If restored prefix provided (from hold-0 gesture), use it to preserve intentional text
-        // and remove any '0' that IME committed during the hold
+        // Handle prefix preservation for hold-0 gesture
         if (restoredPrefix != null) {
-            updatingFromVoice = true  // Prevent manual edit detection
-            try {
-                onUpdateSearchText?.invoke(restoredPrefix)
-                voiceTypedPrefix = restoredPrefix
-                addVoiceDiagnostic("Restored prefix: len=${restoredPrefix.length}")
-            } finally {
-                updatingFromVoice = false
+            // User held 0 to activate. The saved prefix is from keyDown time.
+            // But user might have typed DURING the hold (before activation).
+            // Check if current field has more content than saved prefix.
+            val currentQuery = lastQuery
+            if (currentQuery.length > restoredPrefix.length && currentQuery.startsWith(restoredPrefix)) {
+                // User typed during hold - preserve the additional text as prefix
+                voiceTypedPrefix = currentQuery
+                addVoiceDiagnostic("Preserving text typed during hold: len=${currentQuery.length} (saved was ${restoredPrefix.length})")
+            } else {
+                // Restore saved prefix (removes any late IME commits)
+                updatingFromVoice = true
+                try {
+                    onUpdateSearchText?.invoke(restoredPrefix)
+                    voiceTypedPrefix = restoredPrefix
+                    addVoiceDiagnostic("Restored prefix: len=${restoredPrefix.length}")
+                } finally {
+                    updatingFromVoice = false
+                }
             }
         } else {
             // Save current typed text as prefix before voice starts
@@ -1713,11 +1725,11 @@ class SearchOverlay @JvmOverloads constructor(
         if (started) {
             voiceIsOwner = true
             lastVoiceResult = ""
-            // Protect voice ownership from late IME commits (e.g., '0' from hold-0 gesture)
-            // that might arrive after voice starts
-            ignoreNextManualEdit = true
-            post { ignoreNextManualEdit = false }  // Clear after current event batch
-            addVoiceDiagnostic("Voice is now owner, waiting for results...")
+            // Expect potential IME commit from activation gesture (hold-0)
+            // Will reject first change if it's appending single '0', but allow genuine edits
+            activationGestureCommitExpected = true
+            activationExpectedPrefix = voiceTypedPrefix
+            addVoiceDiagnostic("Voice is now owner, expecting activation commit, prefix len=${activationExpectedPrefix.length}")
         }
         return started
     }
@@ -1744,14 +1756,37 @@ class SearchOverlay @JvmOverloads constructor(
     /**
      * Called when user types manually - cancels voice ownership so late results don't overwrite.
      * Ignores programmatic updates (from voice itself).
+     * Rejects ONLY the first IME commit from activation gesture, treating subsequent edits as genuine.
+     *
+     * @param currentFieldText The current text in the search field after this change
      */
-    internal fun onManualEdit() {
+    internal fun onManualEdit(currentFieldText: String) {
         if (updatingFromVoice) return
-        if (ignoreNextManualEdit) {
-            addVoiceDiagnostic("Manual edit ignored (late IME commit after voice start)")
-            ignoreNextManualEdit = false
-            return
+        
+        // Check if this is the FIRST edit after activation (potential activation gesture commit)
+        if (activationGestureCommitExpected) {
+            activationGestureCommitExpected = false  // Clear flag immediately - only check once
+            
+            val expectedActivationText = activationExpectedPrefix + "0"
+            
+            if (currentFieldText == expectedActivationText) {
+                // This is likely the IME commit from hold-0 gesture - reject it
+                addVoiceDiagnostic("Activation gesture '0' commit detected and rejected (field='$currentFieldText', expected='$expectedActivationText')")
+                // Remove the activation '0'
+                updatingFromVoice = true
+                try {
+                    onUpdateSearchText?.invoke(activationExpectedPrefix)
+                } finally {
+                    updatingFromVoice = false
+                }
+                return
+            } else {
+                // First edit but not the activation commit - this is a genuine edit, cancel voice
+                addVoiceDiagnostic("First edit after activation is genuine (field='$currentFieldText', expected='$expectedActivationText'), canceling voice")
+                // Fall through to cancel voice
+            }
         }
+        
         if (voiceIsOwner) {
             addVoiceDiagnostic("Manual edit detected, canceling voice ownership")
             voiceIsOwner = false

@@ -123,7 +123,6 @@ class LauncherActivity : AppCompatActivity() {
     private var key0LongPressTriggered = false
     private var key0LongPressRunnable: Runnable? = null
     private var key0PreHoldSearchText: String? = null
-    private var key0PostVoiceCleanupPending = false
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -1134,7 +1133,8 @@ class LauncherActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 // Cancel voice ownership if user types manually
-                searchOverlay.onManualEdit()
+                val currentText = s?.toString() ?: ""
+                searchOverlay.onManualEdit(currentText)
             }
             override fun afterTextChanged(s: Editable?) {
                 val text = s?.toString() ?: ""
@@ -1277,25 +1277,8 @@ class LauncherActivity : AppCompatActivity() {
         val preHoldText = key0PreHoldSearchText
         key0PreHoldSearchText = null  // Clear saved text
         
-        if (searchOverlay.startVoiceDictation(preHoldText)) {
-            // Voice started successfully - schedule cleanup of any late IME commits
-            // IME might commit '0' after voice starts (on key up), which would trigger
-            // manual edit detection and cancel voice ownership
-            key0PostVoiceCleanupPending = true
-            searchInputInBar.postDelayed({
-                if (key0PostVoiceCleanupPending) {
-                    key0PostVoiceCleanupPending = false
-                    // Remove any trailing '0' that IME might have committed after voice started
-                    val currentText = searchInputInBar.text.toString()
-                    val preHold = preHoldText ?: ""
-                    if (currentText.startsWith(preHold) && currentText.length == preHold.length + 1 
-                        && currentText[preHold.length] == '0') {
-                        searchInputInBar.setText(preHold)
-                        searchInputInBar.setSelection(preHold.length)
-                    }
-                }
-            }, 100)  // Small delay to catch late IME commits
-        }
+        // Voice activation will handle rejecting IME commits from the gesture
+        searchOverlay.startVoiceDictation(preHoldText)
     }
 
     private fun handleTypeToSearchFromText(text: CharSequence) {
@@ -2710,7 +2693,6 @@ class LauncherActivity : AppCompatActivity() {
         key0LongPressRunnable = null
         key0LongPressTriggered = false
         key0PreHoldSearchText = null
-        key0PostVoiceCleanupPending = false
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
