@@ -150,15 +150,16 @@ class VoiceActivationInputConnectionTest {
     fun prefixTypedBeforeActivation_shouldPreserve_speechShouldAppend() {
         println("\n=== TEST: Prefix 'app' + activation + speech ===")
         
-        // User types 'app' before activation (using key events to properly open search)
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A))
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_A))
+        // User types 'app' before activation (using key events with proper timing for quick presses)
+        val t0 = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(t0, t0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0, t0 + 50, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_A, 0))
         looper.idle()
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P))
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 100, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 150, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P, 0))
         looper.idle()
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P))
-        activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 200, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 250, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P, 0))
         looper.idle()
         
         // Verify search opened and text is there
@@ -203,12 +204,17 @@ class VoiceActivationInputConnectionTest {
     fun prefixWithIntentionalZeros_shouldPreserve_speechShouldAppend() {
         println("\n=== TEST: Prefix '007' + activation + speech ===")
         
-        // Type '007' using key events
-        for (i in 0..2) {
-            activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0))
-            activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0))
-            looper.idle()
-        }
+        // Type '007' using key events with proper timing (quick presses, not holds)
+        val t0 = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(t0, t0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0, t0 + 50, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 100, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 150, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 200, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 250, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
         
         assertEquals("Search should be visible", android.view.View.VISIBLE, searchOverlay.visibility)
         assertTrue("Prefix '007' typed", searchField.text.toString().contains("007"))
