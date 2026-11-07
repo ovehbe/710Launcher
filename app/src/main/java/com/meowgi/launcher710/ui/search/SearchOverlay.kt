@@ -2015,6 +2015,11 @@ private class VoiceDictationHelper(
             putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             // Use system default language, prefer network for better accuracy
             putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+            // Increase pause tolerance to allow natural speaking pauses (optional, provider-dependent)
+            // Default is typically ~2000ms complete, ~1000ms possibly-complete
+            // Increased to 4000ms/2000ms to tolerate brief pauses without ending session
+            putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+            putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
         }
         
         try {
