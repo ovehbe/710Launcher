@@ -131,7 +131,7 @@
                     android:ellipsize="end"
                     android:background="@drawable/search_bar_bg"
                     android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
+                    android:paddingEnd="28dp"
                     android:textColor="@color/bb_search_text"
                     android:textSize="12sp"
                     android:fontFamily="@font/bbalphas" />

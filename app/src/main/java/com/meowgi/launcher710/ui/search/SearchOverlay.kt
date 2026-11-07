@@ -1871,7 +1871,9 @@ class SearchOverlay @JvmOverloads constructor(
         
         lastVoiceResult = text
         voiceIsOwner = false
-        // Progress already hidden by onEndOfSpeech (which fires before onResults)
+        // Hide progress indicator unconditionally (terminal result cleanup)
+        // onEndOfSpeech normally hides it first, but Android doesn't guarantee that callback order
+        voiceProgress.visibility = GONE
         // Append voice text to saved prefix, update field via callback
         // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true

@@ -410,4 +410,74 @@ class VoiceDictationCallbacksTest {
         assertEquals("final text inserted", "test complete", searchField.text.toString())
         assertEquals("progress remains hidden", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
     }
+    
+    @Test
+    fun finalResultWithoutEndOfSpeechHidesProgress() {
+        // Android doesn't guarantee onEndOfSpeech fires before onResults
+        // Terminal result cleanup must be unconditional
+        searchField.setText("")
+        looper.idle()
+        
+        // Start voice
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Partial result arrives
+        fakeRecognizer.simulatePartialResults("test")
+        looper.idle()
+        assertEquals("progress still visible after partial", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Final result arrives WITHOUT onEndOfSpeech preceding it
+        // (onEndOfSpeech is intentionally not called to simulate this Android behavior)
+        fakeRecognizer.simulateFinalResults("test complete")
+        looper.idle()
+        
+        // Progress must be hidden by terminal result cleanup
+        assertEquals("progress hidden by final result", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+        assertEquals("final text inserted", "test complete", searchField.text.toString())
+    }
+    
+    @Test
+    fun oldSessionEndOfSpeechDoesNotHideNewSession() {
+        // Stale session protection: old-session onEndOfSpeech must not hide new session indicator
+        searchField.setText("")
+        looper.idle()
+        
+        // Start first session
+        assertTrue("first voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible for session 1", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        val firstListener = fakeRecognizer.listener
+        assertNotNull("first listener captured", firstListener)
+        
+        // Partial result in first session
+        fakeRecognizer.simulatePartialResults("first")
+        looper.idle()
+        assertEquals("partial in session 1", "first", searchField.text.toString())
+        
+        // Cancel first session and start second session immediately (before final/end callbacks)
+        searchOverlay.cancelVoiceDictation()
+        looper.idle()
+        searchField.setText("")
+        looper.idle()
+        
+        assertTrue("second voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible for session 2", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Stale onEndOfSpeech from first session arrives (via captured listener)
+        firstListener!!.onEndOfSpeech()
+        looper.idle()
+        
+        // Progress must remain visible (stale callback ignored)
+        assertEquals("progress still visible - stale end-of-speech ignored", 
+            android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Second session continues normally
+        fakeRecognizer.simulateFinalResults("second")
+        looper.idle()
+        assertEquals("second session result", "second", searchField.text.toString())
+        assertEquals("progress hidden after session 2 final", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
 }
