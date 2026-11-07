@@ -74,6 +74,10 @@ class FakeSpeechRecognizer : SpeechRecognizerWrapper {
         listener?.onError(errorCode)
         isListening = false
     }
+    
+    fun simulateEndOfSpeech() {
+        listener?.onEndOfSpeech()
+    }
 }
 
 /**

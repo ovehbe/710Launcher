@@ -310,10 +310,16 @@ class VoiceDictationCallbacksTest {
         looper.idle()
         assertEquals("progress visible during partial", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
         
-        // Final results - progress hidden
+        // End of speech - progress hidden (listening stopped)
+        fakeRecognizer.simulateEndOfSpeech()
+        looper.idle()
+        assertEquals("progress hidden at end-of-speech", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+        
+        // Late final results - text still inserted (voice still owns session)
         fakeRecognizer.simulateFinalResults("test complete")
         looper.idle()
-        assertEquals("progress hidden after final", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+        assertEquals("final text inserted", "test complete", searchField.text.toString())
+        assertEquals("progress remains hidden after final", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
     }
     
     @Test
@@ -374,5 +380,34 @@ class VoiceDictationCallbacksTest {
         
         // Progress remains hidden
         assertEquals("progress hidden on failure", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
+    
+    @Test
+    fun endOfSpeechHidesProgressButAllowsLateFinal() {
+        // Comprehensive test: end-of-speech should hide progress but session should still accept final results
+        searchField.setText("")
+        looper.idle()
+        
+        // Start voice
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Partial result arrives
+        fakeRecognizer.simulatePartialResults("test")
+        looper.idle()
+        assertEquals("progress still visible after partial", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        assertEquals("partial text shown", "test", searchField.text.toString())
+        
+        // End of speech (user stopped speaking) - progress should hide
+        fakeRecognizer.simulateEndOfSpeech()
+        looper.idle()
+        assertEquals("progress hidden after end-of-speech", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+        
+        // Late final result still arrives and is processed (voice still owns session)
+        fakeRecognizer.simulateFinalResults("test complete")
+        looper.idle()
+        assertEquals("final text inserted", "test complete", searchField.text.toString())
+        assertEquals("progress remains hidden", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
     }
 }

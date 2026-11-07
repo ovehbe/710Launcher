@@ -324,22 +324,11 @@ class SearchOverlay @JvmOverloads constructor(
         isFocusable = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
 
-        // Voice progress indicator (small spinner visible during voice dictation)
+        // Voice progress indicator will be placed in search bar (LauncherActivity), not here
         voiceProgress = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
             indeterminateTintList = android.content.res.ColorStateList.valueOf(prefs.accentColor)
             visibility = GONE
         }
-        val voiceProgressContainer = FrameLayout(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            addView(voiceProgress, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                marginEnd = dp(8)
-            })
-        }
-        addView(voiceProgressContainer)
 
         dialRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -1755,6 +1744,7 @@ class SearchOverlay @JvmOverloads constructor(
                 onPartialResult = { text -> handleVoicePartialResult(text) },
                 onFinalResult = { text -> handleVoiceFinalResult(text) },
                 onError = { error -> handleVoiceError(error) },
+                onEndOfSpeechCallback = { handleVoiceEndOfSpeech() },
                 recognizerFactory = speechRecognizerFactory
             )
         }
@@ -1844,6 +1834,12 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
     
+    private fun handleVoiceEndOfSpeech() {
+        addVoiceDiagnostic("handleVoiceEndOfSpeech: visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner")
+        // Hide progress indicator when listening stops, but keep voice ownership for final results
+        voiceProgress.visibility = GONE
+    }
+    
     private fun handleVoicePartialResult(text: String) {
         addVoiceDiagnostic("handleVoicePartialResult: len=${text.length}, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner, unchanged=${text == lastVoiceResult}")
         // Ignore if search closed, voice lost ownership, or result unchanged
@@ -1875,7 +1871,7 @@ class SearchOverlay @JvmOverloads constructor(
         
         lastVoiceResult = text
         voiceIsOwner = false
-        voiceProgress.visibility = GONE
+        // Progress already hidden by onEndOfSpeech (which fires before onResults)
         // Append voice text to saved prefix, update field via callback
         // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true
@@ -1979,6 +1975,7 @@ private class VoiceDictationHelper(
     private val onPartialResult: (String) -> Unit,
     private val onFinalResult: (String) -> Unit,
     private val onError: (String) -> Unit,
+    private val onEndOfSpeechCallback: () -> Unit,
     private val recognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
 ) {
     private var speechRecognizer: SpeechRecognizerWrapper? = null
@@ -2104,7 +2101,14 @@ private class VoiceDictationHelper(
         override fun onBufferReceived(buffer: ByteArray?) {}
         
         override fun onEndOfSpeech() {
+            // Check session validity - ignore callbacks from old sessions
+            if (sessionId != expectedSession) {
+                addVoiceDiagnostic("End-of-speech from old session (expected=$expectedSession, current=$sessionId)")
+                return
+            }
             addVoiceDiagnostic("Speech ended")
+            // Notify that listening has stopped (for UI feedback) but keep ownership for final results
+            onEndOfSpeechCallback()
             // Don't clear isListening yet - wait for results/error
         }
         

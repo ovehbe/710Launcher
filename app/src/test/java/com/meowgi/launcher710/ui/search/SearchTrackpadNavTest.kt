@@ -288,8 +288,8 @@ class SearchTrackpadNavTest {
     fun theHighlightIsASoftNeutralFillVisibleOnDarkAndLightWallpapers() {
         launch()
         type(KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_5)
-        // Child 0 is voice progress container (added in v1.9.7), child 1 is dialRow
-        val dialRow = overlay.getChildAt(1)
+        // Child 0 is dialRow (voice progress moved to search bar in v1.9.7)
+        val dialRow = overlay.getChildAt(0)
         assertTrue(dialRow.width > 0 && dialRow.height > 0)
         val dp = context.resources.displayMetrics.density
         // Empty space at the row's right end, clear of the text and the phone icon.

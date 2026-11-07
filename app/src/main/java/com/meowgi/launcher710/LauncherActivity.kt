@@ -1168,6 +1168,21 @@ class LauncherActivity : AppCompatActivity() {
             chunk.filter { it != '\n' }
         }
         searchInputInBar.visibility = View.GONE
+        
+        // Add voice progress indicator to search bar (trailing edge, non-overlapping)
+        val actionBarCenter = findViewById<android.widget.FrameLayout>(R.id.actionBarCenter)
+        val voiceProgress = searchOverlay.voiceProgress
+        // Remove from any previous parent
+        (voiceProgress.parent as? android.view.ViewGroup)?.removeView(voiceProgress)
+        // Add to action bar center with trailing position
+        val layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+            marginEnd = dp(8)
+        }
+        actionBarCenter.addView(voiceProgress, layoutParams)
     }
 
     /**
