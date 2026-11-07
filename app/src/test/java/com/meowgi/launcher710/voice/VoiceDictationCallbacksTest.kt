@@ -37,6 +37,7 @@ class VoiceDictationCallbacksTest {
     private lateinit var searchField: EditText
     private lateinit var searchOverlay: SearchOverlay
     private lateinit var fakeRecognizer: FakeSpeechRecognizer
+    private lateinit var fakeFactory: FakeSpeechRecognizerFactory
 
     @Before
     fun setup() {
@@ -57,7 +58,8 @@ class VoiceDictationCallbacksTest {
         
         // Inject fake recognizer for testing
         fakeRecognizer = FakeSpeechRecognizer()
-        searchOverlay.speechRecognizerFactory = FakeSpeechRecognizerFactory(fakeRecognizer)
+        fakeFactory = FakeSpeechRecognizerFactory(fakeRecognizer)
+        searchOverlay.speechRecognizerFactory = fakeFactory
         
         // Open search overlay
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A))
@@ -264,7 +266,7 @@ class VoiceDictationCallbacksTest {
     }
     
     @Test
-    fun recognitionIntentIncludesPauseToleranceExtras() {
+    fun recognitionIntentMatchesKnownWorkingV195Request() {
         // Start voice dictation
         searchField.setText("")
         looper.idle()
@@ -272,7 +274,7 @@ class VoiceDictationCallbacksTest {
         assertTrue("voice started", searchOverlay.startVoiceDictation())
         looper.idle()
         
-        // Verify the intent passed to startListening includes pause tolerance extras
+        // Verify the intent matches v1.9.5 known-working request
         val capturedIntent = fakeRecognizer.lastStartIntent
         assertNotNull("intent was captured", capturedIntent)
         
@@ -283,16 +285,94 @@ class VoiceDictationCallbacksTest {
         assertTrue("partial results enabled",
             capturedIntent.getBooleanExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false))
         
-        // Verify pause tolerance extras are present (optional, provider-dependent)
-        assertTrue("complete silence extra present",
+        // v1.9.7: Removed both silence extras (return to v1.9.5 known-working request)
+        // v1.9.6 added these extras speculatively but caused complete failure on Q25
+        assertFalse("no complete silence extra",
             capturedIntent.hasExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS))
-        assertTrue("possibly-complete silence extra present",
+        assertFalse("no possibly-complete silence extra",
             capturedIntent.hasExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS))
+    }
+    
+    @Test
+    fun voiceProgressVisibleDuringSession() {
+        // Initially hidden
+        assertEquals("progress initially hidden", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
         
-        // Verify the values (4000ms complete, 2000ms possibly-complete)
-        assertEquals("complete silence timeout", 4000L,
-            capturedIntent.getLongExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 0L))
-        assertEquals("possibly-complete silence timeout", 2000L,
-            capturedIntent.getLongExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 0L))
+        // Start voice - progress visible
+        searchField.setText("")
+        looper.idle()
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible after start", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Partial results - progress still visible
+        fakeRecognizer.simulatePartialResults("test")
+        looper.idle()
+        assertEquals("progress visible during partial", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Final results - progress hidden
+        fakeRecognizer.simulateFinalResults("test complete")
+        looper.idle()
+        assertEquals("progress hidden after final", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
+    
+    @Test
+    fun voiceProgressHiddenOnError() {
+        // Start voice
+        searchField.setText("")
+        looper.idle()
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Error - progress hidden
+        fakeRecognizer.simulateError(android.speech.SpeechRecognizer.ERROR_NETWORK)
+        looper.idle()
+        assertEquals("progress hidden after error", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
+    
+    @Test
+    fun voiceProgressHiddenOnManualEdit() {
+        // Start voice
+        searchField.setText("")
+        looper.idle()
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // User types - progress hidden
+        searchField.setText("typed")
+        looper.idle()
+        assertEquals("progress hidden after manual edit", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
+    
+    @Test
+    fun voiceProgressHiddenOnCancel() {
+        // Start voice
+        searchField.setText("")
+        looper.idle()
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        assertEquals("progress visible", android.view.View.VISIBLE, searchOverlay.voiceProgress.visibility)
+        
+        // Cancel - progress hidden
+        searchOverlay.cancelVoiceDictation()
+        looper.idle()
+        assertEquals("progress hidden after cancel", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
+    }
+    
+    @Test
+    fun voiceProgressHiddenOnStartFailure() {
+        // Set recognizer unavailable
+        fakeFactory.available = false
+        
+        // Try to start - fails
+        searchField.setText("")
+        looper.idle()
+        assertFalse("voice failed to start", searchOverlay.startVoiceDictation())
+        looper.idle()
+        
+        // Progress remains hidden
+        assertEquals("progress hidden on failure", android.view.View.GONE, searchOverlay.voiceProgress.visibility)
     }
 }

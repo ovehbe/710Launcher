@@ -49,7 +49,8 @@ class SearchOverlayDecisionTest {
 
     /** Text of the dial row, or null when it is hidden. */
     private fun dialRow(o: SearchOverlay = overlay): String? {
-        val row = o.getChildAt(0) as LinearLayout
+        // Child 0 is voice progress container (added in v1.9.7), child 1 is dialRow
+        val row = o.getChildAt(1) as LinearLayout
         return if (row.visibility == View.VISIBLE) (row.getChildAt(0) as TextView).text.toString() else null
     }
 

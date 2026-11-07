@@ -66,6 +66,10 @@ class FakeSpeechRecognizer : SpeechRecognizerWrapper {
         isListening = false
     }
     
+    fun simulateFinalResults(text: String) = simulateFinalResult(text)  // Alias for consistency
+    
+    fun simulatePartialResults(text: String) = simulatePartialResult(text)  // Alias for consistency
+    
     fun simulateError(errorCode: Int) {
         listener?.onError(errorCode)
         isListening = false
@@ -78,6 +82,8 @@ class FakeSpeechRecognizer : SpeechRecognizerWrapper {
 class FakeSpeechRecognizerFactory(
     private val recognizer: FakeSpeechRecognizer
 ) : SpeechRecognizerFactory {
+    var available = true  // Can be set to false to test unavailable recognizer
+    
     override fun createRecognizer(context: Context): SpeechRecognizerWrapper = recognizer
-    override fun isRecognitionAvailable(context: Context): Boolean = true
+    override fun isRecognitionAvailable(context: Context): Boolean = available
 }

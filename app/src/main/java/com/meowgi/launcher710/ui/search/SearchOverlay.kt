@@ -155,6 +155,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val aiContentContainer: LinearLayout
     private val aiError: TextView
     private val aiSettingsLink: TextView
+    internal val voiceProgress: ProgressBar  // Internal for testing
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
@@ -322,6 +323,23 @@ class SearchOverlay @JvmOverloads constructor(
         setPadding(dp(12), dp(8), dp(12), dp(8))
         isFocusable = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+
+        // Voice progress indicator (small spinner visible during voice dictation)
+        voiceProgress = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(prefs.accentColor)
+            visibility = GONE
+        }
+        val voiceProgressContainer = FrameLayout(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            addView(voiceProgress, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                marginEnd = dp(8)
+            })
+        }
+        addView(voiceProgressContainer)
 
         dialRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -1746,11 +1764,16 @@ class SearchOverlay @JvmOverloads constructor(
         if (started) {
             voiceIsOwner = true
             lastVoiceResult = ""
+            // Show voice progress indicator
+            voiceProgress.visibility = VISIBLE
             // Expect potential IME commit from activation gesture (hold-0)
             // Will reject first change if it's appending single '0', but allow genuine edits
             activationGestureCommitExpected = true
             activationExpectedPrefix = voiceTypedPrefix
             addVoiceDiagnostic("Voice is now owner, expecting activation commit, prefix len=${activationExpectedPrefix.length}")
+        } else {
+            // Failed to start - ensure progress is hidden
+            voiceProgress.visibility = GONE
         }
         return started
     }
@@ -1762,6 +1785,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceDictationHelper?.stopListening()
         voiceIsOwner = false
         voiceTypedPrefix = ""
+        voiceProgress.visibility = GONE
     }
     
     /**
@@ -1772,6 +1796,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceIsOwner = false
         lastVoiceResult = ""
         voiceTypedPrefix = ""
+        voiceProgress.visibility = GONE
     }
     
     /**
@@ -1815,6 +1840,7 @@ class SearchOverlay @JvmOverloads constructor(
             addVoiceDiagnostic("Manual edit detected, canceling voice ownership")
             voiceIsOwner = false
             voiceDictationHelper?.stopListening()
+            voiceProgress.visibility = GONE
         }
     }
     
@@ -1849,6 +1875,7 @@ class SearchOverlay @JvmOverloads constructor(
         
         lastVoiceResult = text
         voiceIsOwner = false
+        voiceProgress.visibility = GONE
         // Append voice text to saved prefix, update field via callback
         // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true
@@ -1865,6 +1892,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceIsOwner = false
         lastVoiceResult = ""
         voiceTypedPrefix = ""
+        voiceProgress.visibility = GONE
         // Only show error for permission/availability issues, not timeouts
         if (error.isNotEmpty()) {
             android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_SHORT).show()
@@ -2016,11 +2044,6 @@ private class VoiceDictationHelper(
             putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             // Use system default language, prefer network for better accuracy
             putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
-            // Increase pause tolerance to allow natural speaking pauses (optional, provider-dependent)
-            // Default is typically ~2000ms complete, ~1000ms possibly-complete
-            // Increased to 4000ms/2000ms to tolerate brief pauses without ending session
-            putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
-            putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
         }
         
         try {
