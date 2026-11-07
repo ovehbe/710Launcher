@@ -123,6 +123,7 @@ class LauncherActivity : AppCompatActivity() {
     private var key0LongPressTriggered = false
     private var key0LongPressRunnable: Runnable? = null
     private var key0PreHoldSearchText: String? = null
+    private var key0SearchVisibleAtDown = false
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -2512,6 +2513,7 @@ class LauncherActivity : AppCompatActivity() {
                 // Save current search text before any IME commits happen
                 // This preserves intentional text (including zeros) typed before this gesture
                 key0PreHoldSearchText = searchInputInBar.text.toString()
+                key0SearchVisibleAtDown = searchOverlay.visibility == View.VISIBLE
                 key0LongPressRunnable = Runnable {
                     key0LongPressTriggered = true
                     triggerVoiceSearch()
@@ -2574,19 +2576,24 @@ class LauncherActivity : AppCompatActivity() {
             }
             
             // Short press - manually insert '0' since onKeyDown consumed the event
+            // But only if search visibility hasn't changed (dismiss cancels insertion)
             key0PreHoldSearchText = null
-            if (searchOverlay.visibility != View.VISIBLE) {
-                // Search not open - open it with '0'
-                searchInputInBar.requestFocus()
-                searchInputInBar.setText("0")
-                searchInputInBar.setSelection(1)
-                showSearchPageAware(initialChar = null, preserveText = true)
-            } else {
-                // Search already open - append '0' to current text
-                val currentText = searchInputInBar.text.toString()
-                val newText = currentText + "0"
-                searchInputInBar.setText(newText)
-                searchInputInBar.setSelection(newText.length)
+            val searchVisibleNow = searchOverlay.visibility == View.VISIBLE
+            if (searchVisibleNow == key0SearchVisibleAtDown) {
+                // Search state unchanged - safe to insert '0'
+                if (!searchVisibleNow) {
+                    // Search not open - open it with '0'
+                    searchInputInBar.requestFocus()
+                    searchInputInBar.setText("0")
+                    searchInputInBar.setSelection(1)
+                    showSearchPageAware(initialChar = null, preserveText = true)
+                } else {
+                    // Search already open - append '0' to current text
+                    val currentText = searchInputInBar.text.toString()
+                    val newText = currentText + "0"
+                    searchInputInBar.setText(newText)
+                    searchInputInBar.setSelection(newText.length)
+                }
             }
             return true
         }
