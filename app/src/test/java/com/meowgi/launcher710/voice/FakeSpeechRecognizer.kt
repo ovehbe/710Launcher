@@ -18,6 +18,7 @@ class FakeSpeechRecognizer : SpeechRecognizerWrapper {
         private set
     var startListenCallCount = 0
         private set
+    var lastStartIntent: Intent? = null
     var cancelCallCount = 0
         private set
     var stopListenCallCount = 0
@@ -28,6 +29,7 @@ class FakeSpeechRecognizer : SpeechRecognizerWrapper {
     }
 
     override fun startListening(intent: Intent) {
+        lastStartIntent = intent
         isListening = true
         startListenCallCount++
         listener?.onReadyForSpeech(Bundle.EMPTY)

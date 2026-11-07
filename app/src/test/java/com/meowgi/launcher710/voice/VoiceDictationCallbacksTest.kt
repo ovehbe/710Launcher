@@ -262,4 +262,37 @@ class VoiceDictationCallbacksTest {
         // Should still be able to start again
         assertTrue("can restart after error", searchOverlay.startVoiceDictation())
     }
+    
+    @Test
+    fun recognitionIntentIncludesPauseToleranceExtras() {
+        // Start voice dictation
+        searchField.setText("")
+        looper.idle()
+        
+        assertTrue("voice started", searchOverlay.startVoiceDictation())
+        looper.idle()
+        
+        // Verify the intent passed to startListening includes pause tolerance extras
+        val capturedIntent = fakeRecognizer.lastStartIntent
+        assertNotNull("intent was captured", capturedIntent)
+        
+        // Verify basic recognition extras
+        assertEquals("language model", 
+            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            capturedIntent!!.getStringExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL))
+        assertTrue("partial results enabled",
+            capturedIntent.getBooleanExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false))
+        
+        // Verify pause tolerance extras are present (optional, provider-dependent)
+        assertTrue("complete silence extra present",
+            capturedIntent.hasExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS))
+        assertTrue("possibly-complete silence extra present",
+            capturedIntent.hasExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS))
+        
+        // Verify the values (4000ms complete, 2000ms possibly-complete)
+        assertEquals("complete silence timeout", 4000L,
+            capturedIntent.getLongExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 0L))
+        assertEquals("possibly-complete silence timeout", 2000L,
+            capturedIntent.getLongExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 0L))
+    }
 }
