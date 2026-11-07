@@ -45,6 +45,76 @@ import androidx.lifecycle.LifecycleCoroutineScope
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
+// Voice dictation diagnostics (privacy-safe, no transcripts or queries)
+private object VoiceDiagnostics {
+    private val diagnosticLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private const val MAX_DIAGNOSTIC_ENTRIES = 50
+    
+    private var totalStarts = 0
+    private var totalPartialResults = 0
+    private var totalFinalResults = 0
+    private var totalErrors = 0
+    private var totalManualEdits = 0
+    private var totalFieldUpdates = 0
+    
+    fun addVoiceDiagnostic(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        diagnosticLog.offer("[$timestamp] $message")
+        while (diagnosticLog.size > MAX_DIAGNOSTIC_ENTRIES) {
+            diagnosticLog.poll()
+        }
+        
+        when {
+            message.contains("Voice is now owner") -> totalStarts++
+            message.contains("Partial results:") -> totalPartialResults++
+            message.contains("Final results:") || message.contains("Final:") -> totalFinalResults++
+            message.contains("Error:") -> totalErrors++
+            message.contains("Manual edit") -> totalManualEdits++
+            message.contains("Updating field") -> totalFieldUpdates++
+        }
+    }
+    
+    fun getDiagnosticLog(context: Context): String {
+        val sb = StringBuilder()
+        
+        sb.append("=== Voice Recognition Service ===\n")
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+        sb.append("Available: ${android.speech.SpeechRecognizer.isRecognitionAvailable(context)}\n")
+        recognizer?.destroy()
+        
+        sb.append("\n=== Request Configuration ===\n")
+        sb.append("Partial results: requested\n")
+        sb.append("Language model: FREE_FORM\n")
+        sb.append("Max results: 1\n")
+        sb.append("Prefer offline: false\n")
+        
+        sb.append("\n=== Session Aggregates ===\n")
+        sb.append("Total starts: $totalStarts\n")
+        sb.append("Partial results received: $totalPartialResults\n")
+        sb.append("Final results received: $totalFinalResults\n")
+        sb.append("Errors encountered: $totalErrors\n")
+        sb.append("Manual edits: $totalManualEdits\n")
+        sb.append("Field updates: $totalFieldUpdates\n")
+        
+        sb.append("\n=== Recent Events (last ${diagnosticLog.size}) ===\n")
+        if (diagnosticLog.isEmpty()) {
+            sb.append("No voice dictation activity recorded yet.\n")
+        } else {
+            diagnosticLog.forEach { sb.append(it).append("\n") }
+        }
+        
+        sb.append("\n=== Privacy Notice ===\n")
+        sb.append("No transcripts, queries, or audio recorded.\n")
+        sb.append("Log bounded to $MAX_DIAGNOSTIC_ENTRIES most recent events.\n")
+        
+        return sb.toString()
+    }
+}
+
+private fun addVoiceDiagnostic(message: String) = VoiceDiagnostics.addVoiceDiagnostic(message)
+fun getVoiceDiagnosticLog(context: Context) = VoiceDiagnostics.getDiagnosticLog(context)
+
 class SearchOverlay @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
@@ -1590,6 +1660,7 @@ class SearchOverlay @JvmOverloads constructor(
     private var lastVoiceResult = ""
     private var voiceTypedPrefix = ""  // Text typed before voice started
     private var updatingFromVoice = false
+    private var ignoreNextManualEdit = false  // Protect from late IME commits after voice starts
     
     // For testing: allows injection of fake SpeechRecognizer
     internal var speechRecognizerFactory: SpeechRecognizerFactory = DefaultSpeechRecognizerFactory()
@@ -1600,12 +1671,12 @@ class SearchOverlay @JvmOverloads constructor(
      * No visual indicator - the live transcribed text IS the feedback.
      */
     fun startVoiceDictation(restoredPrefix: String? = null): Boolean {
-        VoiceDictationHelper.addDiagnostic("startVoiceDictation called, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, restoredPrefix='$restoredPrefix'")
+        addVoiceDiagnostic("startVoiceDictation called, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, hasRestoredPrefix=${restoredPrefix != null}")
         if (visibility != VISIBLE) return false
         
         // Check if already listening
         if (voiceDictationHelper?.isListening == true) {
-            VoiceDictationHelper.addDiagnostic("Already listening, returning true")
+            addVoiceDiagnostic("Already listening, returning true")
             return true
         }
         
@@ -1616,14 +1687,14 @@ class SearchOverlay @JvmOverloads constructor(
             try {
                 onUpdateSearchText?.invoke(restoredPrefix)
                 voiceTypedPrefix = restoredPrefix
-                VoiceDictationHelper.addDiagnostic("Restored prefix: '$restoredPrefix'")
+                addVoiceDiagnostic("Restored prefix: len=${restoredPrefix.length}")
             } finally {
                 updatingFromVoice = false
             }
         } else {
             // Save current typed text as prefix before voice starts
             voiceTypedPrefix = lastQuery
-            VoiceDictationHelper.addDiagnostic("Saved prefix: '$voiceTypedPrefix'")
+            addVoiceDiagnostic("Saved prefix: len=${voiceTypedPrefix.length}")
         }
         
         // Create helper if needed (reused across sessions for performance)
@@ -1638,11 +1709,15 @@ class SearchOverlay @JvmOverloads constructor(
         }
         
         val started = voiceDictationHelper?.startListening() ?: false
-        VoiceDictationHelper.addDiagnostic("startListening returned: $started")
+        addVoiceDiagnostic("startListening returned: $started")
         if (started) {
             voiceIsOwner = true
             lastVoiceResult = ""
-            VoiceDictationHelper.addDiagnostic("Voice is now owner, waiting for results...")
+            // Protect voice ownership from late IME commits (e.g., '0' from hold-0 gesture)
+            // that might arrive after voice starts
+            ignoreNextManualEdit = true
+            post { ignoreNextManualEdit = false }  // Clear after current event batch
+            addVoiceDiagnostic("Voice is now owner, waiting for results...")
         }
         return started
     }
@@ -1672,18 +1747,23 @@ class SearchOverlay @JvmOverloads constructor(
      */
     internal fun onManualEdit() {
         if (updatingFromVoice) return
+        if (ignoreNextManualEdit) {
+            addVoiceDiagnostic("Manual edit ignored (late IME commit after voice start)")
+            ignoreNextManualEdit = false
+            return
+        }
         if (voiceIsOwner) {
-            VoiceDictationHelper.addDiagnostic("Manual edit detected, canceling voice ownership")
+            addVoiceDiagnostic("Manual edit detected, canceling voice ownership")
             voiceIsOwner = false
             voiceDictationHelper?.stopListening()
         }
     }
     
     private fun handleVoicePartialResult(text: String) {
-        VoiceDictationHelper.addDiagnostic("handleVoicePartialResult: '$text', visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner, unchanged=${text == lastVoiceResult}")
+        addVoiceDiagnostic("handleVoicePartialResult: len=${text.length}, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner, unchanged=${text == lastVoiceResult}")
         // Ignore if search closed, voice lost ownership, or result unchanged
         if (visibility != VISIBLE || !voiceIsOwner || text == lastVoiceResult) {
-            VoiceDictationHelper.addDiagnostic("Partial result ignored")
+            addVoiceDiagnostic("Partial result ignored")
             return
         }
         
@@ -1693,7 +1773,7 @@ class SearchOverlay @JvmOverloads constructor(
         updatingFromVoice = true
         try {
             val combinedText = voiceTypedPrefix + text
-            VoiceDictationHelper.addDiagnostic("Updating field with: '$combinedText'")
+            addVoiceDiagnostic("Updating field: prefixLen=${voiceTypedPrefix.length}, totalLen=${combinedText.length}")
             onUpdateSearchText?.invoke(combinedText)
         } finally {
             updatingFromVoice = false
@@ -1701,10 +1781,10 @@ class SearchOverlay @JvmOverloads constructor(
     }
     
     private fun handleVoiceFinalResult(text: String) {
-        VoiceDictationHelper.addDiagnostic("handleVoiceFinalResult: '$text', visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner")
+        addVoiceDiagnostic("handleVoiceFinalResult: len=${text.length}, visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner")
         // Ignore if search closed or voice lost ownership
         if (visibility != VISIBLE || !voiceIsOwner) {
-            VoiceDictationHelper.addDiagnostic("Final result ignored")
+            addVoiceDiagnostic("Final result ignored")
             return
         }
         
@@ -1715,7 +1795,7 @@ class SearchOverlay @JvmOverloads constructor(
         updatingFromVoice = true
         try {
             val combinedText = voiceTypedPrefix + text
-            VoiceDictationHelper.addDiagnostic("Final: updating field with: '$combinedText'")
+            addVoiceDiagnostic("Final: prefixLen=${voiceTypedPrefix.length}, totalLen=${combinedText.length}")
             onUpdateSearchText?.invoke(combinedText)
         } finally {
             updatingFromVoice = false
@@ -1925,11 +2005,11 @@ private class VoiceDictationHelper(
     
     private fun createRecognitionListener(expectedSession: Int) = object : android.speech.RecognitionListener {
         override fun onReadyForSpeech(params: android.os.Bundle?) {
-            VoiceDictationHelper.addDiagnostic("Ready for speech, session=$expectedSession")
+            addVoiceDiagnostic("Ready for speech, session=$expectedSession")
         }
         
         override fun onBeginningOfSpeech() {
-            VoiceDictationHelper.addDiagnostic("Speech started")
+            addVoiceDiagnostic("Speech started")
         }
         
         override fun onRmsChanged(rmsdB: Float) {}
@@ -1937,14 +2017,14 @@ private class VoiceDictationHelper(
         override fun onBufferReceived(buffer: ByteArray?) {}
         
         override fun onEndOfSpeech() {
-            VoiceDictationHelper.addDiagnostic("Speech ended")
+            addVoiceDiagnostic("Speech ended")
             // Don't clear isListening yet - wait for results/error
         }
         
         override fun onError(error: Int) {
             // Check session validity - ignore callbacks from old sessions
             if (sessionId != expectedSession) {
-                VoiceDictationHelper.addDiagnostic("Error from old session: $error (expected=$expectedSession, current=$sessionId)")
+                addVoiceDiagnostic("Error from old session: $error (expected=$expectedSession, current=$sessionId)")
                 return
             }
             
@@ -1963,7 +2043,7 @@ private class VoiceDictationHelper(
                 android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
                 else -> "UNKNOWN($error)"
             }
-            VoiceDictationHelper.addDiagnostic("Error: $errorName")
+            addVoiceDiagnostic("Error: $errorName")
             
             // Only report user-facing errors, not normal flow like timeout or no match
             val errorMessage = when (error) {
@@ -1974,11 +2054,11 @@ private class VoiceDictationHelper(
                 android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice recognizer busy. Try again."
                 // Normal flow - don't show errors but give helpful hint
                 android.speech.SpeechRecognizer.ERROR_NO_MATCH -> {
-                    VoiceDictationHelper.addDiagnostic("No speech recognized - user may need to speak louder/clearer")
+                    addVoiceDiagnostic("No speech recognized - user may need to speak louder/clearer")
                     "No speech recognized. Try speaking clearly."
                 }
                 android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                    VoiceDictationHelper.addDiagnostic("Speech timeout - waiting for user to speak")
+                    addVoiceDiagnostic("Speech timeout - waiting for user to speak")
                     ""  // Don't show error for timeout (user just didn't speak)
                 }
                 android.speech.SpeechRecognizer.ERROR_CLIENT,
@@ -1992,32 +2072,32 @@ private class VoiceDictationHelper(
         override fun onResults(results: android.os.Bundle?) {
             // Check session validity - ignore callbacks from old sessions
             if (sessionId != expectedSession) {
-                VoiceDictationHelper.addDiagnostic("Final results from old session (expected=$expectedSession, current=$sessionId)")
+                addVoiceDiagnostic("Final results from old session (expected=$expectedSession, current=$sessionId)")
                 return
             }
             
             isListening = false
             
             val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
-            VoiceDictationHelper.addDiagnostic("Final results: matches=${matches?.size ?: 0}, best='${matches?.firstOrNull() ?: ""}'")
+            addVoiceDiagnostic("Final results: matches=${matches?.size ?: 0}, hasText=${!matches.isNullOrEmpty()}")
             val bestMatch = matches?.firstOrNull()
             if (bestMatch != null && bestMatch.isNotEmpty()) {
                 onFinalResult(bestMatch)
             } else {
-                VoiceDictationHelper.addDiagnostic("Final result empty - no transcription")
+                addVoiceDiagnostic("Final result empty - no transcription")
             }
         }
         
         override fun onPartialResults(partialResults: android.os.Bundle?) {
             // Check session validity - ignore callbacks from old sessions
             if (sessionId != expectedSession) {
-                VoiceDictationHelper.addDiagnostic("Partial results from old session (expected=$expectedSession, current=$sessionId)")
+                addVoiceDiagnostic("Partial results from old session (expected=$expectedSession, current=$sessionId)")
                 return
             }
             
             // Partial results arrive during speech - feed to search for live updates
             val matches = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
-            VoiceDictationHelper.addDiagnostic("Partial results: matches=${matches?.size ?: 0}, best='${matches?.firstOrNull() ?: ""}'")
+            addVoiceDiagnostic("Partial results: matches=${matches?.size ?: 0}, hasText=${!matches.isNullOrEmpty()}")
             val bestMatch = matches?.firstOrNull()
             if (bestMatch != null && bestMatch.isNotEmpty()) {
                 onPartialResult(bestMatch)
@@ -2029,31 +2109,5 @@ private class VoiceDictationHelper(
     
     companion object {
         private const val REQUEST_CODE_RECORD_AUDIO = 1001
-        
-        // Diagnostic log for troubleshooting voice recognition issues
-        private val diagnosticLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
-        private const val MAX_DIAGNOSTIC_ENTRIES = 50
-        
-        fun addDiagnostic(message: String) {
-            val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
-                .format(java.util.Date())
-            diagnosticLog.offer("[$timestamp] $message")
-            // Keep only recent entries
-            while (diagnosticLog.size > MAX_DIAGNOSTIC_ENTRIES) {
-                diagnosticLog.poll()
-            }
-        }
-        
-        fun getDiagnosticLog(): String {
-            return if (diagnosticLog.isEmpty()) {
-                "No voice dictation activity recorded yet."
-            } else {
-                diagnosticLog.joinToString("\n")
-            }
-        }
-        
-        fun clearDiagnosticLog() {
-            diagnosticLog.clear()
-        }
     }
 }

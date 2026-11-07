@@ -282,4 +282,11 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     internal fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    internal fun copyVoiceDiagnostics() {
+        val diagnostics = com.meowgi.launcher710.ui.search.getVoiceDiagnosticLog(this)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Voice diagnostics", diagnostics))
+        Toast.makeText(this, "Voice diagnostics copied to clipboard", Toast.LENGTH_SHORT).show()
+    }
 }
