@@ -49,6 +49,8 @@ import kotlinx.coroutines.launch
 internal object VoiceDiagnostics {
     private val diagnosticLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private const val MAX_DIAGNOSTIC_ENTRIES = 50
+    // Reuse SimpleDateFormat to avoid creating new instance on every log call
+    private val timestampFormat = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
     
     private var totalStarts = 0
     private var totalPartialResults = 0
@@ -58,8 +60,7 @@ internal object VoiceDiagnostics {
     private var totalFieldUpdates = 0
     
     fun addVoiceDiagnostic(message: String) {
-        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
-            .format(java.util.Date())
+        val timestamp = timestampFormat.format(java.util.Date())
         diagnosticLog.offer("[$timestamp] $message")
         while (diagnosticLog.size > MAX_DIAGNOSTIC_ENTRIES) {
             diagnosticLog.poll()
