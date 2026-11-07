@@ -537,6 +537,13 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     /** Activates the highlighted row as a tap would. False when nothing is highlighted. */
+    /**
+     * Tracks whether an action (like suggestion acceptance) was just executed to prevent
+     * duplicate execution from the same keypress (e.g., keydown handler + keyup IME action).
+     * Cleared on next user interaction (typing, clicking, etc).
+     */
+    private var actionJustConsumed = false
+
     fun activateNavSelection(): Boolean {
         val target = navSelection ?: return false
         navPos = null
@@ -546,7 +553,12 @@ class SearchOverlay @JvmOverloads constructor(
             NavTarget.Calculator -> copyCalculatorResult()
             is NavTarget.Currency -> copyCurrencyResult(target.index)
             NavTarget.Command -> executeCommand()
-            is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
+            is NavTarget.Suggestion -> {
+                suggestionsBox.getChildAt(target.index)?.performClick()
+                // Mark that we just consumed an action to prevent duplicate execution
+                // from the same keypress (e.g., if both keydown and keyup trigger actions)
+                actionJustConsumed = true
+            }
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
             NavTarget.AiSettings -> aiSettingsLink.performClick()
         }
@@ -779,6 +791,7 @@ class SearchOverlay @JvmOverloads constructor(
     fun show() {
         filterIndex = null
         resetSession()
+        actionJustConsumed = false
         visibility = VISIBLE
     }
 
@@ -833,6 +846,12 @@ class SearchOverlay @JvmOverloads constructor(
      * or the query goes to web search.
      */
     fun performExtendedSearch() {
+        // If an action was just consumed (e.g., suggestion acceptance from keydown),
+        // don't execute another action from the same keypress (e.g., keyup IME action).
+        if (actionJustConsumed) {
+            actionJustConsumed = false
+            return
+        }
         val trigger = commandTriggerProvider?.invoke()
         val commandMode = !trigger.isNullOrEmpty() && lastQuery.startsWith(trigger)
         if (commandMode) {
@@ -1662,6 +1681,8 @@ class SearchOverlay @JvmOverloads constructor(
      */
     internal fun onManualEdit() {
         if (updatingFromVoice) return
+        // Clear action consumed flag on any manual edit (user is interacting again)
+        actionJustConsumed = false
         if (voiceIsOwner) {
             voiceIsOwner = false
             voiceDictationHelper?.stopListening()

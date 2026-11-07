@@ -135,23 +135,46 @@ class SearchEnterPathsTest {
     @Test fun imeActionUnspecified() = assertHighlightedRowOpens { imeAction(EditorInfo.IME_ACTION_UNSPECIFIED) }
 
     @Test
-    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() {
-        // This test verifies that a double editor action behaves correctly.
-        // OLD BEHAVIOR: First action launches web search for "hjkl two", second action ignored (overlay already dismissed).
-        // NEW BEHAVIOR: First action accepts "hjkl two" into field (overlay stays open), second action searches for "hjkl two" (not original "hjkl").
+    fun singleEditorAction_shouldAcceptSuggestion_notLaunchBrowser() {
         launch()
         highlightSecondSuggestion()
-        imeAction(EditorInfo.IME_ACTION_SEARCH)
-        imeAction(EditorInfo.IME_ACTION_SEARCH)
+        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
         settle()
-        // Second action launches web search for the accepted suggestion
-        val search = shadowOf(activity).nextStartedActivity
-        assertEquals(Intent.ACTION_WEB_SEARCH, search?.action)
-        assertEquals("hjkl two", search?.getStringExtra("query"))
-        // And overlay is dismissed after web search
-        assertEquals(View.GONE, overlay.visibility)
-        // Field is cleared on dismiss
-        assertEquals("", field.text.toString())
+        // After single action: field should have suggestion, no browser, overlay visible
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Single action should not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
+    }
+
+    @Test
+    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() {
+        // This test simulates a single Enter keypress that may trigger editor action twice
+        // (once from keydown handler, once from keyup IME). The second action from the SAME
+        // keypress should not execute another action - it should see the action was already consumed.
+        launch()
+        highlightSecondSuggestion()
+        
+        // Drain any previous intents
+        drainStarted()
+        
+        // First editor action (from keydown): accepts suggestion
+        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+        looper.idle()
+        
+        // At this point: suggestion should be accepted, no browser launched yet
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("First action should not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
+        
+        // Second editor action (from keyup of SAME press): should do nothing
+        // because the action was already consumed
+        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+        settle()
+        
+        // After second action from same keypress: still no browser, suggestion still in field
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Second action from same keypress should not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
     }
 
     @Test fun noHighlightActivityEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_ENTER) }
