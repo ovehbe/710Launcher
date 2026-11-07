@@ -75,6 +75,16 @@ private object VoiceDiagnostics {
         }
     }
     
+    fun clear() {
+        diagnosticLog.clear()
+        totalStarts = 0
+        totalPartialResults = 0
+        totalFinalResults = 0
+        totalErrors = 0
+        totalManualEdits = 0
+        totalFieldUpdates = 0
+    }
+    
     fun getDiagnosticLog(context: Context): String {
         val sb = StringBuilder()
         
@@ -1781,7 +1791,7 @@ class SearchOverlay @JvmOverloads constructor(
             
             if (currentFieldText == expectedActivationText) {
                 // This is likely the IME commit from hold-0 gesture - reject it
-                addVoiceDiagnostic("Activation gesture '0' commit detected and rejected (field='$currentFieldText', expected='$expectedActivationText')")
+                addVoiceDiagnostic("Activation gesture '0' commit detected and rejected (fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=true)")
                 // Remove the activation '0'
                 updatingFromVoice = true
                 try {
@@ -1792,7 +1802,7 @@ class SearchOverlay @JvmOverloads constructor(
                 return
             } else {
                 // First edit but not the activation commit - this is a genuine edit, cancel voice
-                addVoiceDiagnostic("First edit after activation is genuine (field='$currentFieldText', expected='$expectedActivationText'), canceling voice")
+                addVoiceDiagnostic("First edit after activation is genuine (fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=false), canceling voice")
                 // Fall through to cancel voice
             }
         }

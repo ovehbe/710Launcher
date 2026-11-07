@@ -380,4 +380,109 @@ class VoiceActivationInputConnectionTest {
         // The early '0' was saved as key0PreHoldSearchText and restored as prefix
         assertEquals("Early '0' preserved as prefix, speech appends", "0hello", searchField.text.toString())
     }
+    
+    /**
+     * Physical SHORT tap 0 as FIRST gesture after activation WITHOUT any late IME commit.
+     * This is an intentional '0' that should cancel voice and be preserved.
+     * Tests that hold-0 bypass doesn't swallow genuine tap-0 when no IME commit happens.
+     */
+    @Test
+    fun physicalShortTap0AfterActivation_shouldCancelVoice_zeroPreserved() {
+        println("\n=== TEST: Physical short tap 0 after activation (no late IME) ===")
+        
+        // Type "app" first
+        val t0 = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(t0, t0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0, t0 + 50, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_A, 0))
+        looper.idle()
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 100, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 150, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P, 0))
+        looper.idle()
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 200, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_P, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 250, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_P, 0))
+        looper.idle()
+        
+        assertEquals("Prefix 'app' typed", "app", searchField.text.toString())
+        
+        // Hold 0 to activate voice
+        val holdStart = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(holdStart, holdStart, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        looper.idleFor(500, TimeUnit.MILLISECONDS)
+        
+        assertEquals("Voice should start", 1, fakeRecognizer.startListenCallCount)
+        assertEquals("Prefix preserved at activation", "app", searchField.text.toString())
+        
+        // Release hold-0 (key-up after 500ms)
+        activity.dispatchKeyEvent(KeyEvent(holdStart, holdStart + 500, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        
+        // NO IME commit happens (Q25 might not send one, or we're testing without it)
+        // Now user physically taps 0 as a NEW gesture - short press via key events
+        val tapStart = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(tapStart, tapStart, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        activity.dispatchKeyEvent(KeyEvent(tapStart, tapStart + 50, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        
+        println("After physical tap 0: voice canceled=${fakeRecognizer.startListenCallCount == 1 && !searchOverlay.voiceIsOwner}, field='${searchField.text}'")
+        
+        // Voice should be canceled by this edit
+        assertFalse("Voice should be cancelled by intentional 0", searchOverlay.voiceIsOwner)
+        
+        // Field should show prefix + intentional '0'
+        assertEquals("Intentional '0' preserved after canceling voice", "app0", searchField.text.toString())
+        
+        // Speech arriving after cancellation should be ignored
+        fakeRecognizer.simulatePartialResult("hello")
+        looper.idle()
+        
+        assertEquals("Speech ignored after voice cancelled", "app0", searchField.text.toString())
+    }
+    
+    /**
+     * Privacy regression test: diagnostics must NOT contain raw user text or speech transcripts.
+     * Uses distinct synthetic sentinels to trigger both rejection and genuine-edit paths.
+     */
+    @Test
+    fun diagnosticsShouldNotContainUserData_privacyRegression() {
+        println("\n=== TEST: Privacy regression - diagnostics sanitized ===")
+        
+        // Clear diagnostics
+        VoiceDiagnostics.clear()
+        
+        // Type synthetic sentinel prefix
+        val sentinel = "PRIVACY_SENTINEL_12345"
+        searchField.setText(sentinel)
+        looper.idle()
+        
+        // Hold 0 to activate voice
+        val holdStart = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(holdStart, holdStart, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        looper.idleFor(500, TimeUnit.MILLISECONDS)
+        
+        assertEquals("Voice started", 1, fakeRecognizer.startListenCallCount)
+        looper.idle()
+        
+        // Simulate late IME commit that should be rejected
+        inputConnection.commitText("0", 1)
+        looper.idle()
+        
+        // Now trigger genuine edit with speech transcript sentinel
+        val speechSentinel = "TRANSCRIPT_SENTINEL_67890"
+        searchField.setText(speechSentinel)
+        looper.idle()
+        
+        // Get diagnostic log
+        val diagnostics = VoiceDiagnostics.getDiagnosticLog(activity)
+        
+        println("Diagnostics length: ${diagnostics.length}")
+        
+        // Verify sentinels do NOT appear in diagnostics
+        assertFalse("Diagnostics must not contain user prefix sentinel", diagnostics.contains(sentinel))
+        assertFalse("Diagnostics must not contain speech transcript sentinel", diagnostics.contains(speechSentinel))
+        
+        // Verify diagnostic log contains expected safe markers (lengths, match boolean)
+        assertTrue("Diagnostics should contain safe length markers", 
+            diagnostics.contains("Len=") || diagnostics.contains("len=") || 
+            diagnostics.contains("fieldLen=") || diagnostics.contains("expectedLen="))
+    }
 }
