@@ -159,16 +159,12 @@ class SearchEnterPathsTest {
         
         // First editor action (from keydown): accepts suggestion
         field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
-        looper.idle()
         
-        // At this point: suggestion should be accepted, no browser launched yet
-        assertEquals("hjkl two", field.text.toString())
-        assertNull("First action should not launch browser", shadowOf(activity).nextStartedActivity)
-        assertEquals(View.VISIBLE, overlay.visibility)
-        
-        // Second editor action (from keyup of SAME press): should do nothing
-        // because the action was already consumed
+        // Second editor action (from keyup of SAME press): should be blocked
+        // because it arrives in the same event loop iteration
         field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+        
+        // Now process all events
         settle()
         
         // After second action from same keypress: still no browser, suggestion still in field

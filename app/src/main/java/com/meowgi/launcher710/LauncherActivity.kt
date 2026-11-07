@@ -1200,31 +1200,18 @@ class LauncherActivity : AppCompatActivity() {
         return true
     }
 
-    /**
-     * Tracks whether submitSearch just handled an action (like suggestion acceptance) to prevent
-     * duplicate IME editor actions from the same keypress. Cleared on next editor action.
-     * Hardware keyup is already blocked by the event.action guard below.
-     */
-    private var submitJustHandledAction = false
-
     private fun onSearchEditorAction(actionId: Int, event: KeyEvent?): Boolean {
         // The key-up half of an Enter whose key-down was handled here.
         if (event != null && event.action != KeyEvent.ACTION_DOWN) return true
         // A late action for a search that the same press already closed.
         if (searchOverlay.visibility != View.VISIBLE) return true
         
-        // IME action from same keypress that already activated something (e.g., suggestion acceptance).
-        // Clear the flag and return, so the NEXT action (from a distinct keypress) will proceed normally.
-        if (submitJustHandledAction) {
-            submitJustHandledAction = false
-            return true
-        }
+        // If nav selection was just cleared (within same event loop iteration), this action
+        // is likely from the same physical keypress that already activated something.
+        // Block it to prevent duplicate execution.
+        if (searchOverlay.wasNavJustCleared()) return true
         
-        val handled = submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
-        if (handled) {
-            submitJustHandledAction = true
-        }
-        return handled
+        return submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
     }
 
     /**
