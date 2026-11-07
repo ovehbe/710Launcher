@@ -1208,6 +1208,7 @@ class LauncherActivity : AppCompatActivity() {
         if (event != null && event.action != KeyEvent.ACTION_DOWN) return true
         // A late action for a search that the same press already closed.
         if (searchOverlay.visibility != View.VISIBLE) return true
+        
         return submitSearch(event?.metaState ?: 0, runQuery = actionId == EditorInfo.IME_ACTION_SEARCH)
     }
 

@@ -970,6 +970,16 @@ class SearchOverlay @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Accepts a web suggestion into the search field, keeping search open with cursor at the end.
+     * Called when user clicks a Google suggestion or activates one with Enter.
+     */
+    private fun acceptWebSuggestion(suggestionText: String) {
+        // Update the search field with the suggestion text
+        onUpdateSearchText?.invoke(suggestionText)
+        // Search overlay remains open, search results will update automatically via the text watcher
+    }
+
     fun openWebSearchWithQuery(query: String) {
         if (query.isNotBlank()) {
             // NEW_TASK keeps the search app out of the launcher's own task, because the home task
@@ -1481,7 +1491,7 @@ class SearchOverlay @JvmOverloads constructor(
         val outValue = android.util.TypedValue()
         context.theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
         setBackgroundResource(outValue.resourceId)
-        setOnClickListener { openWebSearchWithQuery(text) }
+        setOnClickListener { acceptWebSuggestion(text) }
     }
 
     private fun updateDialRow(dialDigits: String) {

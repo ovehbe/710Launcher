@@ -110,7 +110,11 @@ class SearchEnterPathsTest {
         launch()
         highlightSecondSuggestion()
         press()
-        assertOpenedOnly("hjkl two")
+        // NEW BEHAVIOR: Suggestions are accepted into the field, not launched directly
+        settle()
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Suggestion acceptance does not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
     }
 
     private fun assertQuerySearchedWithoutHighlight(press: () -> Unit) {
@@ -131,10 +135,17 @@ class SearchEnterPathsTest {
     @Test fun imeActionUnspecified() = assertHighlightedRowOpens { imeAction(EditorInfo.IME_ACTION_UNSPECIFIED) }
 
     @Test
-    fun editorActionOnTheEnterKeyUpAfterTheHighlightOpenedDoesNotAlsoSearchTheQuery() = assertHighlightedRowOpens {
+    fun singleEditorAction_shouldAcceptSuggestion_notLaunchBrowser() {
+        launch()
+        highlightSecondSuggestion()
         field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
-        field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+        settle()
+        // After single action: field should have suggestion, no browser, overlay visible
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Single action should not launch browser", shadowOf(activity).nextStartedActivity)
+        assertEquals(View.VISIBLE, overlay.visibility)
     }
+
 
     @Test fun noHighlightActivityEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_ENTER) }
     @Test fun noHighlightActivityNumpadEnter() = assertQuerySearchedWithoutHighlight { activityKey(KeyEvent.KEYCODE_NUMPAD_ENTER) }

@@ -240,9 +240,10 @@ class SearchTrackpadNavTest {
         press(KeyEvent.KEYCODE_DPAD_DOWN)
         assertEquals("suggestion:1", selection())
         press(KeyEvent.KEYCODE_DPAD_CENTER)
-        val search = shadowOf(activity).nextStartedActivity
-        assertEquals(Intent.ACTION_WEB_SEARCH, search?.action)
-        assertEquals("hjkl two", search?.getStringExtra("query"))
+        // NEW BEHAVIOR: Suggestions are accepted into the field, not launched directly
+        settle()
+        assertEquals("hjkl two", field.text.toString())
+        assertNull("Suggestion acceptance does not launch browser", shadowOf(activity).nextStartedActivity)
     }
 
     @Test
