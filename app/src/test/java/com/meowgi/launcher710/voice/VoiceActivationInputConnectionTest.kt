@@ -212,8 +212,8 @@ class VoiceActivationInputConnectionTest {
         activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 100, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
         activity.dispatchKeyEvent(KeyEvent(t0 + 100, t0 + 150, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
         looper.idle()
-        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 200, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
-        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 250, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 200, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_7, 0))
+        activity.dispatchKeyEvent(KeyEvent(t0 + 200, t0 + 250, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_7, 0))
         looper.idle()
         
         assertEquals("Search should be visible", android.view.View.VISIBLE, searchOverlay.visibility)

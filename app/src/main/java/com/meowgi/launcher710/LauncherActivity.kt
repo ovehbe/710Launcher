@@ -2405,6 +2405,18 @@ class LauncherActivity : AppCompatActivity() {
                 }
             }
         }
+        
+        // When voice long-press is enabled, KEYCODE_0 must reach onKeyDown/onKeyUp directly
+        // to set/cancel timer, bypassing focused EditText which would consume it for typing.
+        // This allows hold-0 voice activation even when search field has existing text and focus.
+        if ((event.keyCode == KeyEvent.KEYCODE_0 || event.keyCode == KeyEvent.KEYCODE_NUMPAD_0) &&
+            prefs.voiceSearchEnabled && prefs.voiceSearchLongPress0) {
+            return when (event.action) {
+                KeyEvent.ACTION_DOWN -> onKeyDown(event.keyCode, event)
+                KeyEvent.ACTION_UP -> onKeyUp(event.keyCode, event)
+                else -> super.dispatchKeyEvent(event)
+            }
+        }
 
         if (handleSearchKey(event)) return true
         return super.dispatchKeyEvent(event)
