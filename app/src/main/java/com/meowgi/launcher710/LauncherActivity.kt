@@ -124,6 +124,7 @@ class LauncherActivity : AppCompatActivity() {
     private var key0LongPressRunnable: Runnable? = null
     private var key0PreHoldSearchText: String? = null
     private var key0SearchVisibleAtDown = false
+    private var key0PhysicalInsert = false  // Tracks if '0' insert is from physical key (not IME)
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -1135,7 +1136,7 @@ class LauncherActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 // Cancel voice ownership if user types manually
                 val currentText = s?.toString() ?: ""
-                searchOverlay.onManualEdit(currentText)
+                searchOverlay.onManualEdit(currentText, key0PhysicalInsert)
             }
             override fun afterTextChanged(s: Editable?) {
                 val text = s?.toString() ?: ""
@@ -2582,18 +2583,24 @@ class LauncherActivity : AppCompatActivity() {
             val searchVisibleNow = searchOverlay.visibility == View.VISIBLE
             if (searchVisibleNow == key0SearchVisibleAtDown) {
                 // Search state unchanged - safe to insert '0'
-                if (!searchVisibleNow) {
-                    // Search not open - open it with '0'
-                    searchInputInBar.requestFocus()
-                    searchInputInBar.setText("0")
-                    searchInputInBar.setSelection(1)
-                    showSearchPageAware(initialChar = null, preserveText = true)
-                } else {
-                    // Search already open - append '0' to current text
-                    val currentText = searchInputInBar.text.toString()
-                    val newText = currentText + "0"
-                    searchInputInBar.setText(newText)
-                    searchInputInBar.setSelection(newText.length)
+                // Mark this as physical key insert (not IME) for onManualEdit
+                key0PhysicalInsert = true
+                try {
+                    if (!searchVisibleNow) {
+                        // Search not open - open it with '0'
+                        searchInputInBar.requestFocus()
+                        searchInputInBar.setText("0")
+                        searchInputInBar.setSelection(1)
+                        showSearchPageAware(initialChar = null, preserveText = true)
+                    } else {
+                        // Search already open - append '0' to current text
+                        val currentText = searchInputInBar.text.toString()
+                        val newText = currentText + "0"
+                        searchInputInBar.setText(newText)
+                        searchInputInBar.setSelection(newText.length)
+                    }
+                } finally {
+                    key0PhysicalInsert = false
                 }
             }
             return true

@@ -46,7 +46,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 // Voice dictation diagnostics (privacy-safe, no transcripts or queries)
-private object VoiceDiagnostics {
+internal object VoiceDiagnostics {
     private val diagnosticLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private const val MAX_DIAGNOSTIC_ENTRIES = 50
     
@@ -1676,7 +1676,7 @@ class SearchOverlay @JvmOverloads constructor(
     // --- Voice Dictation ---
     
     private var voiceDictationHelper: VoiceDictationHelper? = null
-    private var voiceIsOwner = false
+    internal var voiceIsOwner = false  // Internal for testing
     private var lastVoiceResult = ""
     private var voiceTypedPrefix = ""  // Text typed before voice started
     private var updatingFromVoice = false
@@ -1779,8 +1779,9 @@ class SearchOverlay @JvmOverloads constructor(
      * Rejects ONLY the first IME commit from activation gesture, treating subsequent edits as genuine.
      *
      * @param currentFieldText The current text in the search field after this change
+     * @param fromPhysicalKey True if this edit is from a physical key event (not IME commitText)
      */
-    internal fun onManualEdit(currentFieldText: String) {
+    internal fun onManualEdit(currentFieldText: String, fromPhysicalKey: Boolean = false) {
         if (updatingFromVoice) return
         
         // Check if this is the FIRST edit after activation (potential activation gesture commit)
@@ -1789,7 +1790,8 @@ class SearchOverlay @JvmOverloads constructor(
             
             val expectedActivationText = activationExpectedPrefix + "0"
             
-            if (currentFieldText == expectedActivationText) {
+            // Physical key events are genuine user actions, never reject them
+            if (!fromPhysicalKey && currentFieldText == expectedActivationText) {
                 // This is likely the IME commit from hold-0 gesture - reject it
                 addVoiceDiagnostic("Activation gesture '0' commit detected and rejected (fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=true)")
                 // Remove the activation '0'
@@ -1801,8 +1803,9 @@ class SearchOverlay @JvmOverloads constructor(
                 }
                 return
             } else {
-                // First edit but not the activation commit - this is a genuine edit, cancel voice
-                addVoiceDiagnostic("First edit after activation is genuine (fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=false), canceling voice")
+                // First edit but not the activation commit, OR physical key - this is a genuine edit, cancel voice
+                val reason = if (fromPhysicalKey) "physical key" else "field mismatch"
+                addVoiceDiagnostic("First edit after activation is genuine ($reason, fieldLen=${currentFieldText.length}, expectedLen=${expectedActivationText.length}, match=${currentFieldText == expectedActivationText}), canceling voice")
                 // Fall through to cancel voice
             }
         }

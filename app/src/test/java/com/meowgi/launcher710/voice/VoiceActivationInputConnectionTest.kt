@@ -447,7 +447,7 @@ class VoiceActivationInputConnectionTest {
         println("\n=== TEST: Privacy regression - diagnostics sanitized ===")
         
         // Clear diagnostics
-        VoiceDiagnostics.clear()
+        com.meowgi.launcher710.ui.search.VoiceDiagnostics.clear()
         
         // Type synthetic sentinel prefix
         val sentinel = "PRIVACY_SENTINEL_12345"
@@ -472,7 +472,7 @@ class VoiceActivationInputConnectionTest {
         looper.idle()
         
         // Get diagnostic log
-        val diagnostics = VoiceDiagnostics.getDiagnosticLog(activity)
+        val diagnostics = com.meowgi.launcher710.ui.search.VoiceDiagnostics.getDiagnosticLog(activity)
         
         println("Diagnostics length: ${diagnostics.length}")
         
