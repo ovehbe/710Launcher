@@ -122,6 +122,7 @@ class LauncherActivity : AppCompatActivity() {
     
     private var key0LongPressTriggered = false
     private var key0LongPressRunnable: Runnable? = null
+    private var key0PreHoldSearchText: String? = null
 
     private var searchApplyRunnable: Runnable? = null
 
@@ -1270,8 +1271,12 @@ class LauncherActivity : AppCompatActivity() {
         if (searchOverlay.visibility != View.VISIBLE) {
             showSearchPageAware(initialChar = null, preserveText = false)
         }
-        // Start voice dictation
-        if (!searchOverlay.startVoiceDictation()) {
+        
+        // Start voice dictation, passing saved pre-hold text to preserve intentional prefix
+        val preHoldText = key0PreHoldSearchText
+        key0PreHoldSearchText = null  // Clear saved text
+        
+        if (!searchOverlay.startVoiceDictation(preHoldText)) {
             // Error already shown by startVoiceDictation if needed
         }
     }
@@ -2492,6 +2497,9 @@ class LauncherActivity : AppCompatActivity() {
                 // Initial press - start timer
                 key0LongPressTriggered = false
                 key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
+                // Save current search text before any IME commits happen
+                // This preserves intentional text (including zeros) typed before this gesture
+                key0PreHoldSearchText = searchInputInBar.text.toString()
                 key0LongPressRunnable = Runnable {
                     key0LongPressTriggered = true
                     triggerVoiceSearch()
@@ -2548,11 +2556,13 @@ class LauncherActivity : AppCompatActivity() {
             
             if (key0LongPressTriggered) {
                 key0LongPressTriggered = false
+                key0PreHoldSearchText = null
                 // Long press was triggered, consume the key up to prevent typing '0'
                 return true
             }
             
             // Short press - manually insert '0' since onKeyDown consumed the event
+            key0PreHoldSearchText = null
             if (searchOverlay.visibility != View.VISIBLE) {
                 // Search not open - open it with '0'
                 searchInputInBar.requestFocus()
@@ -2682,6 +2692,7 @@ class LauncherActivity : AppCompatActivity() {
         key0LongPressRunnable?.let { keyHandler.removeCallbacks(it) }
         key0LongPressRunnable = null
         key0LongPressTriggered = false
+        key0PreHoldSearchText = null
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

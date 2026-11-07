@@ -242,4 +242,20 @@ class VoiceDictationKeyEventsTest {
         
         assertTrue("numpad 0 types zero", searchField.text.toString().contains("0"))
     }
+
+    @Test
+    fun longPress0FromHomeScreenOpensSearchWithoutStrayZero() {
+        // Bug fix: Hold 0 from home screen should not add '0' to field
+        // From home screen (search not visible), hold 0 to trigger voice
+        val downTime = SystemClock.uptimeMillis()
+        activity.dispatchKeyEvent(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0, 0))
+        looper.idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+        activity.dispatchKeyEvent(KeyEvent(downTime, downTime + 600, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_0, 0))
+        looper.idle()
+        
+        // Search should be open, field empty (no stray '0'), voice started
+        assertEquals("search visible", android.view.View.VISIBLE, searchOverlay.visibility)
+        assertEquals("field empty, no stray 0", "", searchField.text.toString())
+        assertEquals("voice started", 1, fakeRecognizer.startListenCallCount)
+    }
 }
