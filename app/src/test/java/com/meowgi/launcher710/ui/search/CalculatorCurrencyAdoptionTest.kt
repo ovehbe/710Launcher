@@ -717,95 +717,179 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     @Test
-    fun `production async - old query completes after newer query started`() {
-        // Tests R2 generation tracking prevents stale overwrite
-        // WITHOUT using testSynchronousUpdate bypass
+    fun `R4 controlled - OLD query completes after NEW, generation rejects stale`() {
+        // PROVES: Old async work completes after newer query, stale result rejected
+        // Uses controllable cache to block OLD request, complete NEW first
         
-        launchWithFakeRates()
+        LauncherPrefs(context).apply {
+            searchCurrencyEnabled = true
+            setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
+        }
         
-        // Disable synchronous update to use production async path
-        overlay.testSynchronousUpdate = false
+        val controllableCache = com.meowgi.launcher710.util.ControllableFakeCurrencyRatesCache()
         
-        // Start first query
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        looper.idle()
+        
+        field = activity.findViewById(R.id.searchInputInBar)
+        overlay = activity.findViewById(R.id.searchOverlay)
+        overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
+        overlay.testRatesCache = controllableCache
+        overlay.testSynchronousUpdate = false  // Use production async
+        
+        field.setText("")
+        looper.idle()
+        drainStarted()
+        
+        // ESTABLISH: Block the OLD request at rates boundary
+        controllableCache.blockNext()
+        
+        // Start OLD query - will block at getRates()
         field.setText("100 usd")
         field.setSelection(field.text.length)
+        looper.idle()
         
-        // Immediately start second query before first completes
-        field.setText("50 eur")
+        // Start NEW query (different, will complete first)
+        field.setText("50 eur to try")
         field.setSelection(field.text.length)
         
-        // Let both queries process through production async path
-        repeat(20) {
-            looper.idle()
-            shadowOf(android.os.Looper.getMainLooper()).idle()
-            Thread.sleep(5)
-        }
+        // Process NEW query through production async (not blocked)
+        Thread.sleep(100)
+        val mainLooper = shadowOf(android.os.Looper.getMainLooper())
+        mainLooper.runToEndOfTasks()
+        looper.runToEndOfTasks()
+        mainLooper.idle()
+        looper.idle()
         
-        // Should show EUR results, NOT USD (stale first query rejected)
-        assertTrue("Should have currency rows visible", overlay.currencyRowsContainer.visibility == View.VISIBLE)
-        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+        // NEW query should show results
+        assertTrue("NEW query results visible", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        val resultBeforeOldCompletes = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
             ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        assertTrue("Shows NEW query (50 EUR to TRY) with TRY in result (got '$resultBeforeOldCompletes')", 
+            resultBeforeOldCompletes.contains("TRY", ignoreCase = true))
         
-        // First result should be for EUR query, not USD
-        assertTrue("Should show EUR query result (got '$firstRowText')", 
-            firstRowText.contains("50", ignoreCase = false) && !firstRowText.contains("100"))
+        // RELEASE: Now let OLD query complete its async work
+        controllableCache.release()
+        
+        // Process OLD completion through production post()
+        Thread.sleep(100)
+        mainLooper.runToEndOfTasks()
+        looper.runToEndOfTasks()
+        mainLooper.idle()
+        looper.idle()
+        
+        // ASSERT: Results still show NEW query, OLD completion was rejected
+        val resultAfterOldCompletes = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        assertTrue("Still shows NEW (50 EUR to TRY), OLD rejected (got '$resultAfterOldCompletes')", 
+            resultAfterOldCompletes.contains("TRY", ignoreCase = true))
+        assertFalse("Does NOT show OLD (100 USD) results", 
+            resultAfterOldCompletes.contains("100", ignoreCase = false))
     }
 
     @Test
-    fun `production async - clear field while currency pending`() {
-        // Tests that clearing field during async evaluation properly cancels
+    fun `R4 controlled - clear field, OLD completion arrives after, no stale rows`() {
+        // PROVES: Clearing field before OLD completes prevents stale rows
         
-        launchWithFakeRates()
+        LauncherPrefs(context).apply {
+            searchCurrencyEnabled = true
+            setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
+        }
+        
+        val controllableCache = com.meowgi.launcher710.util.ControllableFakeCurrencyRatesCache()
+        
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        looper.idle()
+        
+        field = activity.findViewById(R.id.searchInputInBar)
+        overlay = activity.findViewById(R.id.searchOverlay)
+        overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
+        overlay.testRatesCache = controllableCache
         overlay.testSynchronousUpdate = false
         
-        // Start query
+        field.setText("")
+        looper.idle()
+        drainStarted()
+        
+        // ESTABLISH: Block request
+        controllableCache.blockNext()
+        
+        // Start query - blocks at getRates()
         field.setText("100 usd to try")
         field.setSelection(field.text.length)
+        looper.idle()
         
-        // Clear field before async completes
+        // BOUNDARY: Clear field before OLD completes
         field.setText("")
         field.setSelection(0)
+        looper.idle()
         
-        // Let async processing complete
-        repeat(20) {
+        // RELEASE: Let OLD query complete
+        controllableCache.release()
+        
+        // Process OLD completion
+        repeat(10) {
             looper.idle()
             shadowOf(android.os.Looper.getMainLooper()).idle()
             Thread.sleep(5)
         }
         
-        // Currency rows should NOT appear for cleared query
-        // Either GONE or no children
-        if (overlay.currencyRowsContainer.visibility == View.VISIBLE) {
-            assertEquals("No currency rows should appear after clear", 0, overlay.currencyRowsContainer.childCount)
-        }
+        // ASSERT: No currency rows appear (cleared query, OLD rejected)
+        assertTrue("No stale rows after clear", 
+            overlay.currencyRowsContainer.visibility == View.GONE || overlay.currencyRowsContainer.childCount == 0)
     }
 
     @Test
-    fun `production async - dismiss while currency pending does not crash`() {
-        // Tests that dismissing overlay during async evaluation doesn't crash
-        // Main goal: verify no crash when async completes after dismiss
+    fun `R4 controlled - dismiss, OLD completion arrives after, no resurrection`() {
+        // PROVES: Dismissing before OLD completes doesn't resurrect overlay or show stale results
         
-        launchWithFakeRates()
+        LauncherPrefs(context).apply {
+            searchCurrencyEnabled = true
+            setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
+        }
+        
+        val controllableCache = com.meowgi.launcher710.util.ControllableFakeCurrencyRatesCache()
+        
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        looper.idle()
+        
+        field = activity.findViewById(R.id.searchInputInBar)
+        overlay = activity.findViewById(R.id.searchOverlay)
+        overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
+        overlay.testRatesCache = controllableCache
         overlay.testSynchronousUpdate = false
         
-        // Start query
+        field.setText("")
+        looper.idle()
+        drainStarted()
+        
+        // ESTABLISH: Block request
+        controllableCache.blockNext()
+        
+        // Start query - blocks at getRates()
         field.setText("100 usd to try")
         field.setSelection(field.text.length)
+        looper.idle()
         
-        // Hide overlay before async completes (simulate dismiss)
+        // BOUNDARY: Dismiss via overlay.show()'s inverse (session reset)
         overlay.visibility = View.GONE
-        settle()
+        looper.idle()
         
-        // Let any pending async work complete
-        repeat(20) {
+        // RELEASE: Let OLD query complete after dismiss
+        controllableCache.release()
+        
+        // Process OLD completion
+        repeat(10) {
             looper.idle()
             shadowOf(android.os.Looper.getMainLooper()).idle()
             Thread.sleep(5)
         }
         
-        // Primary assertion: no crash occurred
-        // If we got here, async post() didn't crash on hidden overlay
-        assertTrue("Test completed without crash", true)
+        // ASSERT: Overlay still dismissed, no resurrection
+        assertEquals("Overlay still GONE after OLD completes", View.GONE, overlay.visibility)
+        
+        // Even if we check internal state, no stale results stored
+        assertTrue("No stale currency rows", overlay.currencyRowsContainer.childCount == 0)
     }
 
     @Test
