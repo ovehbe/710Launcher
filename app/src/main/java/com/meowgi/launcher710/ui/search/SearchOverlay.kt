@@ -1287,6 +1287,12 @@ class SearchOverlay @JvmOverloads constructor(
         
         if (calculatorRow.visibility != VISIBLE || calculatorText.text.toString() != displayText) {
             clearNavSelection()
+            // Auto-select calculator so Enter key works immediately
+            val rows = navTargetRows()
+            val calcIndex = rows.indexOfFirst { it.firstOrNull() == NavTarget.Calculator }
+            if (calcIndex >= 0) {
+                navPos = NavPos(calcIndex, 0)
+            }
         }
         calculatorRow.visibility = VISIBLE
         calculatorText.text = displayText
@@ -1433,6 +1439,12 @@ class SearchOverlay @JvmOverloads constructor(
         
         if (currencyRowsContainer.visibility != VISIBLE) {
             clearNavSelection()
+            // Auto-select first currency result so Enter key works immediately
+            val rows = navTargetRows()
+            val currencyIndex = rows.indexOfFirst { it.firstOrNull() is NavTarget.Currency }
+            if (currencyIndex >= 0) {
+                navPos = NavPos(currencyIndex, 0)
+            }
         }
         currencyRowsContainer.visibility = VISIBLE
     }

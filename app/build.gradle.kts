@@ -15,8 +15,8 @@ android {
         applicationId = "com.meowgi.launcher710"
         minSdk = 26
         targetSdk = 34
-        versionCode = 43
-        versionName = "1.9.9"
+        versionCode = 44
+        versionName = "1.9.10"
     }
 
     signingConfigs {
