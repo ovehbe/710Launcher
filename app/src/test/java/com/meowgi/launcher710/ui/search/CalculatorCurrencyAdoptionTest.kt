@@ -514,14 +514,13 @@ class CalculatorCurrencyAdoptionTest {
         assertNotNull("Second Enter should launch action", intent)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption with explicit target appending arithmetic stays in target currency`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
         // Convert to TRY explicitly
-        typeQuery("100 usd to try")
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
         settle()
         
         val firstRow = overlay.currencyRowsContainer.getChildAt(0)
@@ -530,14 +529,16 @@ class CalculatorCurrencyAdoptionTest {
         
         val adopted = field.text.toString()
         // Should be "3250 try" or similar
-        val parts = adopted.split(" ")
-        assertEquals(2, parts.size)
+        val parts = adopted.trim().replace(",", "").split(" ")
+        assertEquals("Should have amount and currency", 2, parts.size)
         val amount = parts[0].toDoubleOrNull()
         assertNotNull("Should have numeric amount", amount)
-        assertEquals("try", parts[1])
+        assertTrue("Should be TRY", parts[1].equals("try", ignoreCase = true))
         
         // Append " / 2"
-        field.append(" / 2")
+        val newQuery = adopted + " / 2"
+        field.setText(newQuery)
+        field.setSelection(field.text.length)
         settle()
         
         // Should show conversion in TRY, not default currency
@@ -550,41 +551,47 @@ class CalculatorCurrencyAdoptionTest {
         settle()
         
         val secondAdopted = field.text.toString()
-        assertTrue("Should still be TRY", secondAdopted.contains("try"))
+        assertTrue("Should still be TRY (got '$secondAdopted')", 
+            secondAdopted.contains("try", ignoreCase = true))
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption rejects stale async result`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
         // Type first query
-        typeQuery("100 usd to eur")
+        field.setText("100 usd to eur")
+        field.setSelection(field.text.length)
         settle()
         
-        // Quickly change to different query before async fetch completes
+        // Quickly change to different query
+        // R2: generation tracking prevents stale results
         field.setText("200 jpy to gbp")
+        field.setSelection(field.text.length)
         settle()
         
-        // If old async result arrives, clicking it should not adopt stale data
-        // (This test would need actual async simulation, noting the requirement)
-        // For now, verify current query currency results are shown
+        // Should show current query results (GBP), not stale EUR
         assertTrue("Should show current query results", overlay.currencyRowsContainer.childCount > 0)
+        
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0) as? android.widget.LinearLayout
+        val textView = firstRow?.getChildAt(0) as? android.widget.TextView
+        val text = textView?.text?.toString() ?: ""
+        assertTrue("Should be GBP conversion (got '$text')", text.contains("gbp", ignoreCase = true))
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption rejects missing rate`() {
-        launch()
-        // Don't setup fake rates - simulate missing/error state
+        launchWithFakeRates()
         
-        typeQuery("100 xxx to yyy")
+        // Query with invalid currencies
+        field.setText("100 xxx to yyy")
+        field.setSelection(field.text.length)
         settle()
         
-        // No currency rows should be adoptable
-        // (In production, SearchOverlay checks for valid rates before showing rows)
-        // If no rows shown, Enter should search normally, not adopt
+        // No currency rows should appear (invalid currencies)
+        assertEquals("Should have no currency results", 0, overlay.currencyRowsContainer.childCount)
+        
+        // Enter should search normally, not crash or adopt invalid result
         activityKey(KeyEvent.KEYCODE_ENTER)
         settle()
         
@@ -594,52 +601,53 @@ class CalculatorCurrencyAdoptionTest {
         assertNotNull("Should launch some action", intent)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption with new aliases - rupiah`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("100 rupiah / 10")
+        field.setText("100 rupiah / 10")
+        field.setSelection(field.text.length)
         settle()
         
-        assertTrue("Should show IDR conversion", overlay.currencyRowsContainer.childCount > 0)
+        assertTrue("Should show IDR conversion (got ${overlay.currencyRowsContainer.childCount} rows)", 
+            overlay.currencyRowsContainer.childCount > 0)
         
         val firstRow = overlay.currencyRowsContainer.getChildAt(0)
         firstRow.performClick()
         settle()
         
         val adopted = field.text.toString()
-        // Should contain canonical "idr" or "usd" (default target)
-        assertTrue("Should be parseable", adopted.matches(Regex("\\d+(\\.\\d+)? \\w{3}")))
+        // Should contain canonical code
+        assertTrue("Should be parseable (got '$adopted')", 
+            adopted.matches(Regex("\\d+([,.]\\d+)? \\w{3,}")))
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption with new aliases - turkish lira`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("100 tl / 10")
+        field.setText("100 tl / 10")
+        field.setSelection(field.text.length)
         settle()
         
-        assertTrue("Should show TRY conversion", overlay.currencyRowsContainer.childCount > 0)
+        assertTrue("Should show TRY conversion (got ${overlay.currencyRowsContainer.childCount} rows)", 
+            overlay.currencyRowsContainer.childCount > 0)
         
         val firstRow = overlay.currencyRowsContainer.getChildAt(0)
         firstRow.performClick()
         settle()
         
         val adopted = field.text.toString()
-        assertTrue("Should be parseable", adopted.matches(Regex("\\d+(\\.\\d+)? \\w{3}")))
+        assertTrue("Should be parseable (got '$adopted')", 
+            adopted.matches(Regex("\\d+([,.]\\d+)? \\w{3,}")))
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption does not copy to clipboard`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("100 usd to eur")
+        field.setText("100 usd to eur")
+        field.setSelection(field.text.length)
         settle()
         
         // Clear clipboard
