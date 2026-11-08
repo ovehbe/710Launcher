@@ -155,7 +155,13 @@ class SearchOverlay @JvmOverloads constructor(
     private val aiContentContainer: LinearLayout
     private val aiError: TextView
     private val aiSettingsLink: TextView
-    internal val voiceProgress: ProgressBar  // Internal for testing
+    // Unified progress indicator: replaces magnifier icon during voice/AI operations
+    private var progressIndicator: ProgressBar? = null
+    private var magnifierIcon: ImageView? = null
+    
+    // Test-accessible property for progress visibility (unified indicator state)
+    internal val voiceProgressVisibility: Int
+        get() = progressIndicator?.visibility ?: GONE
     private val adapter: AppAdapter
     private val font: Typeface? = ResourcesCompat.getFont(context, R.font.bbalphas)
 
@@ -324,11 +330,7 @@ class SearchOverlay @JvmOverloads constructor(
         isFocusable = false
         descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
 
-        // Voice progress indicator will be placed in search bar (LauncherActivity), not here
-        voiceProgress = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
-            indeterminateTintList = android.content.res.ColorStateList.valueOf(prefs.accentColor)
-            visibility = GONE
-        }
+        // Progress indicator will be set by LauncherActivity (unified voice/AI indicator)
 
         dialRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -862,6 +864,33 @@ class SearchOverlay @JvmOverloads constructor(
     fun setSearchContextLabel(label: String) {
         searchContextLabel = label
         extendedSearchBtn.text = "$label search"
+    }
+
+    /**
+     * Set unified progress indicator that replaces magnifier icon during voice/AI operations.
+     * Called once by LauncherActivity during setup.
+     */
+    fun setProgressIndicator(progress: ProgressBar, magnifier: ImageView) {
+        progressIndicator = progress
+        magnifierIcon = magnifier
+    }
+
+    /**
+     * Show progress indicator in place of magnifier icon.
+     * Used during voice recognition and AI requests.
+     */
+    private fun showProgress() {
+        magnifierIcon?.visibility = GONE
+        progressIndicator?.visibility = VISIBLE
+    }
+
+    /**
+     * Hide progress indicator and restore magnifier icon.
+     * Called when voice/AI operations complete.
+     */
+    private fun hideProgress() {
+        progressIndicator?.visibility = GONE
+        magnifierIcon?.visibility = VISIBLE
     }
 
     fun show() {
@@ -1755,7 +1784,7 @@ class SearchOverlay @JvmOverloads constructor(
             voiceIsOwner = true
             lastVoiceResult = ""
             // Show voice progress indicator
-            voiceProgress.visibility = VISIBLE
+            showProgress()
             // Expect potential IME commit from activation gesture (hold-0)
             // Will reject first change if it's appending single '0', but allow genuine edits
             activationGestureCommitExpected = true
@@ -1763,7 +1792,7 @@ class SearchOverlay @JvmOverloads constructor(
             addVoiceDiagnostic("Voice is now owner, expecting activation commit, prefix len=${activationExpectedPrefix.length}")
         } else {
             // Failed to start - ensure progress is hidden
-            voiceProgress.visibility = GONE
+            hideProgress()
         }
         return started
     }
@@ -1775,7 +1804,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceDictationHelper?.stopListening()
         voiceIsOwner = false
         voiceTypedPrefix = ""
-        voiceProgress.visibility = GONE
+        hideProgress()
     }
     
     /**
@@ -1786,7 +1815,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceIsOwner = false
         lastVoiceResult = ""
         voiceTypedPrefix = ""
-        voiceProgress.visibility = GONE
+        hideProgress()
     }
     
     /**
@@ -1830,14 +1859,14 @@ class SearchOverlay @JvmOverloads constructor(
             addVoiceDiagnostic("Manual edit detected, canceling voice ownership")
             voiceIsOwner = false
             voiceDictationHelper?.stopListening()
-            voiceProgress.visibility = GONE
+            hideProgress()
         }
     }
     
     private fun handleVoiceEndOfSpeech() {
         addVoiceDiagnostic("handleVoiceEndOfSpeech: visibility=${if (visibility == VISIBLE) "VISIBLE" else "GONE"}, voiceIsOwner=$voiceIsOwner")
         // Hide progress indicator when listening stops, but keep voice ownership for final results
-        voiceProgress.visibility = GONE
+        hideProgress()
     }
     
     private fun handleVoicePartialResult(text: String) {
@@ -1873,7 +1902,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceIsOwner = false
         // Hide progress indicator unconditionally (terminal result cleanup)
         // onEndOfSpeech normally hides it first, but Android doesn't guarantee that callback order
-        voiceProgress.visibility = GONE
+        hideProgress()
         // Append voice text to saved prefix, update field via callback
         // TextWatcher will call applyQuery, so don't call it here (avoids duplicate)
         updatingFromVoice = true
@@ -1890,7 +1919,7 @@ class SearchOverlay @JvmOverloads constructor(
         voiceIsOwner = false
         lastVoiceResult = ""
         voiceTypedPrefix = ""
-        voiceProgress.visibility = GONE
+        hideProgress()
         // Only show error for permission/availability issues, not timeouts
         if (error.isNotEmpty()) {
             android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_SHORT).show()

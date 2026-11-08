@@ -137,20 +137,39 @@
                     android:fontFamily="@font/bbalphas" />
             </FrameLayout>
 
-            <ImageView
-                android:id="@+id/btnSearch"
+            <!-- Search button container: shows magnifier icon or progress indicator -->
+            <FrameLayout
+                android:id="@+id/btnSearchContainer"
                 android:layout_width="44dp"
                 android:layout_height="match_parent"
-                android:src="@drawable/ic_search_custom"
-                android:contentDescription="Search"
-                android:scaleType="fitCenter"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp"
-                android:alpha="0.7"
-                android:scaleX="0.9"
-                android:scaleY="0.9" />
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/btnSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:src="@drawable/ic_search_custom"
+                    android:contentDescription="Search"
+                    android:scaleType="fitCenter"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:alpha="0.7"
+                    android:scaleX="0.9"
+                    android:scaleY="0.9"
+                    android:visibility="visible" />
+
+                <ProgressBar
+                    android:id="@+id/progressIndicator"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_gravity="center"
+                    android:indeterminate="true"
+                    android:alpha="0.7"
+                    android:visibility="gone" />
+            </FrameLayout>
         </LinearLayout>
 
         <View

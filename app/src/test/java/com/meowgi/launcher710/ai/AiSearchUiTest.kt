@@ -276,7 +276,7 @@ class AiSearchUiTest {
     @Test
     fun longPressOnTheSearchIconAsksAiAboutTheQuery() {
         val (activity, o) = launcherWithQuery(aiEnabled = true, altEnter = false)
-        val icon = activity.findViewById<View>(R.id.btnSearch)
+        val icon = activity.findViewById<View>(R.id.btnSearchContainer)
         assertTrue(icon.performLongClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(AiState.Failed("hj", "AI answers are off."), o.aiSession.state)
@@ -325,7 +325,7 @@ class AiSearchUiTest {
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         shadowOf(Looper.getMainLooper()).idle()
         val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
-        assertTrue(activity.findViewById<View>(R.id.btnSearch).performLongClick())
+        assertTrue(activity.findViewById<View>(R.id.btnSearchContainer).performLongClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(context.getString(R.string.ai_no_query), ShadowToast.getTextOfLatestToast())
         assertFalse(o.aiSession.isActive)
@@ -338,7 +338,7 @@ class AiSearchUiTest {
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         shadowOf(Looper.getMainLooper()).idle()
         val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
-        assertTrue(activity.findViewById<View>(R.id.btnSearch).performClick())
+        assertTrue(activity.findViewById<View>(R.id.btnSearchContainer).performClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(View.VISIBLE, o.visibility)
         assertFalse(o.aiSession.isActive)

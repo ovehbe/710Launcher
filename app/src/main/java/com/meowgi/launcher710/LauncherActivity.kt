@@ -686,7 +686,7 @@ class LauncherActivity : AppCompatActivity() {
             nextFocusForwardId = R.id.btnSearch
             nextFocusDownId = R.id.tabBar
         }
-        findViewById<View>(R.id.btnSearch).apply {
+        findViewById<View>(R.id.btnSearchContainer).apply {
             isFocusable = true
             isFocusableInTouchMode = false
             nextFocusForwardId = R.id.btnSoundProfile
@@ -752,10 +752,10 @@ class LauncherActivity : AppCompatActivity() {
     private fun refreshClickHighlights() {
         val ripple = prefs.getClickHighlightRipple(this)
         applyClickHighlight(findViewById(R.id.actionBarCenterTouchOverlay))
-        applyClickHighlight(findViewById(R.id.btnSearch))
+        applyClickHighlight(findViewById(R.id.btnSearchContainer))
         applyClickHighlight(findViewById(R.id.btnSoundProfile))
         findViewById<View>(R.id.actionBarCenterTouchOverlay).defaultFocusHighlightEnabled = false
-        findViewById<View>(R.id.btnSearch).defaultFocusHighlightEnabled = false
+        findViewById<View>(R.id.btnSearchContainer).defaultFocusHighlightEnabled = false
         findViewById<View>(R.id.btnSoundProfile).defaultFocusHighlightEnabled = false
         headerView.dateText.apply {
             isClickable = true
@@ -1169,20 +1169,11 @@ class LauncherActivity : AppCompatActivity() {
         }
         searchInputInBar.visibility = View.GONE
         
-        // Add voice progress indicator to search bar (trailing edge, non-overlapping)
-        val actionBarCenter = findViewById<android.widget.FrameLayout>(R.id.actionBarCenter)
-        val voiceProgress = searchOverlay.voiceProgress
-        // Remove from any previous parent
-        (voiceProgress.parent as? android.view.ViewGroup)?.removeView(voiceProgress)
-        // Add to action bar center with trailing position
-        val layoutParams = android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
-            marginEnd = dp(8)
-        }
-        actionBarCenter.addView(voiceProgress, layoutParams)
+        // Set up unified progress indicator for voice and AI operations
+        // Progress replaces magnifier icon in-place during voice/AI, restores when idle
+        val progressIndicator = findViewById<android.widget.ProgressBar>(R.id.progressIndicator)
+        val magnifierIcon = findViewById<android.widget.ImageView>(R.id.btnSearch)
+        searchOverlay.setProgressIndicator(progressIndicator, magnifierIcon)
     }
 
     /**
@@ -1438,8 +1429,8 @@ class LauncherActivity : AppCompatActivity() {
             soundProfileOverlay.onDismissed = { updateSoundProfileIcon() }
             soundProfileOverlay.show()
         }
-        applyClickHighlight(findViewById(R.id.btnSearch))
-        findViewById<View>(R.id.btnSearch).apply {
+        applyClickHighlight(findViewById(R.id.btnSearchContainer))
+        findViewById<View>(R.id.btnSearchContainer).apply {
             setOnClickListener { showSearchPageAware() }
             setOnLongClickListener { triggerAiSearch(); true }
         }
