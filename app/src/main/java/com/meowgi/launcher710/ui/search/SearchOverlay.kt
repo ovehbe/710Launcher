@@ -333,6 +333,10 @@ class SearchOverlay @JvmOverloads constructor(
         // Format: "{amount} {code}" (lowercase code, no grouping)
         val amount = formatCurrencyAmount(result.toAmount)
         val code = result.toCurrency.lowercase()
+        
+        // R1: Track adopted currency for chaining
+        adoptedCurrencyCode = result.toCurrency
+        
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke("$amount $code")
     }
