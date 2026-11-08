@@ -155,14 +155,17 @@ object CurrencyConverter {
         // Determine from/to currencies based on positions
         val fromCurrency: String
         val toCurrency: String?
-        val amountEnd: Int
+        val firstCurrencyStart: Int
+        val firstCurrencyEnd: Int
         
         when {
             currencyMatches.size == 1 -> {
-                // Single currency: "100 usd" or "100usd"
+                // Single currency: "100 usd" or "100 yen / 10"
                 fromCurrency = currencyMatches[0].second
                 toCurrency = null
-                amountEnd = currencyMatches[0].first
+                firstCurrencyStart = currencyMatches[0].first
+                // Find the actual end position of the currency text in normalized string
+                firstCurrencyEnd = findCurrencyEndPosition(normalized, currencyMatches[0])
             }
             currencyMatches.size == 2 -> {
                 // Two currencies
@@ -173,12 +176,14 @@ object CurrencyConverter {
                 if (keywordPos != null && keywordPos!! > first.first && keywordPos!! < second.first) {
                     fromCurrency = first.second
                     toCurrency = second.second
-                    amountEnd = first.first
+                    firstCurrencyStart = first.first
+                    firstCurrencyEnd = findCurrencyEndPosition(normalized, first)
                 } else {
                     // No keyword or keyword not between them - assume "100 usd try"
                     fromCurrency = first.second
                     toCurrency = second.second
-                    amountEnd = first.first
+                    firstCurrencyStart = first.first
+                    firstCurrencyEnd = findCurrencyEndPosition(normalized, first)
                 }
             }
             else -> {
@@ -187,14 +192,40 @@ object CurrencyConverter {
             }
         }
         
-        if (amountEnd == 0) return null
+        if (firstCurrencyStart == 0) return null
         
-        // Split into tokens for old logic compatibility
-        val tokens = normalized.split(Regex("\\s+"))
-        if (tokens.isEmpty()) return null
+        // Extract amount: left part (before currency) + right part (arithmetic after currency)
+        val leftPart = normalized.substring(0, firstCurrencyStart).trim()
         
-        // Extract amount string (everything before first currency)
-        val amountStr = normalized.substring(0, amountEnd)
+        // Extract right part: arithmetic after currency (before keyword or second currency)
+        var rightEnd = normalized.length
+        if (toCurrency != null) {
+            // Find position of "to"/"in" keyword or second currency, whichever comes first
+            if (keywordPos != null && keywordPos!! > firstCurrencyEnd) {
+                rightEnd = keywordPos!!
+            } else {
+                // Find second currency position
+                if (currencyMatches.size >= 2) {
+                    rightEnd = currencyMatches[1].first
+                }
+            }
+        }
+        
+        val rightPart = normalized.substring(firstCurrencyEnd, rightEnd).trim()
+        
+        // Filter rightPart to only include arithmetic operators, numbers, whitespace, parens
+        // Stop at first keyword or letter that isn't an operator
+        val arithmeticChars = setOf('+', '-', '*', '/', '%', '(', ')', '.', ',', ' ', '\t')
+        val rightArithmetic = rightPart.takeWhile { ch ->
+            ch.isDigit() || ch in arithmeticChars
+        }.trim()
+        
+        // Combine left + right arithmetic
+        val amountStr = if (rightArithmetic.isNotEmpty()) {
+            "$leftPart $rightArithmetic".trim()
+        } else {
+            leftPart
+        }
         
         // Apply BB keyboard mapping to amount string
         val mappedAmount = mapAmountString(amountStr, layout) ?: return null
@@ -203,6 +234,29 @@ object CurrencyConverter {
         val amount = evaluateAmount(mappedAmount) ?: return null
         
         return CurrencyQuery(amount, fromCurrency, toCurrency)
+    }
+
+    /**
+     * Find the end position of a currency match in the normalized string.
+     * For ISO codes, it's start + 3.
+     * For name aliases, we need to find which name was matched.
+     */
+    private fun findCurrencyEndPosition(normalized: String, match: Pair<Int, String>): Int {
+        val start = match.first
+        val code = match.second
+        
+        // Check if this was matched by a currency name
+        for ((name, aliasCode) in CURRENCY_NAME_ALIASES) {
+            if (aliasCode == code && start + name.length <= normalized.length) {
+                val substring = normalized.substring(start, start + name.length)
+                if (substring == name) {
+                    return start + name.length
+                }
+            }
+        }
+        
+        // Otherwise, it's a 3-letter ISO code
+        return start + 3
     }
 
     /**
