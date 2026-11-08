@@ -319,12 +319,8 @@ class CalculatorCurrencyAdoptionTest {
         
         fakeRatesCache = FakeCurrencyRatesCache()
         
-        // Full lifecycle for coroutines
-        activity = Robolectric.buildActivity(LauncherActivity::class.java)
-            .create()
-            .start()
-            .resume()
-            .get()
+        // Use .setup() like other working tests (equivalent to create().start().resume().visible())
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         
         looper.idle()
         shadowOf(android.os.Looper.getMainLooper()).idle()
@@ -437,15 +433,25 @@ class CalculatorCurrencyAdoptionTest {
         field.setSelection(field.text.length)
         settle()
         
-        // Click first currency result (IME adoption works via click, not DPAD in this test)
+        // Navigate to currency result by manually setting navigation (DPAD doesn't wire in tests)
         assertTrue("Should have currency results", overlay.currencyRowsContainer.childCount > 0)
-        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
-        firstRow.performClick()
+        
+        // Manually set navigation to first currency row (simulates DPAD_DOWN)
+        // This is the minimal setup needed to test the IME action path
+        overlay.navigate(1, 0)  // Move down one row to currency
+        settle()
+        
+        // Now trigger IME action - this should activate the selected nav target
+        // This exercises the actual EditorAction callback path
+        imeAction(EditorInfo.IME_ACTION_SEARCH)
         settle()
         
         val adopted = field.text.toString()
         assertTrue("Should contain 'gbp' (got '$adopted')", adopted.contains("gbp", ignoreCase = true))
         assertEquals("Cursor at end", adopted.length, field.selectionStart)
+        
+        // Verify no browser launch (adoption should not launch)
+        assertNull("No browser launch on adoption", shadowOf(activity).nextStartedActivity)
     }
 
     @Test
@@ -487,6 +493,52 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     @Test
+    fun `physical Enter with repeats triggers exactly once - no double trigger`() {
+        launchWithFakeRates()
+        
+        field.setText("100 rupiah to usd")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Adopt currency result
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
+        firstRow.performClick()
+        settle()
+        
+        val adopted = field.text.toString()
+        assertTrue("Should contain 'usd'", adopted.contains("usd", ignoreCase = true))
+        
+        // Test Enter DOWN, repeated DOWN (held), then UP
+        // Should launch EXACTLY ONCE, not once per repeat or on ACTION_UP
+        
+        // Clear any previous intents
+        while (shadowOf(activity).nextStartedActivity != null) { /* drain */ }
+        
+        // Press Enter DOWN (initial press)
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, 0))
+        settle()
+        
+        // Simulate key being held (repeat events with increasing repeatCount)
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 1, 0))  // repeat 1
+        settle()
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 2, 0))  // repeat 2
+        settle()
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 3, 0))  // repeat 3
+        settle()
+        
+        // Release Enter UP
+        activity.dispatchKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0, 0))
+        settle()
+        
+        // Should have exactly ONE intent launched (not multiple from repeats or ACTION_UP)
+        var intentCount = 0
+        while (shadowOf(activity).nextStartedActivity != null) {
+            intentCount++
+        }
+        assertEquals("Enter DOWN+repeats+UP should launch exactly ONE action (tests repeat detection and ACTION_UP filtering)", 1, intentCount)
+    }
+
+    @Test
     fun `currency adoption preserves unit - no bounce on second Enter`() {
         launchWithFakeRates()
         
@@ -504,8 +556,8 @@ class CalculatorCurrencyAdoptionTest {
         
         // Second Enter should search, not re-convert
         // (User has adopted "X usd", next Enter should search that value, not bounce to default)
-        // Directly trigger extended search (activityKey doesn't wire properly in tests)
-        overlay.performExtendedSearch()
+        // Test full key event path: DOWN then UP
+        activityKey(KeyEvent.KEYCODE_ENTER)
         settle()
         
         // Should launch search (or dial if numeric), not re-adopt a different currency
@@ -591,8 +643,8 @@ class CalculatorCurrencyAdoptionTest {
         assertEquals("Should have no currency results", 0, overlay.currencyRowsContainer.childCount)
         
         // Enter should search normally, not crash or adopt invalid result
-        // Directly trigger extended search (activityKey doesn't wire properly in tests)
-        overlay.performExtendedSearch()
+        // Test full key event path: DOWN then UP
+        activityKey(KeyEvent.KEYCODE_ENTER)
         settle()
         
         // Should launch search, not crash or adopt invalid result
