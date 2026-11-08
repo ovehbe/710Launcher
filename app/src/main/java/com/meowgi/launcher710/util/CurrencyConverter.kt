@@ -237,6 +237,24 @@ object CurrencyConverter {
         
         val rightPart = normalized.substring(firstCurrencyEnd, rightEnd).trim()
         
+        // R3: Validate text after explicit target currency (when using "to"/"in" keyword)
+        if (toCurrency != null && keywordPos != null) {
+            // Find where target currency ends
+            val targetCurrEnd = if (currencyMatches.size >= 2) {
+                findCurrencyEndPosition(normalized, currencyMatches[1])
+            } else {
+                normalized.length
+            }
+            
+            if (targetCurrEnd < normalized.length) {
+                val afterTarget = normalized.substring(targetCurrEnd).trim()
+                if (afterTarget.isNotEmpty()) {
+                    // Text/arithmetic after explicit target - reject
+                    return null
+                }
+            }
+        }
+        
         // Validate rightPart contains only arithmetic: operators, numbers, whitespace, parens
         // Reject if there's trailing non-arithmetic text or incomplete expressions
         val arithmeticChars = setOf('+', '-', '*', '/', '%', '(', ')', '.', ',', ' ', '\t')
@@ -249,6 +267,16 @@ object CurrencyConverter {
             rightPart.trim()
         } else {
             ""
+        }
+        
+        // R3: Check for ambiguous multi-currency arithmetic
+        // Shorthand "100 usd eur" is OK, but "100 usd + 50 eur" is ambiguous
+        if (toCurrency != null && keywordPos == null && currencyMatches.size == 2) {
+            // Two currencies without keyword (shorthand) - reject if arithmetic between them
+            if (rightArithmetic.isNotEmpty() && rightArithmetic.any { it in setOf('+', '-', '*', '/', '%') }) {
+                // Arithmetic between currencies without explicit "to" - reject
+                return null
+            }
         }
         
         // Combine left + right arithmetic

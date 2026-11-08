@@ -13,7 +13,10 @@ class CurrencyMultiUnitArithmeticTest {
     private val sampleRates = mapOf(
         "USD" to 1.0,
         "EUR" to 0.85,
-        "GBP" to 0.73
+        "GBP" to 0.73,
+        "TRY" to 32.5,
+        "JPY" to 149.0,
+        "IDR" to 15420.0
     )
     
     @Test
