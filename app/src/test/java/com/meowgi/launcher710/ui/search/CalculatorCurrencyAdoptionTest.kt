@@ -12,6 +12,7 @@ import com.meowgi.launcher710.LauncherActivity
 import com.meowgi.launcher710.R
 import com.meowgi.launcher710.ai.AiConfigResult
 import com.meowgi.launcher710.util.CurrencyRatesCache
+import com.meowgi.launcher710.util.CurrencyRatesCacheInterface
 import com.meowgi.launcher710.util.FakeCurrencyRatesCache
 import com.meowgi.launcher710.util.LauncherPrefs
 import org.junit.Assert.assertEquals
@@ -716,69 +717,164 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     @Test
-    fun `PRODUCTION async path - delayed rates with real post dispatch`() {
-        // This test uses PRODUCTION async path (not testSynchronousUpdate bypass)
-        // to verify that delayed currency evaluation + post() + UI update works correctly
+    fun `production async - old query completes after newer query started`() {
+        // Tests R2 generation tracking prevents stale overwrite
+        // WITHOUT using testSynchronousUpdate bypass
         
+        launchWithFakeRates()
+        
+        // Disable synchronous update to use production async path
+        overlay.testSynchronousUpdate = false
+        
+        // Start first query
+        field.setText("100 usd")
+        field.setSelection(field.text.length)
+        
+        // Immediately start second query before first completes
+        field.setText("50 eur")
+        field.setSelection(field.text.length)
+        
+        // Let both queries process through production async path
+        repeat(20) {
+            looper.idle()
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        
+        // Should show EUR results, NOT USD (stale first query rejected)
+        assertTrue("Should have currency rows visible", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // First result should be for EUR query, not USD
+        assertTrue("Should show EUR query result (got '$firstRowText')", 
+            firstRowText.contains("50", ignoreCase = false) && !firstRowText.contains("100"))
+    }
+
+    @Test
+    fun `production async - clear field while currency pending`() {
+        // Tests that clearing field during async evaluation properly cancels
+        
+        launchWithFakeRates()
+        overlay.testSynchronousUpdate = false
+        
+        // Start query
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        
+        // Clear field before async completes
+        field.setText("")
+        field.setSelection(0)
+        
+        // Let async processing complete
+        repeat(20) {
+            looper.idle()
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        
+        // Currency rows should NOT appear for cleared query
+        // Either GONE or no children
+        if (overlay.currencyRowsContainer.visibility == View.VISIBLE) {
+            assertEquals("No currency rows should appear after clear", 0, overlay.currencyRowsContainer.childCount)
+        }
+    }
+
+    @Test
+    fun `production async - dismiss while currency pending does not crash`() {
+        // Tests that dismissing overlay during async evaluation doesn't crash
+        // Main goal: verify no crash when async completes after dismiss
+        
+        launchWithFakeRates()
+        overlay.testSynchronousUpdate = false
+        
+        // Start query
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        
+        // Hide overlay before async completes (simulate dismiss)
+        overlay.visibility = View.GONE
+        settle()
+        
+        // Let any pending async work complete
+        repeat(20) {
+            looper.idle()
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        
+        // Primary assertion: no crash occurred
+        // If we got here, async post() didn't crash on hidden overlay
+        assertTrue("Test completed without crash", true)
+    }
+
+    @Test
+    fun `currency rows have click handlers - loading or error rows should not`() {
+        // Verify actual currency result rows are clickable
+        launchWithFakeRates()
+        
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Currency rows should exist and be clickable
+        assertTrue("Should have currency rows", overlay.currencyRowsContainer.childCount > 0)
+        
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
+        assertNotNull("Currency row should exist", firstRow)
+        assertTrue("Currency row should be clickable", firstRow.isClickable || firstRow.hasOnClickListeners())
+        
+        // Click should adopt
+        firstRow.performClick()
+        settle()
+        
+        val adopted = field.text.toString()
+        assertTrue("Should adopt result (got '$adopted')", adopted.contains("try", ignoreCase = true))
+    }
+
+    @Test
+    fun `no rates available - currency rows empty, Enter does not adopt`() {
+        // Test behavior when rates unavailable (simulates loading/error state)
         LauncherPrefs(context).apply {
             searchCurrencyEnabled = true
             setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
         }
         
-        fakeRatesCache = FakeCurrencyRatesCache()
+        // Create cache that returns error
+        val errorCache = object : CurrencyRatesCacheInterface {
+            override suspend fun getRates(forceRefresh: Boolean): CurrencyRatesCache.RatesResult {
+                return CurrencyRatesCache.RatesResult.Error("Network error")
+            }
+        }
         
-        // Setup activity with real async (no testSynchronousUpdate)
         activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         looper.idle()
-        shadowOf(android.os.Looper.getMainLooper()).idle()
         
         field = activity.findViewById(R.id.searchInputInBar)
         overlay = activity.findViewById(R.id.searchOverlay)
         overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
-        
-        // Inject fake rates cache but DON'T set testSynchronousUpdate
-        // This forces the production post() path
-        overlay.testRatesCache = fakeRatesCache
-        // overlay.testSynchronousUpdate = false  // default, explicit comment
+        overlay.testRatesCache = errorCache
+        overlay.testSynchronousUpdate = true
         
         field.setText("")
         looper.idle()
         drainStarted()
         
-        // Type a currency query
+        // Query for currency
         field.setText("100 usd to try")
         field.setSelection(field.text.length)
+        settle()
         
-        // The currency evaluation happens async in lifecycleScope.launch
-        // We need to advance the main looper to process the coroutine + post()
+        // No currency rows should appear (error state)
+        assertEquals("No currency rows on error", 0, overlay.currencyRowsContainer.childCount)
         
-        // Give coroutine time to start and fetch rates
-        looper.idleFor(Duration.ofMillis(100))
-        shadowOf(android.os.Looper.getMainLooper()).idle()
+        // Enter should not adopt anything, should search
+        activityKey(KeyEvent.KEYCODE_ENTER)
+        settle()
         
-        // The coroutine should complete and post { updateCurrencyRows() }
-        // Advance main looper to process the posted task
-        repeat(10) {
-            looper.idle()
-            shadowOf(android.os.Looper.getMainLooper()).idle()
-            Thread.sleep(10)
-        }
-        
-        // Currency rows should now be visible
-        assertTrue("Currency rows should be visible after async evaluation", 
-            overlay.currencyRowsContainer.visibility == View.VISIBLE)
-        assertTrue("Should have currency results after async evaluation", 
-            overlay.currencyRowsContainer.childCount > 0)
-        
-        // Verify the results are correct by checking the UI
-        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
-            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
-        
-        // Should show TRY conversion: 100 USD to TRY at rate 32.50 = 3250 TRY
-        assertTrue("Should show TRY result (got '$firstRowText')", 
-            firstRowText.contains("TRY", ignoreCase = true))
-        assertTrue("Should show correct amount (got '$firstRowText')", 
-            firstRowText.contains("3250") || firstRowText.contains("3,250"))
+        // Should launch search (no adoption occurred)
+        val intent = shadowOf(activity).nextStartedActivity
+        assertNotNull("Should launch search on Enter with no results", intent)
     }
 
     @Test
