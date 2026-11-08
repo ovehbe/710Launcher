@@ -33,6 +33,7 @@ import com.meowgi.launcher710.util.Calculator
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.CurrencyConverter
 import com.meowgi.launcher710.util.CurrencyRatesCache
+import com.meowgi.launcher710.util.CurrencyRatesCacheInterface
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.PlainWordsCommands
@@ -127,7 +128,9 @@ private fun addVoiceDiagnostic(message: String) = VoiceDiagnostics.addVoiceDiagn
 fun getVoiceDiagnosticLog(context: Context) = VoiceDiagnostics.getDiagnosticLog(context)
 
 class SearchOverlay @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null
+    context: Context, 
+    attrs: AttributeSet? = null,
+    internal val ratesCacheForTest: CurrencyRatesCacheInterface? = null  // internal for testing
 ) : LinearLayout(context, attrs) {
 
     private companion object {
@@ -135,7 +138,7 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private val prefs = LauncherPrefs(context)
-    private val ratesCache = CurrencyRatesCache(context)
+    private val ratesCache = ratesCacheForTest ?: CurrencyRatesCache(context)
     private val lifecycleOwner: androidx.lifecycle.LifecycleOwner?
         get() = context as? androidx.lifecycle.LifecycleOwner
     private val dialRow: LinearLayout
