@@ -11,7 +11,8 @@ class CurrencyConverterTest {
         "GBP" to 0.73,
         "TRY" to 32.5,
         "JPY" to 149.0,
-        "IDR" to 15420.0
+        "IDR" to 15420.0,
+        "CNY" to 7.2
     )
 
     @Test
@@ -413,5 +414,62 @@ class CurrencyConverterTest {
         val query3 = CurrencyConverter.parse("5B jpy", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
         assertNotNull(query3)
         assertEquals(5_000_000_000.0, query3!!.amount, 0.001)
+    }
+
+    // Currency name alias tests
+    @Test
+    fun `parse recognizes yen currency name`() {
+        val query = CurrencyConverter.parse("100 yen", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query)
+        assertEquals(100.0, query!!.amount, 0.001)
+        assertEquals("JPY", query.fromCurrency)
+        assertNull(query.toCurrency)
+    }
+
+    @Test
+    fun `parse recognizes yen case insensitive`() {
+        val query1 = CurrencyConverter.parse("100 YEN", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query1)
+        assertEquals("JPY", query1!!.fromCurrency)
+        
+        val query2 = CurrencyConverter.parse("100 Yen", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query2)
+        assertEquals("JPY", query2!!.fromCurrency)
+    }
+
+    @Test
+    fun `parse recognizes dollar and euro names`() {
+        val query1 = CurrencyConverter.parse("100 dollars", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query1)
+        assertEquals(100.0, query1!!.amount, 0.001)
+        assertEquals("USD", query1.fromCurrency)
+        
+        val query2 = CurrencyConverter.parse("50 euros to usd", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query2)
+        assertEquals(50.0, query2!!.amount, 0.001)
+        assertEquals("EUR", query2.fromCurrency)
+        assertEquals("USD", query2.toCurrency)
+        
+        val query3 = CurrencyConverter.parse("25 euro", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query3)
+        assertEquals("EUR", query3!!.fromCurrency)
+    }
+
+    @Test
+    fun `parse recognizes pound and yuan names`() {
+        val query1 = CurrencyConverter.parse("100 pounds", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query1)
+        assertEquals("GBP", query1!!.fromCurrency)
+        
+        val query2 = CurrencyConverter.parse("500 yuan", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull(query2)
+        assertEquals("CNY", query2!!.fromCurrency)
+    }
+
+    @Test
+    fun `currency name requires word boundaries`() {
+        // "yen" should not match inside "hyena"
+        val query = CurrencyConverter.parse("100 hyena", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNull(query) // Should not parse as currency
     }
 }

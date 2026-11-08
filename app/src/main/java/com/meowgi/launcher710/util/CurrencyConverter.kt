@@ -20,6 +20,21 @@ import java.util.Locale
 object CurrencyConverter {
 
     /**
+     * Currency name aliases (common names mapped to ISO codes).
+     * Sorted by length descending for longest-match-first parsing.
+     */
+    private val CURRENCY_NAME_ALIASES = mapOf(
+        "dollars" to "USD",
+        "dollar" to "USD",
+        "euros" to "EUR",
+        "euro" to "EUR",
+        "pounds" to "GBP",
+        "pound" to "GBP",
+        "yuan" to "CNY",
+        "yen" to "JPY"
+    )
+
+    /**
      * A parsed currency query.
      */
     data class CurrencyQuery(
@@ -65,21 +80,58 @@ object CurrencyConverter {
         // Pattern: [amount] [from_currency] [optional: to/in] [optional: to_currency]
         // Currency codes are 3-letter words, keywords are "to" or "in"
         
-        // First, try to find currency codes and keywords in the string
-        // Currency codes are 3 consecutive letters that match available currencies
-        val currencyMatches = mutableListOf<Pair<Int, String>>()
+        // First, search for currency names (longer matches first to avoid partial matches)
+        val nameMatches = mutableListOf<Pair<Int, String>>()
+        for ((name, code) in CURRENCY_NAME_ALIASES.entries.sortedByDescending { it.key.length }) {
+            var pos = 0
+            while (pos <= normalized.length - name.length) {
+                val found = normalized.indexOf(name, pos)
+                if (found < 0) break
+                // Check word boundaries
+                val beforeOk = found == 0 || !normalized[found - 1].isLetter()
+                val afterOk = found + name.length >= normalized.length || !normalized[found + name.length].isLetter()
+                if (beforeOk && afterOk && code in availableCurrencies) {
+                    nameMatches.add(found to code)
+                    pos = found + name.length
+                } else {
+                    pos = found + 1
+                }
+            }
+        }
+        
+        // Then, find 3-letter ISO currency codes
+        val codeMatches = mutableListOf<Pair<Int, String>>()
         var i = 0
         while (i <= normalized.length - 3) {
             val threeLetters = normalized.substring(i, i + 3)
             if (threeLetters.all { it.isLetter() }) {
                 val code = threeLetters.uppercase()
                 if (code in availableCurrencies) {
-                    currencyMatches.add(i to code)
+                    codeMatches.add(i to code)
                     i += 3 // Skip past this match
                     continue
                 }
             }
             i++
+        }
+        
+        // Merge name and code matches, removing overlaps (prefer longer name matches)
+        val currencyMatches = mutableListOf<Pair<Int, String>>()
+        val allMatches = (nameMatches + codeMatches).sortedBy { it.first }
+        var lastEnd = -1
+        for (match in allMatches) {
+            if (match.first >= lastEnd) {
+                currencyMatches.add(match)
+                // Calculate match end based on original name/code length in normalized string
+                val matchedText = when {
+                    nameMatches.contains(match) -> {
+                        // Find the name that produced this code
+                        CURRENCY_NAME_ALIASES.entries.find { it.value == match.second }?.key?.length ?: 3
+                    }
+                    else -> 3 // ISO code
+                }
+                lastEnd = match.first + matchedText
+            }
         }
         
         if (currencyMatches.isEmpty()) return null
