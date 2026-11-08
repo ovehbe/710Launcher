@@ -139,6 +139,15 @@ class SearchOverlay @JvmOverloads constructor(
 
     private val prefs = LauncherPrefs(context)
     private val ratesCache = ratesCacheForTest ?: CurrencyRatesCache(context)
+    
+    // Test-only: allow replacing rates cache after construction
+    internal var testRatesCache: CurrencyRatesCacheInterface? = null
+        set(value) {
+            field = value
+        }
+    
+    // Test-only: skip post() and call updateCurrencyRows() synchronously
+    internal var testSynchronousUpdate: Boolean = false
     private val lifecycleOwner: androidx.lifecycle.LifecycleOwner?
         get() = context as? androidx.lifecycle.LifecycleOwner
     private val dialRow: LinearLayout
@@ -1290,9 +1299,14 @@ class SearchOverlay @JvmOverloads constructor(
         // R2: Increment generation for this query
         val thisGeneration = ++currencyQueryGeneration
         
+        // Use test cache if available, otherwise prod cache
+        val effectiveCache = testRatesCache ?: ratesCache
+        
         // Try to parse as currency query
         lifecycleScope.launch {
-            val ratesResult = ratesCache.getRates()
+            println("evaluateCurrency: coroutine started for query='$query'")
+            val ratesResult = effectiveCache.getRates()
+            println("evaluateCurrency: got rates result: ${ratesResult.javaClass.simpleName}")
             
             when (ratesResult) {
                 is CurrencyRatesCache.RatesResult.Success,
@@ -1311,28 +1325,41 @@ class SearchOverlay @JvmOverloads constructor(
                         else -> emptyMap()
                     }
                     
+                    println("evaluateCurrency: rates.size=${rates.size}, parsing query...")
                     if (rates.isNotEmpty()) {
                         val parsedQuery = CurrencyConverter.parse(query, layout, rates.keys)
+                        println("evaluateCurrency: parsed=${parsedQuery != null}")
                         if (parsedQuery != null) {
                             val displayCurrencies = prefs.getSearchCurrencyList()
                             val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies)
+                            println("evaluateCurrency: results.size=${results.size}")
                             
                             // R2: Only update if this is still the current query
                             if (thisGeneration == currencyQueryGeneration) {
                                 queryCurrencyResults = results
+                                println("evaluateCurrency: queryCurrencyResults updated")
                             }
                         }
                     }
                     
                     // Update UI on main thread (only if still current)
                     if (thisGeneration == currencyQueryGeneration) {
-                        post { updateCurrencyRows() }
+                        println("evaluateCurrency: updating UI, testSynchronousUpdate=$testSynchronousUpdate")
+                        if (testSynchronousUpdate) {
+                            updateCurrencyRows()
+                        } else {
+                            post { updateCurrencyRows() }
+                        }
                     }
                 }
                 is CurrencyRatesCache.RatesResult.Error -> {
                     currencyRatesAvailable = false
                     if (thisGeneration == currencyQueryGeneration) {
-                        post { updateCurrencyRows() }
+                        if (testSynchronousUpdate) {
+                            updateCurrencyRows()
+                        } else {
+                            post { updateCurrencyRows() }
+                        }
                     }
                 }
             }
