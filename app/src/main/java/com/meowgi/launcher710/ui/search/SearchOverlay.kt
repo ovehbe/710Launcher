@@ -1311,9 +1311,7 @@ class SearchOverlay @JvmOverloads constructor(
         
         // Try to parse as currency query
         lifecycleScope.launch {
-            println("evaluateCurrency: coroutine started for query='$query'")
             val ratesResult = effectiveCache.getRates()
-            println("evaluateCurrency: got rates result: ${ratesResult.javaClass.simpleName}")
             
             when (ratesResult) {
                 is CurrencyRatesCache.RatesResult.Success,
@@ -1332,27 +1330,22 @@ class SearchOverlay @JvmOverloads constructor(
                         else -> emptyMap()
                     }
                     
-                    println("evaluateCurrency: rates.size=${rates.size}, parsing query...")
                     if (rates.isNotEmpty()) {
                         val parsedQuery = CurrencyConverter.parse(query, layout, rates.keys)
-                        println("evaluateCurrency: parsed=${parsedQuery != null}, adoptedCurrencyCode=$adoptedCurrencyCode")
                         if (parsedQuery != null) {
                             val displayCurrencies = prefs.getSearchCurrencyList()
                             // R1: Pass adopted currency for chaining behavior
                             val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies, adoptedCurrencyCode)
-                            println("evaluateCurrency: results.size=${results.size}")
                             
                             // R2: Only update if this is still the current query
                             if (thisGeneration == currencyQueryGeneration) {
                                 queryCurrencyResults = results
-                                println("evaluateCurrency: queryCurrencyResults updated")
                             }
                         }
                     }
                     
                     // Update UI on main thread (only if still current)
                     if (thisGeneration == currencyQueryGeneration) {
-                        println("evaluateCurrency: updating UI, testSynchronousUpdate=$testSynchronousUpdate")
                         if (testSynchronousUpdate) {
                             updateCurrencyRows()
                         } else {

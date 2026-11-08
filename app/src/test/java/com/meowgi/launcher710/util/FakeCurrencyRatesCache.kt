@@ -22,19 +22,14 @@ class FakeCurrencyRatesCache : CurrencyRatesCacheInterface {
     var shouldError: Boolean = false
     
     override suspend fun getRates(forceRefresh: Boolean): CurrencyRatesCache.RatesResult {
-        println("FakeCurrencyRatesCache.getRates() called, delayMs=$delayMs, shouldError=$shouldError")
-        
         if (delayMs > 0) {
             delay(delayMs)
         }
         
-        val result = if (shouldError) {
+        return if (shouldError) {
             CurrencyRatesCache.RatesResult.Error("Test error")
         } else {
             CurrencyRatesCache.RatesResult.Success(fixedRates, "USD", System.currentTimeMillis())
         }
-        
-        println("FakeCurrencyRatesCache.getRates() returning: ${result.javaClass.simpleName}")
-        return result
     }
 }
