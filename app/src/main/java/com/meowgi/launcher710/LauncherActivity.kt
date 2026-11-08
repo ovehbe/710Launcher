@@ -683,7 +683,7 @@ class LauncherActivity : AppCompatActivity() {
         headerView.dateText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
         headerView.clockText.nextFocusDownId = R.id.actionBarCenterTouchOverlay
         findViewById<View>(R.id.actionBarCenterTouchOverlay).apply {
-            nextFocusForwardId = R.id.btnSearch
+            nextFocusForwardId = R.id.btnSearchContainer
             nextFocusDownId = R.id.tabBar
         }
         findViewById<View>(R.id.btnSearchContainer).apply {

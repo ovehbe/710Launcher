@@ -131,7 +131,7 @@
                     android:ellipsize="end"
                     android:background="@drawable/search_bar_bg"
                     android:paddingStart="12dp"
-                    android:paddingEnd="28dp"
+                    android:paddingEnd="12dp"
                     android:textColor="@color/bb_search_text"
                     android:textSize="12sp"
                     android:fontFamily="@font/bbalphas" />
@@ -163,10 +163,11 @@
 
                 <ProgressBar
                     android:id="@+id/progressIndicator"
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
                     android:layout_gravity="center"
                     android:indeterminate="true"
+                    android:indeterminateTintMode="src_in"
                     android:alpha="0.7"
                     android:visibility="gone" />
             </FrameLayout>
