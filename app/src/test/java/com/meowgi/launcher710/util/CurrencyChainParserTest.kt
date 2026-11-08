@@ -37,17 +37,16 @@ class CurrencyChainParserTest {
     }
     
     @Test
-    fun `R1 FAILING - adopted result conversion should include source currency`() {
+    fun `R1 adopted result conversion preserves currency when adoptedCurrency passed`() {
         // After adopting "3250 try", user appends " / 2"
         val parsed = CurrencyConverter.parse("3250 try / 2", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
         assertNotNull(parsed)
         
-        // Convert with USD as default target
+        // Convert with adoptedCurrency=TRY to preserve it
         val displayCurrencies = listOf("USD", "EUR", "GBP")
-        val results = CurrencyConverter.convert(parsed!!, sampleRates, displayCurrencies)
+        val results = CurrencyConverter.convert(parsed!!, sampleRates, displayCurrencies, adoptedCurrency = "TRY")
         
-        // EXPECTED: First result should be 1625 TRY (staying in source currency)
-        // ACTUAL: TRY is excluded from displayCurrencies by convert()
+        // Should include TRY first, then conversions
         assertTrue("Results should not be empty", results.isNotEmpty())
         
         val firstResult = results.first()
@@ -56,26 +55,24 @@ class CurrencyChainParserTest {
     }
     
     @Test
-    fun `original unadopted conversion still works`() {
+    fun `original unadopted conversion converts to display targets`() {
         // User types fresh "100 yen / 10" (not adopted result)
         val parsed = CurrencyConverter.parse("100 yen / 10", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
         assertNotNull(parsed)
         assertEquals("JPY", parsed!!.fromCurrency)
         assertEquals(10.0, parsed.amount, 0.001)
         
-        // R1: Now shows JPY first (for adoption), then converts to USD/EUR/GBP
+        // Without adoptedCurrency, converts to display targets only (no JPY)
         val displayCurrencies = listOf("USD", "EUR", "GBP")
         val results = CurrencyConverter.convert(parsed, sampleRates, displayCurrencies)
         
         assertTrue("Should have results", results.isNotEmpty())
+        assertEquals("Should have 3 conversions", 3, results.size)
         
-        // First result is JPY (source, for potential adoption)
-        assertEquals("First result should be JPY", "JPY", results.first().toCurrency)
-        assertEquals(10.0, results.first().toAmount, 0.001)
-        
-        // Subsequent results are conversions
-        assertTrue("Should have conversions", results.size > 1)
-        assertTrue("Second result should be display currency",
-            results[1].toCurrency in displayCurrencies)
+        // All results should be in display currencies, not JPY
+        assertTrue("All results should be display currencies",
+            results.all { it.toCurrency in displayCurrencies })
+        assertFalse("Should not include JPY",
+            results.any { it.toCurrency == "JPY" })
     }
 }
