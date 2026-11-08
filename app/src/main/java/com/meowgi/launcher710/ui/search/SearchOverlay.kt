@@ -142,7 +142,7 @@ class SearchOverlay @JvmOverloads constructor(
     private val dialText: TextView
     private val calculatorRow: LinearLayout
     private val calculatorText: TextView
-    private val currencyRowsContainer: LinearLayout
+    internal val currencyRowsContainer: LinearLayout  // internal for testing
     private val commandRow: LinearLayout
     private val commandText: TextView
     private val commandSecondary: TextView
