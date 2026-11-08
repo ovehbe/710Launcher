@@ -88,19 +88,29 @@
 
 ### 3. Currency Name Aliases
 
-**Add well-defined unambiguous names:**
-- `yen` → `JPY`
-- `dollar` / `dollars` → `USD`
-- `euro` / `euros` → `EUR`
-- `pound` / `pounds` → `GBP`
-- `yuan` → `CNY`
+**Mandatory equivalence groups (t204u):**
+- JPY: `yen`, `jpy` (case-insensitive)
+- IDR: `rupiah`, `idr` (case-insensitive)
+- TRY: `lira`, `tl`, `try` (Turkish lira, case-insensitive)
 
-**Case-insensitive:** `"YEN"`, `"Yen"`, `"yen"` all map to `JPY`
+**Popular currencies with explicit names:**
+- USD: `dollar`, `dollars`, `us dollar`, `us dollars`
+- EUR: `euro`, `euros`
+- GBP: `pound`, `pounds`, `british pound`, `british pounds`, `sterling`
+- CNY: `yuan`
+- AUD: `australian dollar`, `australian dollars`
+- CAD: `canadian dollar`, `canadian dollars`
+
+**Case-insensitive:** All aliases work regardless of case (`YEN`, `Yen`, `yen`)
+
+**Longest-match-first:** `"australian dollar"` matches AUD before `"dollar"` matches USD
 
 **Ambiguous names NOT added:**
-- `"peso"` → multiple countries (MXN, PHP, ARS, etc.)
-- `"franc"` → multiple (CHF, XAF, etc.)
-- `"rupee"` → multiple (INR, PKR, LKR, etc.)
+- Generic `"peso"` → multiple countries (MXN, PHP, ARS, etc.)
+- Generic `"franc"` → multiple (CHF, XAF, etc.)
+- Generic `"rupee"` → multiple (INR, PKR, LKR, etc.)
+
+**Note:** `"lira"` is unambiguous in practice (Turkish lira is most common in financial contexts)
 
 **Existing 3-letter ISO codes remain primary.**
 
