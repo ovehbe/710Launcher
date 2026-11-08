@@ -20,3 +20,6 @@ keystore.properties
 
 # Changelog (local use only)
 CHANGES.md
+
+# Build artifacts for export (not tracked in repo)
+artifacts-*/
