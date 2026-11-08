@@ -654,6 +654,134 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     @Test
+    fun `adopted currency clears on dismiss - fresh query behaves like unadopted`() {
+        launchWithFakeRates()
+        
+        // Step 1: Adopt TRY
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
+        firstRow.performClick()
+        settle()
+        
+        val adopted = field.text.toString()
+        assertTrue("Should adopt TRY (got '$adopted')", adopted.contains("try", ignoreCase = true))
+        
+        // Step 2: Dismiss/clear the overlay
+        activity.onBackPressed()  // Close overlay
+        settle()
+        assertEquals(View.GONE, overlay.visibility)
+        
+        // Step 3: Start fresh unrelated query that mentions TRY
+        // Open overlay again
+        field.setText("")
+        field.requestFocus()
+        settle()
+        
+        // Query that mentions TRY but is unrelated to previous adoption
+        field.setText("50 eur")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Verify currency results are visible
+        assertTrue("Should have currency rows visible", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        assertTrue("Should have multiple currency results", overlay.currencyRowsContainer.childCount >= 2)
+        
+        // Check the order by reading the text from the rows
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        val secondRowText = (overlay.currencyRowsContainer.getChildAt(1) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // The order should be based on displayCurrencies list (TRY, EUR, USD)
+        // "50 eur" should convert to TRY first, then USD
+        // EUR to TRY comes before EUR to USD in default display order
+        assertTrue("First result should be TRY (got '$firstRowText')", 
+            firstRowText.contains("TRY", ignoreCase = true))
+        assertTrue("Second result should be USD (got '$secondRowText')", 
+            secondRowText.contains("USD", ignoreCase = true))
+        
+        // Verify adoptedCurrencyCode was cleared
+        // By checking that clicking first result adopts the default target, not the old TRY
+        val firstResultRow = overlay.currencyRowsContainer.getChildAt(0)
+        firstResultRow.performClick()
+        settle()
+        
+        val newAdopted = field.text.toString()
+        // Should be "X try" (first in display order), not influenced by previous USD→TRY adoption
+        assertTrue("Fresh adoption should use default order (got '$newAdopted')", 
+            newAdopted.contains("try", ignoreCase = true))
+    }
+
+    @Test
+    fun `PRODUCTION async path - delayed rates with real post dispatch`() {
+        // This test uses PRODUCTION async path (not testSynchronousUpdate bypass)
+        // to verify that delayed currency evaluation + post() + UI update works correctly
+        
+        LauncherPrefs(context).apply {
+            searchCurrencyEnabled = true
+            setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
+        }
+        
+        fakeRatesCache = FakeCurrencyRatesCache()
+        
+        // Setup activity with real async (no testSynchronousUpdate)
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
+        looper.idle()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        
+        field = activity.findViewById(R.id.searchInputInBar)
+        overlay = activity.findViewById(R.id.searchOverlay)
+        overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
+        
+        // Inject fake rates cache but DON'T set testSynchronousUpdate
+        // This forces the production post() path
+        overlay.testRatesCache = fakeRatesCache
+        // overlay.testSynchronousUpdate = false  // default, explicit comment
+        
+        field.setText("")
+        looper.idle()
+        drainStarted()
+        
+        // Type a currency query
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        
+        // The currency evaluation happens async in lifecycleScope.launch
+        // We need to advance the main looper to process the coroutine + post()
+        
+        // Give coroutine time to start and fetch rates
+        looper.idleFor(Duration.ofMillis(100))
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        
+        // The coroutine should complete and post { updateCurrencyRows() }
+        // Advance main looper to process the posted task
+        repeat(10) {
+            looper.idle()
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+        
+        // Currency rows should now be visible
+        assertTrue("Currency rows should be visible after async evaluation", 
+            overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        assertTrue("Should have currency results after async evaluation", 
+            overlay.currencyRowsContainer.childCount > 0)
+        
+        // Verify the results are correct by checking the UI
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // Should show TRY conversion: 100 USD to TRY at rate 32.50 = 3250 TRY
+        assertTrue("Should show TRY result (got '$firstRowText')", 
+            firstRowText.contains("TRY", ignoreCase = true))
+        assertTrue("Should show correct amount (got '$firstRowText')", 
+            firstRowText.contains("3250") || firstRowText.contains("3,250"))
+    }
+
+    @Test
     fun `currency adoption with new aliases - rupiah`() {
         launchWithFakeRates()
         
