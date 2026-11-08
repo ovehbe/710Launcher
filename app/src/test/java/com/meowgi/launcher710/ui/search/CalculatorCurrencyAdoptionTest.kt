@@ -402,13 +402,12 @@ class CalculatorCurrencyAdoptionTest {
         assertEquals("Search still open", View.VISIBLE, overlay.visibility)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption via hardware Enter`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("100 jpy to usd")
+        field.setText("100 jpy to usd")
+        field.setSelection(field.text.length)
         settle()
         
         // Navigate to first currency result
@@ -423,20 +422,19 @@ class CalculatorCurrencyAdoptionTest {
         
         // Should adopt result
         val adopted = field.text.toString()
-        assertTrue("Should contain 'usd'", adopted.contains("usd"))
-        assertEquals(adopted.length, field.selectionStart)
+        assertTrue("Should contain 'usd' (got '$adopted')", adopted.contains("usd", ignoreCase = true))
+        assertEquals("Cursor at end", adopted.length, field.selectionStart)
         
         // No browser launch
-        assertNull(shadowOf(activity).nextStartedActivity)
+        assertNull("No browser launch", shadowOf(activity).nextStartedActivity)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption via IME action`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("50 eur to gbp")
+        field.setText("50 eur to gbp")
+        field.setSelection(field.text.length)
         settle()
         
         // Navigate to currency result
@@ -448,18 +446,17 @@ class CalculatorCurrencyAdoptionTest {
         settle()
         
         val adopted = field.text.toString()
-        assertTrue("Should contain 'gbp'", adopted.contains("gbp"))
-        assertEquals(adopted.length, field.selectionStart)
+        assertTrue("Should contain 'gbp' (got '$adopted')", adopted.contains("gbp", ignoreCase = true))
+        assertEquals("Cursor at end", adopted.length, field.selectionStart)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency chaining - adopt then append arithmetic then adopt again`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
         // Step 1: Convert 100 USD to TRY
-        typeQuery("100 usd to try")
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
         settle()
         
         val firstRow = overlay.currencyRowsContainer.getChildAt(0)
@@ -467,14 +464,18 @@ class CalculatorCurrencyAdoptionTest {
         settle()
         
         val firstAdopted = field.text.toString()
-        assertTrue("First adoption should contain 'try'", firstAdopted.contains("try"))
+        assertTrue("First adoption should contain 'try' (got '$firstAdopted')", 
+            firstAdopted.contains("try", ignoreCase = true))
         
         // Step 2: Append arithmetic " / 10"
-        field.append(" / 10")
+        val newQuery = firstAdopted + " / 10"
+        field.setText(newQuery)
+        field.setSelection(field.text.length)
         settle()
         
         // Step 3: Should show new conversion result (3250 try / 10 = 325 try)
-        assertTrue("Should show updated conversion", overlay.currencyRowsContainer.childCount > 0)
+        assertTrue("Should show updated conversion (got ${overlay.currencyRowsContainer.childCount} rows)", 
+            overlay.currencyRowsContainer.childCount > 0)
         
         // Step 4: Adopt second result
         val secondRow = overlay.currencyRowsContainer.getChildAt(0)
@@ -482,17 +483,17 @@ class CalculatorCurrencyAdoptionTest {
         settle()
         
         val secondAdopted = field.text.toString()
-        assertTrue("Second adoption should still be TRY", secondAdopted.contains("try"))
+        assertTrue("Second adoption should still be TRY (got '$secondAdopted')", 
+            secondAdopted.contains("try", ignoreCase = true))
         // Amount should be ~1/10 of first (allowing for rates)
     }
 
-    @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
     @Test
     fun `currency adoption preserves unit - no bounce on second Enter`() {
-        launch()
-        // setupFakeCurrencyRates() - TODO: implement mock
+        launchWithFakeRates()
         
-        typeQuery("100 rupiah to usd")
+        field.setText("100 rupiah to usd")
+        field.setSelection(field.text.length)
         settle()
         
         // Adopt currency result
@@ -501,7 +502,7 @@ class CalculatorCurrencyAdoptionTest {
         settle()
         
         val adopted = field.text.toString()
-        assertTrue("Should contain 'usd'", adopted.contains("usd"))
+        assertTrue("Should contain 'usd' (got '$adopted')", adopted.contains("usd", ignoreCase = true))
         
         // Second Enter should search, not re-convert
         // (User has adopted "X usd", next Enter should search that value, not bounce to default)
