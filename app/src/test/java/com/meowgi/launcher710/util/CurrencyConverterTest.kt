@@ -564,6 +564,47 @@ class CurrencyConverterTest {
         assertEquals("CAD", query2!!.fromCurrency)
     }
 
+    // Blocker B3: Overlap bug - second currency must not vanish
+    @Test
+    fun `parse two currencies with short aliases preserves both codes`() {
+        // "100 tl usd" - "tl" is 2 chars, should not use "lira" length (4)
+        val query1 = CurrencyConverter.parse("100 tl usd", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull("Query should parse", query1)
+        assertEquals("TRY", query1!!.fromCurrency)
+        assertEquals("USD", query1.toCurrency)
+        
+        // "100 dollar eur" - "dollar" is 6 chars, should not use "us dollars" length (10)
+        val query2 = CurrencyConverter.parse("100 dollar eur", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull("Query should parse", query2)
+        assertEquals("USD", query2!!.fromCurrency)
+        assertEquals("EUR", query2.toCurrency)
+        
+        // "100 tl to jpy" - explicit "to" keyword
+        val query3 = CurrencyConverter.parse("100 tl to jpy", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNotNull("Query should parse", query3)
+        assertEquals("TRY", query3!!.fromCurrency)
+        assertEquals("JPY", query3.toCurrency)
+    }
+
+    // Blocker B4: Trailing junk should be rejected
+    @Test
+    fun `parse rejects trailing non-arithmetic text`() {
+        val query1 = CurrencyConverter.parse("100 yen / 10 abc", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNull("Should reject trailing 'abc'", query1)
+        
+        val query2 = CurrencyConverter.parse("100 usd * 2 hello", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNull("Should reject trailing 'hello'", query2)
+    }
+
+    @Test
+    fun `parse rejects incomplete arithmetic`() {
+        val query1 = CurrencyConverter.parse("100 yen /", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNull("Should reject trailing operator", query1)
+        
+        val query2 = CurrencyConverter.parse("100 usd + ", DialNumber.LAYOUT_QWERTY, sampleRates.keys)
+        assertNull("Should reject trailing operator", query2)
+    }
+
     @Test
     fun `currency name requires word boundaries`() {
         // "yen" should not match inside "hyena"

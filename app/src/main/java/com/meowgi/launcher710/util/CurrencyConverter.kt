@@ -109,8 +109,11 @@ object CurrencyConverter {
         // Pattern: [amount] [from_currency] [optional: to/in] [optional: to_currency]
         // Currency codes are 3-letter words, keywords are "to" or "in"
         
+        // Track matches as (position, code, matchedLength) to correctly compute overlap
+        data class CurrencyMatch(val position: Int, val code: String, val matchedLength: Int)
+        
         // First, search for currency names (longer matches first to avoid partial matches)
-        val nameMatches = mutableListOf<Pair<Int, String>>()
+        val nameMatches = mutableListOf<CurrencyMatch>()
         for ((name, code) in CURRENCY_NAME_ALIASES.entries.sortedByDescending { it.key.length }) {
             var pos = 0
             while (pos <= normalized.length - name.length) {
@@ -120,7 +123,7 @@ object CurrencyConverter {
                 val beforeOk = found == 0 || !normalized[found - 1].isLetter()
                 val afterOk = found + name.length >= normalized.length || !normalized[found + name.length].isLetter()
                 if (beforeOk && afterOk && code in availableCurrencies) {
-                    nameMatches.add(found to code)
+                    nameMatches.add(CurrencyMatch(found, code, name.length))
                     pos = found + name.length
                 } else {
                     pos = found + 1
@@ -129,14 +132,14 @@ object CurrencyConverter {
         }
         
         // Then, find 3-letter ISO currency codes
-        val codeMatches = mutableListOf<Pair<Int, String>>()
+        val codeMatches = mutableListOf<CurrencyMatch>()
         var i = 0
         while (i <= normalized.length - 3) {
             val threeLetters = normalized.substring(i, i + 3)
             if (threeLetters.all { it.isLetter() }) {
                 val code = threeLetters.uppercase()
                 if (code in availableCurrencies) {
-                    codeMatches.add(i to code)
+                    codeMatches.add(CurrencyMatch(i, code, 3))
                     i += 3 // Skip past this match
                     continue
                 }
@@ -145,21 +148,13 @@ object CurrencyConverter {
         }
         
         // Merge name and code matches, removing overlaps (prefer longer name matches)
+        val allMatches = (nameMatches + codeMatches).sortedBy { it.position }
         val currencyMatches = mutableListOf<Pair<Int, String>>()
-        val allMatches = (nameMatches + codeMatches).sortedBy { it.first }
         var lastEnd = -1
         for (match in allMatches) {
-            if (match.first >= lastEnd) {
-                currencyMatches.add(match)
-                // Calculate match end based on original name/code length in normalized string
-                val matchedText = when {
-                    nameMatches.contains(match) -> {
-                        // Find the name that produced this code
-                        CURRENCY_NAME_ALIASES.entries.find { it.value == match.second }?.key?.length ?: 3
-                    }
-                    else -> 3 // ISO code
-                }
-                lastEnd = match.first + matchedText
+            if (match.position >= lastEnd) {
+                currencyMatches.add(match.position to match.code)
+                lastEnd = match.position + match.matchedLength
             }
         }
         
@@ -242,18 +237,30 @@ object CurrencyConverter {
         
         val rightPart = normalized.substring(firstCurrencyEnd, rightEnd).trim()
         
-        // Filter rightPart to only include arithmetic operators, numbers, whitespace, parens
-        // Stop at first keyword or letter that isn't an operator
+        // Validate rightPart contains only arithmetic: operators, numbers, whitespace, parens
+        // Reject if there's trailing non-arithmetic text or incomplete expressions
         val arithmeticChars = setOf('+', '-', '*', '/', '%', '(', ')', '.', ',', ' ', '\t')
-        val rightArithmetic = rightPart.takeWhile { ch ->
-            ch.isDigit() || ch in arithmeticChars
-        }.trim()
+        val rightArithmetic = if (rightPart.isNotEmpty()) {
+            // Check every character is valid arithmetic
+            if (!rightPart.all { ch -> ch.isDigit() || ch in arithmeticChars }) {
+                // Found non-arithmetic character - reject the query
+                return null
+            }
+            rightPart.trim()
+        } else {
+            ""
+        }
         
         // Combine left + right arithmetic
         val amountStr = if (rightArithmetic.isNotEmpty()) {
             "$leftPart $rightArithmetic".trim()
         } else {
             leftPart
+        }
+        
+        // Reject expressions ending with an operator (incomplete)
+        if (amountStr.isNotEmpty() && amountStr.last() in setOf('+', '-', '*', '/', '%')) {
+            return null
         }
         
         // Apply BB keyboard mapping to amount string

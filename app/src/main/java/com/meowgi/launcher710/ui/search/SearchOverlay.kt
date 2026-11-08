@@ -305,10 +305,13 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun formatCurrencyAmount(amount: Double): String {
-        return if (amount == amount.toLong().toDouble()) {
+        // Use Locale.ROOT for locale-independent canonical format
+        // Avoid toLong() overflow for large values
+        return if (amount.isFinite() && amount >= Long.MIN_VALUE && amount <= Long.MAX_VALUE 
+                   && amount == amount.toLong().toDouble()) {
             amount.toLong().toString()
         } else {
-            "%.8f".format(amount).trimEnd('0').trimEnd('.')
+            String.format(java.util.Locale.ROOT, "%.8f", amount).trimEnd('0').trimEnd('.')
         }
     }
 
