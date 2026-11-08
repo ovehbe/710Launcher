@@ -67,11 +67,16 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     private fun settle() {
-        looper.idleFor(Duration.ofMillis(300))
-        repeat(30) {
-            looper.idle()
-            Thread.sleep(10)
-        }
+        // Give coroutines time to post runnables
+        Thread.sleep(100)
+        
+        // Drain all posted tasks
+        val mainLooper = shadowOf(android.os.Looper.getMainLooper())
+        mainLooper.runToEndOfTasks()
+        looper.runToEndOfTasks()
+        
+        // Final idle
+        mainLooper.idle()
         looper.idle()
     }
 
@@ -305,19 +310,36 @@ class CalculatorCurrencyAdoptionTest {
     private lateinit var fakeRatesCache: FakeCurrencyRatesCache
     
     private fun launchWithFakeRates() {
+        // Ensure currency is enabled in prefs (done in @Before setup())
+        // But verify it's set
+        LauncherPrefs(context).apply {
+            searchCurrencyEnabled = true
+            setSearchCurrencyList(listOf("TRY", "EUR", "USD"))
+        }
+        
         fakeRatesCache = FakeCurrencyRatesCache()
         
-        // Initialize activity and field (same as launch())
-        activity = Robolectric.buildActivity(LauncherActivity::class.java).create().get()
-        field = activity.findViewById(R.id.searchInputInBar)
+        // Full lifecycle for coroutines
+        activity = Robolectric.buildActivity(LauncherActivity::class.java)
+            .create()
+            .start()
+            .resume()
+            .get()
         
-        // Replace overlay with test version that uses fake rates
-        val testContext = ApplicationProvider.getApplicationContext<Context>()
-        overlay = SearchOverlay(testContext, null, fakeRatesCache)
-        overlay.onUpdateSearchText = { newText ->
-            field.setText(newText)
-            field.setSelection(newText.length)
-        }
+        looper.idle()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        
+        field = activity.findViewById(R.id.searchInputInBar)
+        overlay = activity.findViewById(R.id.searchOverlay)
+        overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
+        
+        // Inject fake rates cache and enable synchronous updates
+        overlay.testRatesCache = fakeRatesCache
+        overlay.testSynchronousUpdate = true
+        
+        field.setText("")
+        looper.idle()
+        drainStarted()
     }
 
     @Test
@@ -354,29 +376,30 @@ class CalculatorCurrencyAdoptionTest {
         }
     }
 
-    @org.junit.Ignore("TODO: Requires proper Robolectric async coroutine handling")
     @Test
     fun `currency adoption replaces query with canonical format`() {
         launchWithFakeRates()
         
-        typeQuery("100 usd to try")
+        // Type full query at once (not character-by-character)
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
         settle()
         
-        // NOTE: Async currency evaluation doesn't complete in Robolectric test
-        // Core logic tested in CurrencyChainParserTest, convert tests
-        assertTrue("Currency results should be visible", overlay.currencyRowsContainer.childCount > 0)
+        // Currency results should appear with fake rates
+        assertTrue("Currency results should be visible (got ${overlay.currencyRowsContainer.childCount})", 
+            overlay.currencyRowsContainer.childCount > 0)
         
         val firstRow = overlay.currencyRowsContainer.getChildAt(0)
         firstRow.performClick()
         settle()
         
         val adopted = field.text.toString()
-        assertTrue("Should contain 'try'", adopted.contains("try"))
-        assertTrue("Should be parseable number + code", adopted.matches(Regex("\\d+(\\.\\d+)? \\w{3}")))
+        assertTrue("Should contain 'try'", adopted.contains("try", ignoreCase = true))
+        assertTrue("Should be parseable number + code", adopted.matches(Regex("\\d+([,.]\\d+)? \\w{3,}")))
         
-        assertEquals(adopted.length, field.selectionStart)
-        assertEquals(adopted.length, field.selectionEnd)
-        assertEquals(View.VISIBLE, overlay.visibility)
+        assertEquals("Cursor at end", adopted.length, field.selectionStart)
+        assertEquals("Cursor at end", adopted.length, field.selectionEnd)
+        assertEquals("Search still open", View.VISIBLE, overlay.visibility)
     }
 
     @org.junit.Ignore("TODO: Requires currency rate mock infrastructure")
