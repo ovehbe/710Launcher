@@ -1,0 +1,10 @@
+1a2b8c9 Update design spec with expanded currency aliases (t204u)
+48adbb8 Implement calculator result adoption
+a9448d0 Add extensive currency name aliases (rupiah, TL, lira, etc)
+1511434 Support arithmetic around currency (100 yen / 10)
+d5b2057 Add currency name aliases (yen, dollar, euro, pound, yuan)
+a3798e5 Version bump to v1.9.9 (code 43) for calculator/currency adoption feature
+b355bd2 Merge PR #36: Voice dictation v1.9.7 + unified progress v1.9.8
+2e7352b v1.9.8: Fix AI progress cleanup on cancel/dismiss + add regression tests
+65fe7ff v1.9.8: Fix 5 scope failures from audit rejection
+0d45f50 v1.9.8: Unified progress indicator for voice and AI
