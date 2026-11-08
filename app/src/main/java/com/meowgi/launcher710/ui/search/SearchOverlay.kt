@@ -1275,6 +1275,9 @@ class SearchOverlay @JvmOverloads constructor(
         calculatorText.text = displayText
     }
 
+    // R2: Track query generation to prevent stale async overwrites
+    private var currencyQueryGeneration = 0
+    
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
         
@@ -1282,6 +1285,9 @@ class SearchOverlay @JvmOverloads constructor(
             updateCurrencyRows()
             return
         }
+        
+        // R2: Increment generation for this query
+        val thisGeneration = ++currencyQueryGeneration
         
         // Try to parse as currency query
         lifecycleScope.launch {
@@ -1309,16 +1315,24 @@ class SearchOverlay @JvmOverloads constructor(
                         if (parsedQuery != null) {
                             val displayCurrencies = prefs.getSearchCurrencyList()
                             val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies)
-                            queryCurrencyResults = results
+                            
+                            // R2: Only update if this is still the current query
+                            if (thisGeneration == currencyQueryGeneration) {
+                                queryCurrencyResults = results
+                            }
                         }
                     }
                     
-                    // Update UI on main thread
-                    post { updateCurrencyRows() }
+                    // Update UI on main thread (only if still current)
+                    if (thisGeneration == currencyQueryGeneration) {
+                        post { updateCurrencyRows() }
+                    }
                 }
                 is CurrencyRatesCache.RatesResult.Error -> {
                     currencyRatesAvailable = false
-                    post { updateCurrencyRows() }
+                    if (thisGeneration == currencyQueryGeneration) {
+                        post { updateCurrencyRows() }
+                    }
                 }
             }
         }
