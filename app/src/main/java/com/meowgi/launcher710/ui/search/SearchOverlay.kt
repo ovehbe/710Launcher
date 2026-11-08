@@ -780,7 +780,11 @@ class SearchOverlay @JvmOverloads constructor(
         clearNavSelection()
         aiPanel.visibility = if (active) VISIBLE else GONE
         resultsRecycler.visibility = if (active) GONE else VISIBLE
-        if (!active) return
+        // Clear AI progress before early return when going idle (cancel/dismiss cleanup)
+        if (!active) {
+            hideProgressForAI()
+            return
+        }
         if (suggestionsBox.visibility == VISIBLE) clearWebSuggestions()
         val loading = state is AiState.Loading || (state is AiState.Answer && state.text.isEmpty() && !state.done)
         if (loading) showProgressForAI() else hideProgressForAI()

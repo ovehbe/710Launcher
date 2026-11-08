@@ -156,6 +156,37 @@ class AiSearchUiTest {
     }
 
     @Test
+    fun dismissDuringAiLoadingHidesProgress() {
+        type("hjkl")
+        assertTrue(overlay.startAiAnswer())
+        settle()
+        assertEquals(View.VISIBLE, progress)
+        // Dismiss while AI loading (before release.countDown)
+        overlay.dismiss()
+        settle()
+        // Progress must hide when AI cancelled
+        assertEquals(View.GONE, progress)
+        assertEquals(AiState.Idle, overlay.aiSession.state)
+        release.countDown()
+    }
+
+    @Test
+    fun retypingDuringAiLoadingHidesProgress() {
+        type("hjkl")
+        assertTrue(overlay.startAiAnswer())
+        settle()
+        assertEquals(View.VISIBLE, progress)
+        // Retype while AI loading (before release.countDown)
+        overlay.applyQuery("hjklm")
+        settle()
+        // Progress must hide when AI cancelled by new query
+        assertEquals(View.GONE, progress)
+        assertEquals(AiState.Idle, overlay.aiSession.state)
+        assertTrue(lastCall.get().isCancelled)
+        release.countDown()
+    }
+
+    @Test
     fun missingConfigShowsAHintAndTheSettingsLink() {
         overlay.aiConfigProvider = { AiConfigResult.Unavailable("Pick a model for AI answers.") }
         type("hjkl")
@@ -173,6 +204,7 @@ class AiSearchUiTest {
         assertFalse(overlay.startAiAnswer())
         assertEquals(AiState.Idle, overlay.aiSession.state)
     }
+
 
     // ------------------------------------------------------------------ launcher triggers
 
