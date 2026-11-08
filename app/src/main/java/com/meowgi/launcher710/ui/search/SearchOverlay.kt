@@ -298,6 +298,8 @@ class SearchOverlay @JvmOverloads constructor(
         builtInIndex = null
         cachedContactIcon = null
         cachedCommandIcon = null
+        adoptedCurrencyCode = null
+        adoptedFromQuery = null
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
         aiSession.cancel()
@@ -336,6 +338,7 @@ class SearchOverlay @JvmOverloads constructor(
         
         // R1: Track adopted currency for chaining
         adoptedCurrencyCode = result.toCurrency
+        adoptedFromQuery = "$amount $code"
         
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke("$amount $code")
@@ -1294,6 +1297,7 @@ class SearchOverlay @JvmOverloads constructor(
     
     // R1: Track if current query is from adopted currency result
     internal var adoptedCurrencyCode: String? = null  // internal for testing
+    private var adoptedFromQuery: String? = null  // Track query that led to adoption
     
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
@@ -1301,6 +1305,19 @@ class SearchOverlay @JvmOverloads constructor(
         if (!prefs.searchCurrencyEnabled) {
             updateCurrencyRows()
             return
+        }
+        
+        // Clear adopted currency for fresh queries (not arithmetic chaining)
+        // Adoption should persist only if current query is a continuation of the adopted result
+        val adoptedQuery = adoptedFromQuery
+        if (adoptedCurrencyCode != null && adoptedQuery != null) {
+            // Check if current query starts with the adopted result (arithmetic chaining)
+            // or if query is completely different (fresh query after clear/dismiss)
+            if (!query.startsWith(adoptedQuery, ignoreCase = true)) {
+                // Not a continuation - clear adoption
+                adoptedCurrencyCode = null
+                adoptedFromQuery = null
+            }
         }
         
         // R2: Increment generation for this query

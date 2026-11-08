@@ -782,6 +782,125 @@ class CalculatorCurrencyAdoptionTest {
     }
 
     @Test
+    fun `PREMISE TEST 1 - baseline fresh untouched 50 try query`() {
+        launchWithFakeRates()
+        
+        // Fresh query on untouched overlay: "50 try"
+        field.setText("50 try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Record baseline behavior
+        assertTrue("Should have currency rows", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        assertTrue("Should have at least 2 results", overlay.currencyRowsContainer.childCount >= 2)
+        
+        // Get first two result texts
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        val secondRowText = (overlay.currencyRowsContainer.getChildAt(1) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // Baseline: TRY conversions should be in displayCurrencies order (TRY, EUR, USD)
+        // "50 try" should show: TRY→EUR first, TRY→USD second
+        assertTrue("BASELINE: First should be EUR (got '$firstRowText')", 
+            firstRowText.contains("EUR", ignoreCase = true))
+        assertTrue("BASELINE: Second should be USD (got '$secondRowText')", 
+            secondRowText.contains("USD", ignoreCase = true))
+    }
+
+    @Test
+    fun `PREMISE TEST 2 - adopt TRY, clear field, query 50 try`() {
+        launchWithFakeRates()
+        
+        // Step 1: Adopt TRY from a conversion
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
+        firstRow.performClick()
+        settle()
+        
+        val adopted = field.text.toString()
+        assertTrue("Should adopt TRY (got '$adopted')", adopted.contains("try", ignoreCase = true))
+        
+        // Step 2: Clear field completely
+        field.setText("")
+        field.setSelection(0)
+        settle()
+        
+        // Step 3: Fresh query "50 try" after clear
+        field.setText("50 try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Should match BASELINE behavior
+        assertTrue("Should have currency rows", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        assertTrue("Should have at least 2 results", overlay.currencyRowsContainer.childCount >= 2)
+        
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        val secondRowText = (overlay.currencyRowsContainer.getChildAt(1) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // Should match baseline: TRY→EUR first, TRY→USD second
+        // NOT influenced by previous TRY adoption
+        assertTrue("After clear: First should be EUR (got '$firstRowText')", 
+            firstRowText.contains("EUR", ignoreCase = true))
+        assertTrue("After clear: Second should be USD (got '$secondRowText')", 
+            secondRowText.contains("USD", ignoreCase = true))
+    }
+
+    @Test
+    fun `PREMISE TEST 3 - adopt TRY, dismiss, reopen, query 50 try`() {
+        launchWithFakeRates()
+        
+        // Step 1: Adopt TRY from a conversion
+        field.setText("100 usd to try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        val firstRow = overlay.currencyRowsContainer.getChildAt(0)
+        firstRow.performClick()
+        settle()
+        
+        val adopted = field.text.toString()
+        assertTrue("Should adopt TRY (got '$adopted')", adopted.contains("try", ignoreCase = true))
+        
+        // Step 2: Dismiss overlay
+        activity.onBackPressed()
+        settle()
+        assertEquals(View.GONE, overlay.visibility)
+        
+        // Step 3: Reopen overlay (simulate user opening search again)
+        // In real app, opening search calls overlay.show() which calls resetSession()
+        overlay.show()
+        settle()
+        assertEquals(View.VISIBLE, overlay.visibility)
+        
+        // Step 4: Fresh query "50 try"
+        field.setText("50 try")
+        field.setSelection(field.text.length)
+        settle()
+        
+        // Should match BASELINE behavior
+        assertTrue("Should have currency rows", overlay.currencyRowsContainer.visibility == View.VISIBLE)
+        assertTrue("Should have at least 2 results", overlay.currencyRowsContainer.childCount >= 2)
+        
+        val firstRowText = (overlay.currencyRowsContainer.getChildAt(0) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        val secondRowText = (overlay.currencyRowsContainer.getChildAt(1) as? android.view.ViewGroup)
+            ?.getChildAt(0)?.let { it as? android.widget.TextView }?.text?.toString() ?: ""
+        
+        // Should match baseline: TRY→EUR first, TRY→USD second
+        // NOT influenced by previous TRY adoption
+        assertTrue("After dismiss/reopen: First should be EUR (got '$firstRowText')", 
+            firstRowText.contains("EUR", ignoreCase = true))
+        assertTrue("After dismiss/reopen: Second should be USD (got '$secondRowText')", 
+            secondRowText.contains("USD", ignoreCase = true))
+    }
+
+    @Test
     fun `currency adoption with new aliases - rupiah`() {
         launchWithFakeRates()
         
