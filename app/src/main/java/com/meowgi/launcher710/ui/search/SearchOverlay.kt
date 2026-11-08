@@ -300,7 +300,6 @@ class SearchOverlay @JvmOverloads constructor(
         cachedCommandIcon = null
         adoptedCurrencyCode = null
         adoptedFromQuery = null
-        userHasManuallyNavigated = false
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
         aiSession.cancel()
@@ -315,8 +314,6 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun acceptCalculatorResult() {
         val result = queryCalculatorResult ?: return
-        // After acceptance, don't auto-select next results
-        navPosAutoSelected = false
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke(result)
     }
@@ -343,8 +340,6 @@ class SearchOverlay @JvmOverloads constructor(
         adoptedCurrencyCode = result.toCurrency
         adoptedFromQuery = "$amount $code"
         
-        // After acceptance, don't auto-select next results
-        navPosAutoSelected = false
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke("$amount $code")
     }
@@ -594,10 +589,6 @@ class SearchOverlay @JvmOverloads constructor(
      * there); this is a virtual selection over the rows below it, drawn by [dispatchDraw].
      */
     private var navPos: NavPos? = null
-    /** Track if navPos was auto-selected (not manually navigated by user) */
-    private var navPosAutoSelected = false
-    /** Track if user ever manually navigated during this search session */
-    private var userHasManuallyNavigated = false
     private val navPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
     private val navRect = android.graphics.Rect()
     private val navRectF = android.graphics.RectF()
@@ -632,7 +623,6 @@ class SearchOverlay @JvmOverloads constructor(
     fun clearNavSelection() {
         if (navPos == null) return
         navPos = null
-        navPosAutoSelected = false
         invalidate()
     }
 
@@ -655,8 +645,6 @@ class SearchOverlay @JvmOverloads constructor(
             }
         }
         navPos = SearchNavigation.move(rows, from, dRow, dCol)
-        navPosAutoSelected = false  // Manual navigation
-        userHasManuallyNavigated = true  // Remember user manually navigated
         navPos?.let { revealNavTarget(targets[it.row][it.col]) }
         invalidate()
         return true
@@ -666,7 +654,6 @@ class SearchOverlay @JvmOverloads constructor(
     fun activateNavSelection(): Boolean {
         val target = navSelection ?: return false
         navPos = null
-        navPosAutoSelected = false  // After activation, don't auto-select again
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
@@ -1298,24 +1285,11 @@ class SearchOverlay @JvmOverloads constructor(
             return
         }
         
-        val wasAutoSelected = navPosAutoSelected
         if (calculatorRow.visibility != VISIBLE || calculatorText.text.toString() != displayText) {
             clearNavSelection()
         }
         calculatorRow.visibility = VISIBLE
         calculatorText.text = displayText
-        
-        // Auto-select calculator so Enter key works immediately
-        // Only auto-select if user hasn't manually navigated during this session
-        // Must be AFTER setting visibility so navTargetRows() includes it
-        if (!userHasManuallyNavigated && (navSelection == null || wasAutoSelected)) {
-            val rows = navTargetRows()
-            val calcIndex = rows.indexOfFirst { it.firstOrNull() == NavTarget.Calculator }
-            if (calcIndex >= 0) {
-                navPos = NavPos(calcIndex, 0)
-                navPosAutoSelected = true
-            }
-        }
     }
 
     // R2: Track query generation to prevent stale async overwrites
@@ -1457,23 +1431,10 @@ class SearchOverlay @JvmOverloads constructor(
             currencyRowsContainer.addView(hintRow)
         }
         
-        val wasAutoSelected = navPosAutoSelected
         if (currencyRowsContainer.visibility != VISIBLE) {
             clearNavSelection()
         }
         currencyRowsContainer.visibility = VISIBLE
-        
-        // Auto-select first currency result so Enter key works immediately
-        // Only auto-select if user hasn't manually navigated during this session
-        // Must be AFTER setting visibility so navTargetRows() includes it
-        if (!userHasManuallyNavigated && (navSelection == null || wasAutoSelected)) {
-            val rows = navTargetRows()
-            val currencyIndex = rows.indexOfFirst { it.firstOrNull() is NavTarget.Currency }
-            if (currencyIndex >= 0) {
-                navPos = NavPos(currencyIndex, 0)
-                navPosAutoSelected = true
-            }
-        }
     }
 
     /**
@@ -1514,6 +1475,18 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun activateCommand() {
         executeCommand()
+    }
+
+    fun hasCalculatorOrCurrency(): Boolean = 
+        calculatorRow.visibility == VISIBLE || currencyRowsContainer.visibility == VISIBLE || dialRow.visibility == VISIBLE
+
+    fun activateCalculatorOrCurrency() {
+        // Activate first visible special row in priority order: dial, calculator, currency
+        when {
+            dialRow.visibility == VISIBLE -> dial(currentDialDigits)
+            calculatorRow.visibility == VISIBLE -> acceptCalculatorResult()
+            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> acceptCurrencyResult(0)
+        }
     }
 
     private fun executeCommand() {
@@ -1686,27 +1659,12 @@ class SearchOverlay @JvmOverloads constructor(
             dialRow.visibility = GONE
             return
         }
-        val wasAutoSelected = navPosAutoSelected
-        if (dialRow.visibility != VISIBLE || dialDigits != currentDialDigits) {
-            clearNavSelection()
-        }
+        if (dialRow.visibility != VISIBLE || dialDigits != currentDialDigits) clearNavSelection()
         dialRow.visibility = VISIBLE
         // setText always requests a layout, so skip it when the digits didn't change.
         if (dialDigits != currentDialDigits) {
             currentDialDigits = dialDigits
             dialText.text = "${context.getString(R.string.dial_prefix)} $dialDigits"
-        }
-        
-        // Auto-select dial so Enter key works immediately
-        // Only auto-select if user hasn't manually navigated during this session
-        // Must be AFTER setting visibility so navTargetRows() includes it
-        if (!userHasManuallyNavigated && (navSelection == null || wasAutoSelected)) {
-            val rows = navTargetRows()
-            val dialIndex = rows.indexOfFirst { it.firstOrNull() == NavTarget.Dial }
-            if (dialIndex >= 0) {
-                navPos = NavPos(dialIndex, 0)
-                navPosAutoSelected = true
-            }
         }
     }
 

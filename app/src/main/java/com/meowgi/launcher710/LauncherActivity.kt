@@ -1213,6 +1213,11 @@ class LauncherActivity : AppCompatActivity() {
             searchOverlay.activateCommand()
             return true
         }
+        // If calculator/currency/dial visible with no selection, activate first one
+        if (searchOverlay.hasCalculatorOrCurrency()) {
+            searchOverlay.activateCalculatorOrCurrency()
+            return true
+        }
         if (!runQuery) return false
         searchOverlay.performExtendedSearch()
         return true
