@@ -176,7 +176,12 @@ class CurrencyConverterTest {
         val displayCurrencies = listOf("EUR", "GBP", "TRY")
         val results = CurrencyConverter.convert(query, sampleRates, displayCurrencies)
         
-        assertEquals(3, results.size)
+        // R1: Now includes source currency first, then conversions
+        assertEquals(4, results.size)
+        
+        // First result is source currency (for adoption)
+        assertEquals("USD", results[0].toCurrency)
+        assertEquals(100.0, results[0].toAmount, 0.001)
         
         // USD to EUR: 100 * (0.85 / 1.0) = 85
         val eurResult = results.find { it.toCurrency == "EUR" }
@@ -195,13 +200,17 @@ class CurrencyConverterTest {
     }
 
     @Test
-    fun `convert excludes source currency from display list`() {
+    fun `convert includes source currency first then others`() {
         val query = CurrencyConverter.CurrencyQuery(100.0, "EUR", null)
         val displayCurrencies = listOf("USD", "EUR", "GBP")
         val results = CurrencyConverter.convert(query, sampleRates, displayCurrencies)
         
-        assertEquals(2, results.size)
-        assertTrue(results.none { it.toCurrency == "EUR" })
+        // R1: Source EUR included first, then USD and GBP (EUR filtered from display list)
+        assertEquals(3, results.size)
+        assertEquals("EUR", results[0].toCurrency)
+        assertTrue(results.drop(1).none { it.toCurrency == "EUR" })
+        assertTrue(results.any { it.toCurrency == "USD" })
+        assertTrue(results.any { it.toCurrency == "GBP" })
     }
 
     @Test
