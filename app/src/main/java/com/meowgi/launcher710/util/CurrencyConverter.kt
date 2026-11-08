@@ -22,16 +22,45 @@ object CurrencyConverter {
     /**
      * Currency name aliases (common names mapped to ISO codes).
      * Sorted by length descending for longest-match-first parsing.
+     * 
+     * Mandatory equivalences:
+     * - JPY: yen, jpy
+     * - IDR: rupiah, idr
+     * - TRY: lira, tl, try (Turkish lira)
+     * 
+     * Popular currencies with explicit names to avoid ambiguity:
+     * - USD: dollar, dollars, us dollar, us dollars
+     * - EUR: euro, euros
+     * - GBP: pound, pounds, british pound, british pounds, sterling
+     * - CNY: yuan
+     * - AUD: australian dollar, australian dollars
+     * - CAD: canadian dollar, canadian dollars
      */
     private val CURRENCY_NAME_ALIASES = mapOf(
+        // Longest first to match "australian dollar" before "dollar"
+        "australian dollars" to "AUD",
+        "australian dollar" to "AUD",
+        "canadian dollars" to "CAD",
+        "canadian dollar" to "CAD",
+        "british pounds" to "GBP",
+        "british pound" to "GBP",
+        "us dollars" to "USD",
+        "us dollar" to "USD",
+        "sterling" to "GBP",
         "dollars" to "USD",
         "dollar" to "USD",
-        "euros" to "EUR",
-        "euro" to "EUR",
+        "rupiah" to "IDR",
         "pounds" to "GBP",
         "pound" to "GBP",
+        "euros" to "EUR",
+        "euro" to "EUR",
+        "lira" to "TRY",  // Turkish lira (unambiguous in common usage)
         "yuan" to "CNY",
-        "yen" to "JPY"
+        "yen" to "JPY",
+        "tl" to "TRY",    // Turkish Lira abbreviation
+        "idr" to "IDR",   // Case-insensitive ISO code alias
+        "jpy" to "JPY",   // Case-insensitive ISO code alias
+        "try" to "TRY"    // Case-insensitive ISO code alias (Turkish)
     )
 
     /**

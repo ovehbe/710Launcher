@@ -298,24 +298,27 @@ class SearchOverlay @JvmOverloads constructor(
         if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
-    private fun copyCalculatorResult() {
-        val result = queryCalculatorResult
-        val expression = queryCalculatorExpression ?: return
-        val toCopy = result ?: expression // Copy result if available, otherwise the expression
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("Calculator", toCopy)
-        clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "Copied: $toCopy", Toast.LENGTH_SHORT).show()
+    private fun acceptCalculatorResult() {
+        val result = queryCalculatorResult ?: return
+        // Replace entire query with result, cursor at end, search stays open
+        onUpdateSearchText?.invoke(result)
     }
 
-    private fun copyCurrencyResult(index: Int) {
+    private fun formatCurrencyAmount(amount: Double): String {
+        return if (amount == amount.toLong().toDouble()) {
+            amount.toLong().toString()
+        } else {
+            "%.8f".format(amount).trimEnd('0').trimEnd('.')
+        }
+    }
+
+    private fun acceptCurrencyResult(index: Int) {
         val result = queryCurrencyResults.getOrNull(index) ?: return
-        val toCopy = result.toAmount.toString()
-        val clip = android.content.ClipData.newPlainText("Currency", toCopy)
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        clipboard.setPrimaryClip(clip)
-        val formatted = CurrencyConverter.formatResult(result)
-        Toast.makeText(context, "Copied: $toCopy ($formatted)", Toast.LENGTH_SHORT).show()
+        // Format: "{amount} {code}" (lowercase code, no grouping)
+        val amount = formatCurrencyAmount(result.toAmount)
+        val code = result.toCurrency.lowercase()
+        // Replace entire query with result, cursor at end, search stays open
+        onUpdateSearchText?.invoke("$amount $code")
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -371,7 +374,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         calculatorRow.addView(calculatorText)
         calculatorRow.addView(equalsIcon)
-        calculatorRow.setOnClickListener { copyCalculatorResult() }
+        calculatorRow.setOnClickListener { acceptCalculatorResult() }
         addView(calculatorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         currencyRowsContainer = LinearLayout(context).apply {
@@ -631,8 +634,8 @@ class SearchOverlay @JvmOverloads constructor(
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
-            NavTarget.Calculator -> copyCalculatorResult()
-            is NavTarget.Currency -> copyCurrencyResult(target.index)
+            NavTarget.Calculator -> acceptCalculatorResult()
+            is NavTarget.Currency -> acceptCurrencyResult(target.index)
             NavTarget.Command -> executeCommand()
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
@@ -1330,7 +1333,7 @@ class SearchOverlay @JvmOverloads constructor(
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(6), 0, dp(2))
-                setOnClickListener { copyCurrencyResult(index) }
+                setOnClickListener { acceptCurrencyResult(index) }
             }
             
             val text = TextView(context).apply {
