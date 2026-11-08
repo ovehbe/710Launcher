@@ -314,6 +314,7 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun acceptCalculatorResult() {
         val result = queryCalculatorResult ?: return
+        justActivatedResult = true
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke(result)
     }
@@ -340,6 +341,7 @@ class SearchOverlay @JvmOverloads constructor(
         adoptedCurrencyCode = result.toCurrency
         adoptedFromQuery = "$amount $code"
         
+        justActivatedResult = true
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke("$amount $code")
     }
@@ -1299,6 +1301,9 @@ class SearchOverlay @JvmOverloads constructor(
     internal var adoptedCurrencyCode: String? = null  // internal for testing
     private var adoptedFromQuery: String? = null  // Track query that led to adoption
     
+    /** Track if a result was just activated to prevent immediate re-activation */
+    private var justActivatedResult = false
+    
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
         
@@ -1477,15 +1482,43 @@ class SearchOverlay @JvmOverloads constructor(
         executeCommand()
     }
 
-    fun hasCalculatorOrCurrency(): Boolean = 
-        calculatorRow.visibility == VISIBLE || currencyRowsContainer.visibility == VISIBLE || dialRow.visibility == VISIBLE
+    /** Check if calculator/currency/dial is visible AND has valid result to activate 
+     * AND was not just activated (to allow second Enter to search) */
+    fun hasCalculatorOrCurrency(): Boolean {
+        if (justActivatedResult) {
+            // Just activated, let next Enter search instead
+            return false
+        }
+        return when {
+            dialRow.visibility == VISIBLE && currentDialDigits.isNotEmpty() -> true
+            calculatorRow.visibility == VISIBLE && queryCalculatorResult != null -> true
+            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> true
+            else -> false
+        }
+    }
+    
+    /** Clear the activation flag to allow future auto-activation */
+    fun clearActivationFlag() {
+        justActivatedResult = false
+    }
 
-    fun activateCalculatorOrCurrency() {
+    fun activateCalculatorOrCurrency(): Boolean {
         // Activate first visible special row in priority order: dial, calculator, currency
-        when {
-            dialRow.visibility == VISIBLE -> dial(currentDialDigits)
-            calculatorRow.visibility == VISIBLE -> acceptCalculatorResult()
-            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> acceptCurrencyResult(0)
+        // Return true if activation succeeded
+        return when {
+            dialRow.visibility == VISIBLE && currentDialDigits.isNotEmpty() -> {
+                dial(currentDialDigits)
+                true
+            }
+            calculatorRow.visibility == VISIBLE && queryCalculatorResult != null -> {
+                acceptCalculatorResult()
+                true
+            }
+            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> {
+                acceptCurrencyResult(0)
+                true
+            }
+            else -> false
         }
     }
 
