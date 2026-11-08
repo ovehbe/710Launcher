@@ -300,6 +300,8 @@ class SearchOverlay @JvmOverloads constructor(
         cachedCommandIcon = null
         adoptedCurrencyCode = null
         adoptedFromQuery = null
+        justActivatedResult = false
+        justActivatedQuery = null
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
         aiSession.cancel()
@@ -315,6 +317,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun acceptCalculatorResult() {
         val result = queryCalculatorResult ?: return
         justActivatedResult = true
+        justActivatedQuery = result
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke(result)
     }
@@ -342,6 +345,7 @@ class SearchOverlay @JvmOverloads constructor(
         adoptedFromQuery = "$amount $code"
         
         justActivatedResult = true
+        justActivatedQuery = "$amount $code"
         // Replace entire query with result, cursor at end, search stays open
         onUpdateSearchText?.invoke("$amount $code")
     }
@@ -1105,6 +1109,12 @@ class SearchOverlay @JvmOverloads constructor(
     private var shownContacts: List<LaunchableItem.Contact> = emptyList()
 
     private fun onSearch(query: String) {
+        // Clear activation flag if user edited the query (not the just-activated query)
+        if (justActivatedResult && query != justActivatedQuery) {
+            justActivatedResult = false
+            justActivatedQuery = null
+        }
+        
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
             webSuggestionsAllowed = false
@@ -1303,6 +1313,8 @@ class SearchOverlay @JvmOverloads constructor(
     
     /** Track if a result was just activated to prevent immediate re-activation */
     private var justActivatedResult = false
+    /** Track the query text that was set by activation */
+    private var justActivatedQuery: String? = null
     
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
@@ -1500,6 +1512,7 @@ class SearchOverlay @JvmOverloads constructor(
     /** Clear the activation flag to allow future auto-activation */
     fun clearActivationFlag() {
         justActivatedResult = false
+        justActivatedQuery = null
     }
 
     fun activateCalculatorOrCurrency(): Boolean {
