@@ -308,14 +308,15 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private fun formatCurrencyAmount(amount: Double): String {
-        // Use Locale.ROOT for locale-independent canonical format
-        // Avoid toLong() overflow for large values
-        return if (amount.isFinite() && amount >= Long.MIN_VALUE && amount <= Long.MAX_VALUE 
-                   && amount == amount.toLong().toDouble()) {
-            amount.toLong().toString()
-        } else {
-            String.format(java.util.Locale.ROOT, "%.8f", amount).trimEnd('0').trimEnd('.')
+        // m1: Format without toLong() clamping for large values
+        // Use String format with 8 decimals, then strip trailing zeros
+        if (!amount.isFinite()) {
+            return amount.toString()
         }
+        
+        // Format with 8 decimal places, then strip trailing zeros
+        val formatted = String.format(java.util.Locale.ROOT, "%.8f", amount)
+        return formatted.trimEnd('0').trimEnd('.')
     }
 
     private fun acceptCurrencyResult(index: Int) {
