@@ -184,12 +184,14 @@ object CurrencyConverter {
         
         when {
             currencyMatches.size == 1 -> {
-                // Single currency: "100 usd" or "100 yen / 10"
+                // Single currency: "100 usd", "100 yen / 10", or "3250 try / 2"
                 fromCurrency = currencyMatches[0].second
-                toCurrency = null
                 firstCurrencyStart = currencyMatches[0].first
-                // Find the actual end position of the currency text in normalized string
                 firstCurrencyEnd = findCurrencyEndPosition(normalized, currencyMatches[0])
+                
+                // Single currency queries don't specify explicit target
+                // convert() will show conversions to display currencies
+                toCurrency = null
             }
             currencyMatches.size == 2 -> {
                 // Two currencies
@@ -646,27 +648,49 @@ object CurrencyConverter {
     ): List<ConversionResult> {
         val fromRate = rates[query.fromCurrency] ?: return emptyList()
         
-        val targetCurrencies = if (query.toCurrency != null) {
-            // Single target specified
-            listOf(query.toCurrency)
-        } else {
-            // Convert to all display currencies except source
-            displayCurrencies.filter { it != query.fromCurrency }
-        }
-        
         val results = mutableListOf<ConversionResult>()
-        for (target in targetCurrencies) {
-            val toRate = rates[target] ?: continue
+        
+        if (query.toCurrency != null) {
+            // Explicit target specified
+            val toRate = rates[query.toCurrency] ?: return emptyList()
             
-            // Convert: amount * (toRate / fromRate)
-            val converted = query.amount * (toRate / fromRate)
+            // R1: If target equals source (same-currency), amount stays as-is
+            val converted = if (query.toCurrency == query.fromCurrency) {
+                query.amount
+            } else {
+                query.amount * (toRate / fromRate)
+            }
             
             results.add(ConversionResult(
                 fromAmount = query.amount,
                 fromCurrency = query.fromCurrency,
                 toAmount = converted,
-                toCurrency = target
+                toCurrency = query.toCurrency
             ))
+        } else {
+            // No explicit target - show conversions to display currencies
+            // R1: Always include source currency as first result for adopted continuations
+            // This allows "3250 try / 2" to show "1625 try" first
+            results.add(ConversionResult(
+                fromAmount = query.amount,
+                fromCurrency = query.fromCurrency,
+                toAmount = query.amount,  // Same currency, same amount
+                toCurrency = query.fromCurrency
+            ))
+            
+            // Then show conversions to other display currencies
+            displayCurrencies
+                .filter { it != query.fromCurrency && it in rates }
+                .forEach { target ->
+                    val toRate = rates[target] ?: return@forEach
+                    val converted = query.amount * (toRate / fromRate)
+                    results.add(ConversionResult(
+                        fromAmount = query.amount,
+                        fromCurrency = query.fromCurrency,
+                        toAmount = converted,
+                        toCurrency = target
+                    ))
+                }
         }
         
         return results
