@@ -1,3 +1,0 @@
-Branch: feature/calc-currency-adoption-v1.9.9
-Commit: 1a2b8c95ec337a90f2ee18839ce59244d8e95c6f
-Timestamp: 2026-11-08T18:11:55Z
