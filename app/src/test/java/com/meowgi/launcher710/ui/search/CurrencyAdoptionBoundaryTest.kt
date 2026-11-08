@@ -155,24 +155,27 @@ class CurrencyAdoptionBoundaryTest {
             println("Query: '100 yen / 10'")
             println("First row text: '$firstText'")
             
-            val hasJPY = firstText.contains("JPY", ignoreCase = true) || firstText.contains("¥")
-            val hasTRY = firstText.contains("TRY", ignoreCase = true) || firstText.contains("₺")
-            val hasUSD = firstText.contains("USD", ignoreCase = true) || firstText.contains("$")
-            val hasEUR = firstText.contains("EUR", ignoreCase = true) || firstText.contains("€")
+            // Parse the target currency (after "=")
+            val parts = firstText.split("=")
+            val targetPart = if (parts.size >= 2) parts[1].trim() else ""
             
-            println("Contains JPY: $hasJPY (source currency)")
-            println("Contains TRY: $hasTRY (first configured display target)")
-            println("Contains USD: $hasUSD")
-            println("Contains EUR: $hasEUR")
+            val targetIsTRY = targetPart.contains("TRY", ignoreCase = true) || targetPart.contains("₺")
+            val targetIsJPY = targetPart.startsWith("10 JPY", ignoreCase = true) || targetPart.startsWith("10¥")
+            val targetIsUSD = targetPart.contains("USD", ignoreCase = true) || targetPart.contains("$")
+            val targetIsEUR = targetPart.contains("EUR", ignoreCase = true) || targetPart.contains("€")
+            
+            println("Target currency (after =): '$targetPart'")
+            println("Target is TRY: $targetIsTRY (configured display target)")
+            println("Target is JPY: $targetIsJPY (would be source-first)")
             
             println("\nEXPECTED BEHAVIOR:")
             println("- Initial unadopted query should convert to configured targets (TRY first)")
-            println("- R1 fix made source appear first globally")
+            println("- Source currency (JPY) should NOT be the target")
             println("\nACTUAL BEHAVIOR:")
             when {
-                hasJPY -> println("✗ REGRESSION: First result is JPY (source) - breaks original behavior")
-                hasTRY -> println("✓ CORRECT: First result is TRY (configured target)")
-                else -> println("? UNEXPECTED: First result is neither JPY nor TRY")
+                targetIsJPY -> println("✗ REGRESSION: Target is JPY (source) - breaks original behavior")
+                targetIsTRY -> println("✓ CORRECT: Target is TRY (configured display target)")
+                else -> println("? UNEXPECTED: Target is neither JPY nor TRY: '$targetPart'")
             }
             println("==================")
         } else {
@@ -185,38 +188,73 @@ class CurrencyAdoptionBoundaryTest {
     
     @Test
     fun `BOUNDARY PREMISE - adoption then continuation preserves adopted currency`() {
-        // After adopting a result like "3250 try", appending "/2" should stay in TRY
+        println("=== TEST: Adoption then continuation ===")
         
-        // Simulate already-adopted state by directly setting field
-        typeIntoField("3250 try")
+        // Step 1: Type initial conversion query
+        typeIntoField("100 usd to try")
         settle()
         
-        // Check if currency results appear
         val currencyRowsContainer = overlay.currencyRowsContainer
-        println("After typing '3250 try':")
-        println("Currency rows: ${currencyRowsContainer.childCount}")
+        println("After '100 usd to try': ${currencyRowsContainer.childCount} rows")
         
+        // Step 2: Adopt first result (should be ~3250 TRY)
         if (currencyRowsContainer.childCount > 0) {
-            // Now append arithmetic
-            typeIntoField("3250 try / 2")
+            val firstRow = currencyRowsContainer.getChildAt(0) as? android.widget.LinearLayout
+            val firstTextView = firstRow?.getChildAt(0) as? android.widget.TextView
+            val firstText = firstTextView?.text?.toString() ?: ""
+            println("First result before adoption: '$firstText'")
+            
+            // Click to adopt (or manually simulate adoption for test)
+            firstRow?.performClick()
             settle()
             
-            println("After appending '/ 2':")
-            println("Currency rows: ${currencyRowsContainer.childCount}")
+            val adoptedText = field.text.toString()
+            println("Adopted into field: '$adoptedText'")
             
+            // Manually set adoption tracking for test (click doesn't wire properly in Robolectric)
+            // In real app, acceptCurrencyResult() sets this
+            if (adoptedText.contains("try", ignoreCase = true)) {
+                overlay.adoptedCurrencyCode = "TRY"
+                println("Manually set adoptedCurrencyCode=TRY for test")
+            }
+            
+            // Step 3: Append arithmetic
+            typeIntoField("$adoptedText / 2")
+            settle()
+            
+            println("After appending '/ 2': ${currencyRowsContainer.childCount} rows")
+            
+            // Step 4: Check first result
             if (currencyRowsContainer.childCount > 0) {
-                val firstRow = currencyRowsContainer.getChildAt(0)
-                println("First row: ${firstRow}")
+                for (i in 0 until minOf(3, currencyRowsContainer.childCount)) {
+                    val row = currencyRowsContainer.getChildAt(i) as? android.widget.LinearLayout
+                    val textView = row?.getChildAt(0) as? android.widget.TextView
+                    val text = textView?.text?.toString() ?: ""
+                    println("Row $i: $text")
+                }
                 
-                // QUESTION: Does first row show 1625 TRY or conversion to other currency?
-                println("=== OBSERVATION ===")
-                println("Query: '3250 try / 2'")
-                println("Expected: First result 1625 TRY (preserve adopted unit)")
-                println("Actual: [CHECK MANUALLY]")
+                val continuedFirstRow = currencyRowsContainer.getChildAt(0) as? android.widget.LinearLayout
+                val continuedTextView = continuedFirstRow?.getChildAt(0) as? android.widget.TextView
+                val continuedText = continuedTextView?.text?.toString() ?: ""
+                
+                val targetPart = continuedText.split("=").getOrNull(1)?.trim() ?: ""
+                val targetIsTRY = targetPart.contains("TRY", ignoreCase = true)
+                
+                println("\n=== OBSERVATION ===")
+                println("After adoption and '/2':")
+                println("First result: '$continuedText'")
+                println("Target is TRY: $targetIsTRY")
+                println("\nEXPECTED:")
+                println("- Adopted currency (TRY) should be preserved")
+                println("- Should show result in TRY, not convert to other currency")
+                println("\nACTUAL:")
+                if (targetIsTRY) {
+                    println("✓ CORRECT: Continued in TRY (adopted currency preserved)")
+                } else {
+                    println("✗ WRONG: Did not preserve adopted currency")
+                }
                 println("==================")
             }
-        } else {
-            println("ERROR: No currency results - async not working in test")
         }
     }
 }

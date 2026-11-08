@@ -1288,6 +1288,9 @@ class SearchOverlay @JvmOverloads constructor(
     // R2: Track query generation to prevent stale async overwrites
     private var currencyQueryGeneration = 0
     
+    // R1: Track if current query is from adopted currency result
+    internal var adoptedCurrencyCode: String? = null  // internal for testing
+    
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
         
@@ -1328,10 +1331,11 @@ class SearchOverlay @JvmOverloads constructor(
                     println("evaluateCurrency: rates.size=${rates.size}, parsing query...")
                     if (rates.isNotEmpty()) {
                         val parsedQuery = CurrencyConverter.parse(query, layout, rates.keys)
-                        println("evaluateCurrency: parsed=${parsedQuery != null}")
+                        println("evaluateCurrency: parsed=${parsedQuery != null}, adoptedCurrencyCode=$adoptedCurrencyCode")
                         if (parsedQuery != null) {
                             val displayCurrencies = prefs.getSearchCurrencyList()
-                            val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies)
+                            // R1: Pass adopted currency for chaining behavior
+                            val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies, adoptedCurrencyCode)
                             println("evaluateCurrency: results.size=${results.size}")
                             
                             // R2: Only update if this is still the current query

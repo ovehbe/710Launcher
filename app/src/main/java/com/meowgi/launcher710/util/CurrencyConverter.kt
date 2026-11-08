@@ -644,7 +644,8 @@ object CurrencyConverter {
     fun convert(
         query: CurrencyQuery,
         rates: Map<String, Double>,
-        displayCurrencies: List<String>
+        displayCurrencies: List<String>,
+        adoptedCurrency: String? = null
     ): List<ConversionResult> {
         val fromRate = rates[query.fromCurrency] ?: return emptyList()
         
@@ -668,17 +669,18 @@ object CurrencyConverter {
                 toCurrency = query.toCurrency
             ))
         } else {
-            // No explicit target - show conversions to display currencies
-            // R1: Always include source currency as first result for adopted continuations
-            // This allows "3250 try / 2" to show "1625 try" first
-            results.add(ConversionResult(
-                fromAmount = query.amount,
-                fromCurrency = query.fromCurrency,
-                toAmount = query.amount,  // Same currency, same amount
-                toCurrency = query.fromCurrency
-            ))
+            // No explicit target
+            // R1: If query matches adopted currency, preserve it first for chaining
+            if (adoptedCurrency != null && adoptedCurrency == query.fromCurrency) {
+                results.add(ConversionResult(
+                    fromAmount = query.amount,
+                    fromCurrency = query.fromCurrency,
+                    toAmount = query.amount,
+                    toCurrency = query.fromCurrency
+                ))
+            }
             
-            // Then show conversions to other display currencies
+            // Then show conversions to display currencies (excluding source)
             displayCurrencies
                 .filter { it != query.fromCurrency && it in rates }
                 .forEach { target ->
