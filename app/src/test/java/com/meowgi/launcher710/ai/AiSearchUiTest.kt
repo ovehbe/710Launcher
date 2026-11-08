@@ -10,7 +10,9 @@ import android.text.method.MetaKeyKeyListener
 import android.text.method.QwertyKeyListener
 import android.text.method.TextKeyListener
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
@@ -52,6 +54,9 @@ class AiSearchUiTest {
     @Before
     fun setUp() {
         LauncherPrefs(context).searchWebSuggestions = true
+        // Create mock progress indicator and magnifier for unified indicator
+        val mockProgressIndicator = ProgressBar(context)
+        val mockMagnifier = ImageView(context)
         overlay = SearchOverlay(context).apply {
             repository = AppRepository.get(context)
             contactModeProvider = { 1 }
@@ -66,6 +71,8 @@ class AiSearchUiTest {
                     emit(AiEvent.Done)
                 }
             }
+            // Set up unified progress indicator (normally done by LauncherActivity)
+            setProgressIndicator(mockProgressIndicator, mockMagnifier)
         }
         overlay.show()
     }
@@ -87,11 +94,12 @@ class AiSearchUiTest {
 
     private val panel get() = (0 until overlay.childCount).map { overlay.getChildAt(it) }.filterIsInstance<ScrollView>().single()
     private val panelContent get() = panel.getChildAt(0) as LinearLayout
-    private val progress get() = panelContent.getChildAt(0)
-    private val answer get() = panelContent.getChildAt(1) as TextView
-    private val aiContentContainer get() = panelContent.getChildAt(2) as LinearLayout
-    private val error get() = panelContent.getChildAt(3) as TextView
-    private val settingsLink get() = panelContent.getChildAt(4) as TextView
+    // Unified progress indicator now in search button, not in panel. Check via voiceProgressVisibility.
+    private val progress get() = overlay.voiceProgressVisibility
+    private val answer get() = panelContent.getChildAt(0) as TextView
+    private val aiContentContainer get() = panelContent.getChildAt(1) as LinearLayout
+    private val error get() = panelContent.getChildAt(2) as TextView
+    private val settingsLink get() = panelContent.getChildAt(3) as TextView
     private val results get() = (0 until overlay.childCount).map { overlay.getChildAt(it) }.filterIsInstance<RecyclerView>().single()
 
     private fun suggestions(): List<String> {
@@ -109,11 +117,11 @@ class AiSearchUiTest {
         assertEquals(emptyList<String>(), suggestions())
         assertEquals(View.VISIBLE, panel.visibility)
         assertEquals(View.GONE, results.visibility)
-        assertEquals(View.VISIBLE, progress.visibility)
+        assertEquals(View.VISIBLE, progress)
 
         release.countDown()
         settle()
-        assertEquals(View.GONE, progress.visibility)
+        assertEquals(View.GONE, progress)
         assertEquals("Hello from the model", answer.text.toString())
         assertEquals(AiState.Answer("hjkl", "**Hello** from the model", done = true), overlay.aiSession.state)
         // Suggestions for the same query must not come back over the answer.
@@ -148,6 +156,37 @@ class AiSearchUiTest {
     }
 
     @Test
+    fun dismissDuringAiLoadingHidesProgress() {
+        type("hjkl")
+        assertTrue(overlay.startAiAnswer())
+        settle()
+        assertEquals(View.VISIBLE, progress)
+        // Dismiss while AI loading (before release.countDown)
+        overlay.dismiss()
+        settle()
+        // Progress must hide when AI cancelled
+        assertEquals(View.GONE, progress)
+        assertEquals(AiState.Idle, overlay.aiSession.state)
+        release.countDown()
+    }
+
+    @Test
+    fun retypingDuringAiLoadingHidesProgress() {
+        type("hjkl")
+        assertTrue(overlay.startAiAnswer())
+        settle()
+        assertEquals(View.VISIBLE, progress)
+        // Retype while AI loading (before release.countDown)
+        overlay.applyQuery("hjklm")
+        settle()
+        // Progress must hide when AI cancelled by new query
+        assertEquals(View.GONE, progress)
+        assertEquals(AiState.Idle, overlay.aiSession.state)
+        assertTrue(lastCall.get().isCancelled)
+        release.countDown()
+    }
+
+    @Test
     fun missingConfigShowsAHintAndTheSettingsLink() {
         overlay.aiConfigProvider = { AiConfigResult.Unavailable("Pick a model for AI answers.") }
         type("hjkl")
@@ -165,6 +204,7 @@ class AiSearchUiTest {
         assertFalse(overlay.startAiAnswer())
         assertEquals(AiState.Idle, overlay.aiSession.state)
     }
+
 
     // ------------------------------------------------------------------ launcher triggers
 
@@ -276,7 +316,7 @@ class AiSearchUiTest {
     @Test
     fun longPressOnTheSearchIconAsksAiAboutTheQuery() {
         val (activity, o) = launcherWithQuery(aiEnabled = true, altEnter = false)
-        val icon = activity.findViewById<View>(R.id.btnSearch)
+        val icon = activity.findViewById<View>(R.id.btnSearchContainer)
         assertTrue(icon.performLongClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(AiState.Failed("hj", "AI answers are off."), o.aiSession.state)
@@ -325,7 +365,7 @@ class AiSearchUiTest {
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         shadowOf(Looper.getMainLooper()).idle()
         val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
-        assertTrue(activity.findViewById<View>(R.id.btnSearch).performLongClick())
+        assertTrue(activity.findViewById<View>(R.id.btnSearchContainer).performLongClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(context.getString(R.string.ai_no_query), ShadowToast.getTextOfLatestToast())
         assertFalse(o.aiSession.isActive)
@@ -338,7 +378,7 @@ class AiSearchUiTest {
         val activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         shadowOf(Looper.getMainLooper()).idle()
         val o = activity.findViewById<SearchOverlay>(R.id.searchOverlay)
-        assertTrue(activity.findViewById<View>(R.id.btnSearch).performClick())
+        assertTrue(activity.findViewById<View>(R.id.btnSearchContainer).performClick())
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(View.VISIBLE, o.visibility)
         assertFalse(o.aiSession.isActive)
