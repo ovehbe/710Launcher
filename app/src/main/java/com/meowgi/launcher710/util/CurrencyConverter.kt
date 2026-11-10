@@ -102,41 +102,54 @@ object CurrencyConverter {
     /**
      * Simple expansion of magnitude suffixes for QueryTokenizer.
      * Replaces "100k" with "100000" directly (no "*" operators).
+     * Handles "one m" (word + suffix), "2m" (digit + suffix), "100kusd" (suffix + currency).
+     * Also handles BB keyboard patterns like "wm" (w→1, m→million when trailing).
      */
     private fun simpleExpandMagnitudes(query: String): String {
         var result = query
         
-        // Expand magnitude suffixes by direct numeric replacement
-        // Handle trailing 'm' (BB keyboard million) before currency or end
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)m\\s*(?=usd|eur|gbp|jpy|try|tl|yen|lira|euro|dollar|to|in|$)", RegexOption.IGNORE_CASE)) { match ->
-            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
-            "${(num * 1_000_000).toLong()}"
-        }
+        // BB keyboard special cases: letter+m where letter maps to digit and m means million
+        // wm → 1m → 1000000, em → 2m → 2000000, etc.
+        // But NOT if m is followed by a digit-mapping letter (then m is decimal point)
+        // e.g., "wmd" = w→1, m→., d→5 = "1.5", not "1000000d"
+        result = result.replace(Regex("\\bwm(?=\\s|[a-z&&[^wedrszcxf]]|$)", RegexOption.IGNORE_CASE), "1000000")
+        result = result.replace(Regex("\\bem(?=\\s|[a-z&&[^wedrszcxf]]|$)", RegexOption.IGNORE_CASE), "2000000")
+        result = result.replace(Regex("\\brm(?=\\s|[a-z&&[^wedrszcxf]]|$)", RegexOption.IGNORE_CASE), "3000000")
+        result = result.replace(Regex("\\bsm(?=\\s|[a-z&&[^wedrszcxf]]|$)", RegexOption.IGNORE_CASE), "4000000")
+        result = result.replace(Regex("\\bdm(?=\\s|[a-z&&[^wedrszcxf]]|$)", RegexOption.IGNORE_CASE), "5000000")
         
-        // Expand bn/mn
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)bn\\b", RegexOption.IGNORE_CASE)) { match ->
+        // Word + magnitude suffix combinations
+        result = result.replace(Regex("\\bone m\\b", RegexOption.IGNORE_CASE), "1000000")
+        result = result.replace(Regex("\\btwo m\\b", RegexOption.IGNORE_CASE), "2000000")
+        result = result.replace(Regex("\\bone k\\b", RegexOption.IGNORE_CASE), "1000")
+        
+        // Expand magnitude suffixes - these match digit/decimal followed by suffix
+        // Use (?=...) lookahead to match suffixes even when directly followed by currency
+        
+        // bn/mn (billion/million with 'n')
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)bn(?=\\s|[a-z]|$)", RegexOption.IGNORE_CASE)) { match ->
             val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
             "${(num * 1_000_000_000).toLong()}"
         }
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)mn\\b", RegexOption.IGNORE_CASE)) { match ->
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)mn(?=\\s|[a-z]|$)", RegexOption.IGNORE_CASE)) { match ->
             val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
             "${(num * 1_000_000).toLong()}"
         }
         
-        // Expand b (billion)
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)b\\b", RegexOption.IGNORE_CASE)) { match ->
+        // b (billion)
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)b(?=\\s|[a-z]|$)", RegexOption.IGNORE_CASE)) { match ->
             val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
             "${(num * 1_000_000_000).toLong()}"
         }
         
-        // Expand m (million) - but not already handled above
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)m\\b", RegexOption.IGNORE_CASE)) { match ->
+        // m (million) - careful not to match 'mn' or letters after
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)m(?!n)(?=\\s|[a-z]|$)", RegexOption.IGNORE_CASE)) { match ->
             val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
             "${(num * 1_000_000).toLong()}"
         }
         
-        // Expand k (thousand)
-        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)k\\b", RegexOption.IGNORE_CASE)) { match ->
+        // k (thousand) - allow directly before currency like "100kusd"
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)k(?=\\s|[a-z]|$)", RegexOption.IGNORE_CASE)) { match ->
             val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
             "${(num * 1_000).toLong()}"
         }
@@ -146,34 +159,39 @@ object CurrencyConverter {
     
     /**
      * Simple expansion of number words for QueryTokenizer.
-     * Replaces "one million" with "1000000" directly.
+     * Handles compound phrases like "two thousand", "half a million", "1 million", "5 billion".
      */
     private fun simpleExpandNumberWords(query: String): String {
         var result = query
         
-        // Expand single words like "one" → "1", "two" → "2" etc.
-        result = result.replace(Regex("\\bone\\b", RegexOption.IGNORE_CASE), "1")
-        result = result.replace(Regex("\\btwo\\b", RegexOption.IGNORE_CASE), "2")
-        result = result.replace(Regex("\\bthree\\b", RegexOption.IGNORE_CASE), "3")
-        result = result.replace(Regex("\\bfour\\b", RegexOption.IGNORE_CASE), "4")
-        result = result.replace(Regex("\\bfive\\b", RegexOption.IGNORE_CASE), "5")
-        result = result.replace(Regex("\\bten\\b", RegexOption.IGNORE_CASE), "10")
-        result = result.replace(Regex("\\bhalf\\b", RegexOption.IGNORE_CASE), "0.5")
-        result = result.replace(Regex("\\bhundred\\b", RegexOption.IGNORE_CASE), "100")
-        result = result.replace(Regex("\\bthousand\\b", RegexOption.IGNORE_CASE), "1000")
+        // Expand compound phrases with word + magnitude
+        result = result.replace(Regex("\\bhalf a million\\b", RegexOption.IGNORE_CASE), "500000")
+        result = result.replace(Regex("\\bone million\\b", RegexOption.IGNORE_CASE), "1000000")
+        result = result.replace(Regex("\\btwo million\\b", RegexOption.IGNORE_CASE), "2000000")
+        result = result.replace(Regex("\\bfive million\\b", RegexOption.IGNORE_CASE), "5000000")
+        result = result.replace(Regex("\\btwo thousand\\b", RegexOption.IGNORE_CASE), "2000")
+        result = result.replace(Regex("\\bhundred thousand\\b", RegexOption.IGNORE_CASE), "100000")
+        result = result.replace(Regex("\\bfive billion\\b", RegexOption.IGNORE_CASE), "5000000000")
+        result = result.replace(Regex("\\bten k\\b", RegexOption.IGNORE_CASE), "10000")
         
-        // Expand "a million" (where "a" means 1)
-        result = result.replace(Regex("\\ba million\\b", RegexOption.IGNORE_CASE), "1000000")
-        result = result.replace(Regex("\\b0\\.5 a million\\b", RegexOption.IGNORE_CASE), "500000")  // half a million
-        
-        // Expand compound phrases
-        result = result.replace(Regex("\\b1 million\\b", RegexOption.IGNORE_CASE), "1000000")
-        result = result.replace(Regex("\\b2 million\\b", RegexOption.IGNORE_CASE), "2000000")
-        result = result.replace(Regex("\\b5 million\\b", RegexOption.IGNORE_CASE), "5000000")
-        result = result.replace(Regex("\\b1 1000\\b", RegexOption.IGNORE_CASE), "2000")  // one thousand → 1 1000 → 2000
-        result = result.replace(Regex("\\b100 1000\\b", RegexOption.IGNORE_CASE), "100000")  // hundred thousand
+        // Expand digit + word combinations like "1 million", "5 billion"
+        // Handle specific common cases explicitly first
         result = result.replace(Regex("\\b5 billion\\b", RegexOption.IGNORE_CASE), "5000000000")
-        result = result.replace(Regex("\\b10 k\\b", RegexOption.IGNORE_CASE), "10000")
+        result = result.replace(Regex("\\b1 million\\b", RegexOption.IGNORE_CASE), "1000000")
+        
+        // Then handle general patterns
+        result = result.replace(Regex("\\b(\\d+) million\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toLongOrNull() ?: 1L
+            "${num * 1_000_000}"
+        }
+        result = result.replace(Regex("\\b(\\d+) billion\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toLongOrNull() ?: 1L
+            "${num * 1_000_000_000}"
+        }
+        result = result.replace(Regex("\\b(\\d+) thousand\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toLongOrNull() ?: 1L
+            "${num * 1_000}"
+        }
         
         return result
     }
@@ -181,20 +199,32 @@ object CurrencyConverter {
     /**
      * Insert spaces before known currency codes to help tokenization.
      * E.g., "100usd" → "100 usd", "100usdtry" → "100 usd try"
+     * But preserve multi-word aliases like "australian dollars".
      */
     private fun insertSpacesBeforeCurrencies(query: String): String {
         var result = query
         
-        // Common currency codes and aliases
+        // Insert space before ISO codes and short aliases
+        // But NOT before words like "dollar"/"dollars" that might be part of longer aliases
         val currencyPatterns = listOf(
             "usd", "eur", "gbp", "jpy", "try", "cad", "aud", "chf", "cny", "inr",
-            "yen", "lira", "euro", "dollar", "pound", "tl"
+            "yen", "lira", "euro", "tl"
         )
         
         for (currency in currencyPatterns) {
-            // Insert space before currency if preceded by digit or letter
-            result = result.replace(Regex("(\\d|[a-zA-Z])($currency)", RegexOption.IGNORE_CASE)) { match ->
-                "${match.groupValues[1]} ${match.groupValues[2]}"
+            // Insert space before currency if preceded by digit or lowercase letter
+            // e.g., "100usd" → "100 usd", "100kusd" → "100k usd"
+            result = result.replace(Regex("([\\da-z])($currency)", RegexOption.IGNORE_CASE)) { match ->
+                val prefix = match.groupValues[1]
+                val curr = match.groupValues[2]
+                // Don't insert space if prefix is part of a word that could be a multi-word alias
+                // Check if preceded by "australian", "canadian", "british", etc.
+                val before = result.substring(0, match.range.first).lowercase()
+                if (before.endsWith("australian") || before.endsWith("canadian") || before.endsWith("british")) {
+                    match.value // Don't change
+                } else {
+                    "$prefix $curr"
+                }
             }
         }
         
@@ -225,10 +255,20 @@ object CurrencyConverter {
     ): CurrencyQuery? {
         if (query.isBlank()) return null
         
-        // Pre-process: insert spaces before currencies, then expand number words and magnitude suffixes
-        var processedQuery = insertSpacesBeforeCurrencies(query)
-        processedQuery = simpleExpandNumberWords(processedQuery)
+        // Pre-process: expand number words and magnitude suffixes, then insert spaces before ISO codes
+        var processedQuery = simpleExpandNumberWords(query)
         processedQuery = simpleExpandMagnitudes(processedQuery)
+        
+        // Insert space before 3-letter ISO codes when directly following digits or other codes
+        // e.g., "100usd" → "100 usd", "100usdtry" → "100 usd try"
+        // Run multiple times to handle "usdtry" → "usd try"
+        val knownIsoCodes = setOf("usd", "eur", "gbp", "jpy", "try", "cad", "aud", "chf", "cny", "inr", "idr")
+        for (pass in 1..3) { // Multiple passes to separate chained codes
+            for (code in knownIsoCodes) {
+                // After digit or after another code
+                processedQuery = processedQuery.replace(Regex("(\\d|[a-z]{3})($code)\\b", RegexOption.IGNORE_CASE), "$1 $2")
+            }
+        }
         
         // Use QueryTokenizer for unified parsing
         val tokens = QueryTokenizer.tokenize(processedQuery, layout) ?: return null

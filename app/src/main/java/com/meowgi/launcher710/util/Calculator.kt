@@ -49,6 +49,11 @@ object Calculator {
     }
 
     /**
+     * Result from toExpression including the expression and optional currency code.
+     */
+    data class ExpressionResult(val expression: String, val currencyCode: String? = null)
+    
+    /**
      * Converts a query string to a calculator expression by mapping BlackBerry keyboard
      * letters to operators and digits. Returns null if the string contains characters
      * that aren't mappable (meaning it's a normal text query, not a calculator expression).
@@ -56,8 +61,11 @@ object Calculator {
      * Also accepts raw symbols (+, -, *, /, ., (, ), %, digits) directly.
      * 
      * Requires at least one digit (raw or mapped) to prevent plain words from being treated as math.
+     * 
+     * For expressions with currency (e.g., "100 yen * 10"), returns the expression with
+     * the currency code preserved so results can show "1000 JPY".
      */
-    fun toExpression(query: String, layout: Int = DialNumber.LAYOUT_QWERTY): String? {
+    fun toExpressionWithCurrency(query: String, layout: Int = DialNumber.LAYOUT_QWERTY): ExpressionResult? {
         if (query.isEmpty()) return null
         
         // Use unified tokenizer to handle currency detection before letter-digit mapping
@@ -66,22 +74,47 @@ object Calculator {
         // Reject unmappable words (e.g., "year", "wee")
         if (tokens.any { it is QueryTokenizer.Token.Word }) return null
         
-        // Check if there are operators (arithmetic)
-        val hasOperators = QueryTokenizer.hasOperator(tokens)
+        // Check if there are BINARY operators (not just leading minus)
+        // For minus, check that it's not the first token (leading minus)
+        val hasBinaryOperator = tokens.any { token ->
+            if (token is QueryTokenizer.Token.Operator) {
+                if (token.op == '-') {
+                    // Minus is binary if it's not the first token
+                    tokens.indexOf(token) > 0
+                } else {
+                    token.op in "+*/%()="
+                }
+            } else {
+                false
+            }
+        }
         
         // If there are currency tokens:
-        // - WITH arithmetic operators → allow (e.g., "100 yen * 10" → calculator shows arithmetic)
-        // - WITHOUT arithmetic operators → reject (pure currency query, e.g., "100 yen")
+        // - WITH binary operators → allow (e.g., "100 yen * 10" → calculator arithmetic)
+        // - WITHOUT binary operators → reject (plain currency amount, e.g., "100 yen", "-100 yen")
         val hasCurrency = tokens.any { it is QueryTokenizer.Token.Currency }
-        if (hasCurrency && !hasOperators) return null
+        if (hasCurrency && !hasBinaryOperator) return null
         
         // Reject conversion keywords even with operators (e.g., "100 yen to usd" is currency conversion)
         if (tokens.any { it is QueryTokenizer.Token.Keyword }) return null
         
+        // Extract currency code if present
+        val currencyCode = QueryTokenizer.extractCurrencyCode(tokens)
+        
         // Convert tokens to calculator expression (ignoring currency tokens)
         // NOTE: This may return plain numbers or incomplete expressions (e.g., "2+")
         // Display logic in SearchOverlay decides whether to show these
-        return QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
+        val expression = QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency) ?: return null
+        
+        return ExpressionResult(expression, currencyCode)
+    }
+    
+    /**
+     * Backward-compatible wrapper that returns just the expression string.
+     * Use toExpressionWithCurrency() when currency code preservation is needed.
+     */
+    fun toExpression(query: String, layout: Int = DialNumber.LAYOUT_QWERTY): String? {
+        return toExpressionWithCurrency(query, layout)?.expression
     }
 
     /**

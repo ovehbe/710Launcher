@@ -258,6 +258,7 @@ class SearchOverlay @JvmOverloads constructor(
     /** Calculator result for the current query, or null; set before results are published. */
     private var queryCalculatorResult: String? = null
     private var queryCalculatorExpression: String? = null
+    private var queryCalculatorCurrencyCode: String? = null
     /** Whether to show calculator row even without a valid result (when no app matches) */
     private var queryCalculatorShowIncomplete: Boolean = false
     
@@ -316,10 +317,16 @@ class SearchOverlay @JvmOverloads constructor(
 
     private fun acceptCalculatorResult() {
         val result = queryCalculatorResult ?: return
+        // Append currency code if present (e.g., "10" becomes "10 JPY")
+        val resultWithCurrency = if (queryCalculatorCurrencyCode != null) {
+            "$result ${queryCalculatorCurrencyCode}"
+        } else {
+            result
+        }
         justActivatedResult = true
-        justActivatedQuery = result
+        justActivatedQuery = resultWithCurrency
         // Replace entire query with result, cursor at end, search stays open
-        onUpdateSearchText?.invoke(result)
+        onUpdateSearchText?.invoke(resultWithCurrency)
     }
 
     private fun formatCurrencyAmount(amount: Double): String {
@@ -1214,14 +1221,17 @@ class SearchOverlay @JvmOverloads constructor(
         queryCalculatorResult = null
         queryCalculatorExpression = null
         queryCalculatorShowIncomplete = false
+        queryCalculatorCurrencyCode = null
         
         if (!prefs.searchCalculatorEnabled) {
             updateCalculatorRow()
             return
         }
         
-        val expression = Calculator.toExpression(query, layout)
-        if (expression != null) {
+        val exprResult = Calculator.toExpressionWithCurrency(query, layout)
+        if (exprResult != null) {
+            val expression = exprResult.expression
+            val currencyCode = exprResult.currencyCode
             // DISPLAY RULES: Decide whether to show calculator row
             // These rules are separate from Calculator.toExpression API contract
             
@@ -1252,7 +1262,7 @@ class SearchOverlay @JvmOverloads constructor(
                                    expression.contains('*') || 
                                    expression.contains('/') ||
                                    expression.contains('(') || expression.contains(')') ||
-                                   (expression.contains('-') && !expression.matches(Regex("^-.*")))
+                                   (expression.contains('-') && expression.indexOf('-') > 0) // minus not at start
             
             // Rule 2: Don't show calculator for plain numbers (positive or negative)
             // This includes: "123", "-4185", "w00" (mapped to 100), "-w00" (mapped to -100)
@@ -1304,6 +1314,7 @@ class SearchOverlay @JvmOverloads constructor(
             if (!hasResults) {
                 // No app/contact matches: show expression even if not yet evaluated
                 queryCalculatorExpression = expression
+                queryCalculatorCurrencyCode = currencyCode
                 queryCalculatorShowIncomplete = true
                 if (result != null) {
                     queryCalculatorResult = result
@@ -1313,6 +1324,7 @@ class SearchOverlay @JvmOverloads constructor(
                 if (result != null) {
                     queryCalculatorResult = result
                     queryCalculatorExpression = expression
+                    queryCalculatorCurrencyCode = currencyCode
                 }
             }
         }
@@ -1323,6 +1335,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun updateCalculatorRow() {
         val result = queryCalculatorResult
         val expression = queryCalculatorExpression
+        val currencyCode = queryCalculatorCurrencyCode
         val showIncomplete = queryCalculatorShowIncomplete
         
         // Hide row if a command is present (commands take precedence)
@@ -1341,7 +1354,9 @@ class SearchOverlay @JvmOverloads constructor(
         
         // Determine text to show
         val displayText = if (result != null) {
-            "$expression = $result"
+            // Append currency code to result if present (e.g., "100 yen / 10 = 10 JPY")
+            val resultWithCurrency = if (currencyCode != null) "$result $currencyCode" else result
+            "$expression = $resultWithCurrency"
         } else if (showIncomplete) {
             expression // Show incomplete expression without result
         } else {

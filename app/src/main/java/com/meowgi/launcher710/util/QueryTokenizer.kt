@@ -117,6 +117,16 @@ object QueryTokenizer {
     }
 
     private fun matchWord(str: String, start: Int): Pair<String, Int>? {
+        // First, check for multi-word currency aliases (e.g., "australian dollars")
+        val remaining = str.substring(start).lowercase()
+        for (alias in CurrencyConverter.CURRENCY_NAME_ALIASES.keys.sortedByDescending { it.length }) {
+            if (remaining.startsWith(alias) && 
+                (start + alias.length >= str.length || !str[start + alias.length].isLetterOrDigit())) {
+                return Pair(str.substring(start, start + alias.length), alias.length)
+            }
+        }
+        
+        // Otherwise, match consecutive letters (single word)
         var end = start
         while (end < str.length && str[end].isLetter()) end++
         if (end == start) return null
@@ -133,6 +143,14 @@ object QueryTokenizer {
 
     fun hasOperator(tokens: List<Token>): Boolean {
         return tokens.any { it is Token.Operator && it.op in "+-*/%()=" }
+    }
+    
+    /**
+     * Extract currency code from tokens if present.
+     * Returns the ISO code (e.g., "JPY") or null if no currency found.
+     */
+    fun extractCurrencyCode(tokens: List<Token>): String? {
+        return tokens.filterIsInstance<Token.Currency>().firstOrNull()?.code
     }
 
     fun toCalculatorExpression(tokens: List<Token>, includeCurrency: Boolean = false): String? {
