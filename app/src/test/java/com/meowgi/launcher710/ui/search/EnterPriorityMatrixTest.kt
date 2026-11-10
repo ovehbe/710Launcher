@@ -1,15 +1,23 @@
 package com.meowgi.launcher710.ui.search
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
+import android.content.pm.ResolveInfo
+import android.graphics.drawable.ColorDrawable
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import androidx.test.core.app.ApplicationProvider
 import com.meowgi.launcher710.LauncherActivity
 import com.meowgi.launcher710.ai.AiConfigResult
-import com.meowgi.launcher710.model.AppInfo
-import com.meowgi.launcher710.util.DialNumber
+import com.meowgi.launcher710.util.AppRepository
 import com.meowgi.launcher710.util.FakeCurrencyRatesCache
 import com.meowgi.launcher710.util.LauncherPrefs
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -17,8 +25,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
 
 /**
  * Test matrix for Enter key priority with calculator/currency vs real results.
@@ -40,6 +50,20 @@ class EnterPriorityMatrixTest {
     @Before
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Fake launcher apps so "dis" / "calculator" produce real search hits in Robolectric.
+        registerFakeLauncherApp(
+            context,
+            packageName = "com.discord",
+            activityName = "com.discord.MainActivity",
+            label = "Discord"
+        )
+        registerFakeLauncherApp(
+            context,
+            packageName = "com.android.calculator2",
+            activityName = "com.android.calculator2.Calculator",
+            label = "Calculator"
+        )
         
         // Enable calculator and currency features, disable web suggestions
         LauncherPrefs(context).apply {
@@ -48,8 +72,13 @@ class EnterPriorityMatrixTest {
             setSearchCurrencyList(listOf("USD", "EUR", "JPY", "GBP"))
             searchWebSuggestions = false  // Disable Google web suggestions for pure test
         }
+
+        // Ensure AppRepository sees the newly registered packages (singleton may already be warm).
+        val repo = AppRepository.get(context)
+        repo.invalidate()
+        runBlocking { repo.loadApps() }
         
-        activity = Robolectric.buildActivity(LauncherActivity::class.java).create().start().resume().get()
+        activity = Robolectric.buildActivity(LauncherActivity::class.java).setup().get()
         overlay = activity.findViewById(com.meowgi.launcher710.R.id.searchOverlay)
         field = activity.findViewById(com.meowgi.launcher710.R.id.searchInputInBar)
         
@@ -58,26 +87,98 @@ class EnterPriorityMatrixTest {
         overlay.testSynchronousUpdate = true
         overlay.aiConfigProvider = { AiConfigResult.Unavailable("AI off") }
         
-        // Wait for initial setup
-        shadowOf(activity.mainLooper).idle()
+        // Wait for initial setup / type-to-search posts
+        settle()
     }
     
     @After
     fun tearDown() {
-        activity.finish()
+        if (::activity.isInitialized) activity.finish()
+    }
+
+    private fun registerFakeLauncherApp(
+        context: Context,
+        packageName: String,
+        activityName: String,
+        label: String
+    ) {
+        val appInfo = ApplicationInfo().apply {
+            this.packageName = packageName
+            name = packageName
+            flags = ApplicationInfo.FLAG_INSTALLED
+            nonLocalizedLabel = label
+            sourceDir = "/data/app/$packageName"
+            publicSourceDir = "/data/app/$packageName"
+            icon = android.R.drawable.sym_def_app_icon
+        }
+        val activityInfo = ActivityInfo().apply {
+            name = activityName
+            this.packageName = packageName
+            applicationInfo = appInfo
+            exported = true
+            enabled = true
+            nonLocalizedLabel = label
+            icon = android.R.drawable.sym_def_app_icon
+        }
+        val resolveInfo = ResolveInfo().apply {
+            this.activityInfo = activityInfo
+            nonLocalizedLabel = label
+            icon = android.R.drawable.sym_def_app_icon
+        }
+        val packageInfo = PackageInfo().apply {
+            this.packageName = packageName
+            applicationInfo = appInfo
+            activities = arrayOf(activityInfo)
+            firstInstallTime = 1L
+            lastUpdateTime = 1L
+        }
+
+        val shadowPm = shadowOf(context.packageManager)
+        shadowPm.installPackage(packageInfo)
+        // queryIntentActivities (AppRepository.loadApps) reads these resolve infos.
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        shadowPm.addResolveInfoForIntent(launcherIntent, resolveInfo)
+        shadowPm.addActivityIcon(ComponentName(packageName, activityName), ColorDrawable(0xFF5865F2.toInt()))
     }
     
     private fun settle() {
-        shadowOf(activity.mainLooper).idle()
         Thread.sleep(50)
-        shadowOf(activity.mainLooper).idle()
+        val mainLooper = shadowOf(android.os.Looper.getMainLooper())
+        mainLooper.runToEndOfTasks()
+        Thread.sleep(50)
+        mainLooper.idle()
+        ShadowLooper.idleMainLooper()
     }
+
+    private fun drainStarted() {
+        while (shadowOf(activity).nextStartedActivity != null) { /* drain */ }
+        while (shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity != null) { /* drain */ }
+    }
+
+    /** Latest started activity from the activity or application shadow. */
+    private fun nextStarted(): Intent? =
+        shadowOf(activity).nextStartedActivity
+            ?: shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity
     
     private fun pressEnter() {
+        // Drain any previously started intents so we only see this Enter's launch.
+        drainStarted()
+        val queryBefore = field.text.toString()
+        // Hardware Enter uses runQuery=false first; when nothing auto-activates (calc blocked by
+        // real results), the field's editor-action path runs performExtendedSearch (runQuery=true).
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
         settle()
         activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         settle()
+        // Only fall through to IME SEARCH when Enter neither adopted calc nor launched anything.
+        // (Adoption changes the query and must not be followed by a search.)
+        if (overlay.visibility == View.VISIBLE &&
+            nextStarted() == null &&
+            field.text.toString() == queryBefore
+        ) {
+            field.onEditorAction(EditorInfo.IME_ACTION_SEARCH)
+            settle()
+        }
     }
     
     private fun hasCalculatorRow(): Boolean {
@@ -102,7 +203,8 @@ class EnterPriorityMatrixTest {
         val expectCalcRow: Boolean,
         val expectAppResult: Boolean,
         val enterShouldAdoptCalc: Boolean,
-        val description: String
+        val description: String,
+        val expectedLaunchPackage: String? = null
     )
     
     @Test
@@ -114,7 +216,8 @@ class EnterPriorityMatrixTest {
                 expectCalcRow = true,  // "dis" maps to "5-4" = 1
                 expectAppResult = true,  // Discord app matches
                 enterShouldAdoptCalc = false,  // Should open Discord, NOT adopt calculator
-                description = "BUG FIX: 'dis' matches Discord, should open app not adopt calc '5-4=1'"
+                description = "BUG FIX: 'dis' matches Discord, should open app not adopt calc '5-4=1'",
+                expectedLaunchPackage = "com.discord"
             ),
             
             // ===== PURE MATH WITH NO APP MATCHES =====
@@ -158,7 +261,8 @@ class EnterPriorityMatrixTest {
                 expectCalcRow = false,  // Word "calculator" doesn't map to math
                 expectAppResult = true,  // Calculator app matches
                 enterShouldAdoptCalc = false,  // Should open Calculator app
-                description = "Typing 'calculator' should open Calculator app, not any calc row"
+                description = "Typing 'calculator' should open Calculator app, not any calc row",
+                expectedLaunchPackage = "com.android.calculator2"
             )
         )
         
@@ -184,7 +288,7 @@ class EnterPriorityMatrixTest {
                 
                 // Skip test cases that expect app results (can't test without installed apps)
                 if (tc.expectAppResult && !actualHasAppResults) {
-                    println("SKIP '${tc.input}': Expected app results but none found in test environment")
+                    failures.add("${tc.description}: Expected app results for '${tc.input}' but none found after registering fake launchers")
                     continue
                 }
                 
@@ -222,25 +326,38 @@ class EnterPriorityMatrixTest {
                 
                 // Check if calculator was adopted (query changed) vs app opened (activity started)
                 val calcAdopted = queryAfterEnter != queryBeforeEnter && overlay.visibility == View.VISIBLE
-                val activityStarted = shadowOf(activity).nextStartedActivity != null
+                val started = nextStarted()
                 
                 if (!tc.expectAppResult && tc.expectCalcRow && tc.enterShouldAdoptCalc) {
                     println("DEBUG '${tc.input}': hasRealResults=$hasRealBeforeEnter, calcAdopted=$calcAdopted, before='$queryBeforeEnter', after='$queryAfterEnter'")
                 }
+                if (tc.expectAppResult) {
+                    println("DEBUG APP '${tc.input}': hasRealResults=$hasRealBeforeEnter, calcAdopted=$calcAdopted, started=$started, overlay=${overlay.visibility}, before='$queryBeforeEnter', after='$queryAfterEnter', results=${currentResults.size}")
+                }
                 
+                val caseFailures = mutableListOf<String>()
                 if (tc.enterShouldAdoptCalc) {
                     // Should have adopted calculator/currency
                     if (!calcAdopted) {
-                        failures.add("${tc.description}: Expected calculator/currency adoption for '${tc.input}' but query didn't change. Before='$queryBeforeEnter', After='$queryAfterEnter', hasRealResults=$hasRealBeforeEnter, suggestionsVisible=$suggestionsVisible, recyclerVisible=$recyclerVisible, currentResults.size=${currentResults.size}")
+                        caseFailures.add("${tc.description}: Expected calculator/currency adoption for '${tc.input}' but query didn't change. Before='$queryBeforeEnter', After='$queryAfterEnter', hasRealResults=$hasRealBeforeEnter, suggestionsVisible=$suggestionsVisible, recyclerVisible=$recyclerVisible, currentResults.size=${currentResults.size}")
                     }
                 } else {
                     // Should have opened app or performed search (NOT adopted calculator)
                     if (calcAdopted) {
-                        failures.add("${tc.description}: Should NOT have adopted calculator for '${tc.input}'. Query changed from '$queryBeforeEnter' to '$queryAfterEnter', hasRealResults=$hasRealBeforeEnter, suggestionsVisible=$suggestionsVisible, recyclerVisible=$recyclerVisible, currentResults.size=${currentResults.size}")
+                        caseFailures.add("${tc.description}: Should NOT have adopted calculator for '${tc.input}'. Query changed from '$queryBeforeEnter' to '$queryAfterEnter', hasRealResults=$hasRealBeforeEnter, suggestionsVisible=$suggestionsVisible, recyclerVisible=$recyclerVisible, currentResults.size=${currentResults.size}")
+                    }
+                    if (tc.expectAppResult) {
+                        if (started == null) {
+                            caseFailures.add("${tc.description}: Expected app launch intent for '${tc.input}' but none was started")
+                        } else if (tc.expectedLaunchPackage != null &&
+                            started.component?.packageName != tc.expectedLaunchPackage
+                        ) {
+                            caseFailures.add("${tc.description}: Expected launch package '${tc.expectedLaunchPackage}' but got '${started.component}'")
+                        }
                     }
                 }
-                
-                passed++
+                failures.addAll(caseFailures)
+                if (caseFailures.isEmpty()) passed++
             } catch (e: Exception) {
                 failures.add("${tc.description}: Exception - ${e.message}")
             }
