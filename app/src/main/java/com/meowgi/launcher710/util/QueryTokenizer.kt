@@ -1,208 +1,163 @@
 package com.meowgi.launcher710.util
 
 /**
- * Tokenizer for Q25/BlackBerry keyboard queries that need letter-to-digit/operator mapping.
- * 
- * Key insight: Currency aliases (yen, tl, try, rupiah, dollar, euro, pound, lira) and ISO codes
- * (JPY, TRY, USD, etc.) must be recognized as TOKENS before letter-digit mapping is applied.
- * Otherwise "yen" becomes "y2n" (y→skip, e→2, n→skip) and "tl" becomes "(" (t→().
- * 
- * Strategy:
- * 1. Tokenize the query into segments: numbers, operators, currency codes, words
- * 2. Apply letter-digit mapping ONLY to numeric and operator segments
- * 3. Leave currency codes and known aliases unmapped
- * 4. Reject queries with unmappable words (unless they're currency-related)
+ * Unified tokenizer for calculator and currency queries.
+ * Recognizes currency codes/aliases BEFORE applying Q25 letter-digit mapping.
  */
 object QueryTokenizer {
-    
     sealed class Token {
         data class Number(val value: String) : Token()
         data class Operator(val op: Char) : Token()
         data class Currency(val code: String, val originalText: String) : Token()
+        data class Keyword(val word: String) : Token()
         data class Word(val text: String) : Token()
-        data class Whitespace(val text: String) : Token()
     }
-    
-    /**
-     * Tokenize a query, recognizing currency codes/aliases before applying letter-digit mapping.
-     * Returns null if the query contains unmappable characters or words that aren't currency-related.
-     */
+
+    private val KEYWORDS = setOf("to", "in")
+
     fun tokenize(query: String, layout: Int = DialNumber.LAYOUT_QWERTY): List<Token>? {
         if (query.isEmpty()) return null
-        
+        val normalized = query.trim()
         val tokens = mutableListOf<Token>()
         var i = 0
         
-        while (i < query.length) {
-            val ch = query[i]
+        while (i < normalized.length) {
+            val ch = normalized[i]
             
             when {
-                // Whitespace
-                ch.isWhitespace() -> {
-                    val start = i
-                    while (i < query.length && query[i].isWhitespace()) i++
-                    tokens.add(Token.Whitespace(query.substring(start, i)))
-                }
+                ch.isWhitespace() -> { i++; continue }
                 
-                // Negative number: minus sign followed by digit or letter-digit
-                (ch == '-' || ch == '−') && i + 1 < query.length && 
-                    (query[i + 1].isDigit() || Calculator.operatorChar(query[i + 1], layout)?.isDigit() == true) -> {
-                    // This is a negative number, not a subtraction operator
-                    tokens.add(Token.Operator('-'))
+                // Currency symbols
+                ch in "$€£¥" -> {
+                    tokens.add(Token.Currency(
+                        code = when (ch) { '$' -> "USD"; '€' -> "EUR"; '£' -> "GBP"; '¥' -> "JPY"; else -> "USD" },
+                        originalText = ch.toString()
+                    ))
                     i++
                 }
                 
-                // Direct operators
-                ch in "+-*/%()." || ch == ',' || ch == '−' -> {
-                    // Convert Unicode minus to ASCII minus
-                    val op = if (ch == '−') '-' else ch
-                    tokens.add(Token.Operator(op))
+                // Operators
+                ch in "+-*/%()=" || ch == '−' -> {
+                    tokens.add(Token.Operator(if (ch == '−') '-' else ch))
+                    i++
+                }
+                
+                // Decimal/thousands separators
+                ch in ".," -> {
+                    tokens.add(Token.Operator(ch))
                     i++
                 }
                 
                 // Direct digits
                 ch in '0'..'9' -> {
                     val start = i
-                    while (i < query.length && query[i] in '0'..'9') i++
-                    tokens.add(Token.Number(query.substring(start, i)))
+                    while (i < normalized.length && normalized[i] in '0'..'9') i++
+                    tokens.add(Token.Number(normalized.substring(start, i)))
                 }
                 
-                // Letters: could be currency code/alias, letter-digit, letter-operator, or word
+                // Letters: check currency/keyword FIRST, then map
                 ch.isLetter() -> {
-                    // Try to match currency code or alias
-                    val currencyMatch = matchCurrency(query, i)
-                    if (currencyMatch != null) {
-                        tokens.add(Token.Currency(currencyMatch.first, currencyMatch.second))
-                        i += currencyMatch.second.length
-                    } else {
-                        // Try to map as digit/operator
-                        val mapped = Calculator.operatorChar(ch, layout)
-                        if (mapped != null) {
-                            if (mapped in '0'..'9') {
-                                tokens.add(Token.Number(mapped.toString()))
-                            } else {
-                                tokens.add(Token.Operator(mapped))
-                            }
-                            i++
-                        } else {
-                            // Unmappable letter - might be part of a word
-                            // Collect the whole word
-                            val start = i
-                            while (i < query.length && query[i].isLetter()) i++
-                            val word = query.substring(start, i)
-                            tokens.add(Token.Word(word))
+                    // Look ahead for multi-letter currency/keyword
+                    val wordMatch = matchWord(normalized, i)
+                    if (wordMatch != null) {
+                        val (word, len) = wordMatch
+                        val lower = word.lowercase()
+                        
+                        // Check if it's a currency ISO code (3 letters)
+                        if (word.length == 3 && CurrencyConverter.isKnownCurrency(word.uppercase())) {
+                            tokens.add(Token.Currency(word.uppercase(), word))
+                            i += len
                         }
+                        // Check if it's a currency alias
+                        else if (CurrencyConverter.CURRENCY_NAME_ALIASES.containsKey(lower)) {
+                            val code = CurrencyConverter.CURRENCY_NAME_ALIASES[lower]!!
+                            tokens.add(Token.Currency(code, word))
+                            i += len
+                        }
+                        // Check if it's a keyword
+                        else if (KEYWORDS.contains(lower)) {
+                            tokens.add(Token.Keyword(lower))
+                            i += len
+                        }
+                        // Check if it's a known unmappable word (contains unmappable letters)
+                        else if (word.any { !canMapLetter(it, layout) }) {
+                            tokens.add(Token.Word(word))
+                            i += len
+                        }
+                        // Otherwise, apply letter-digit mapping per character
+                        else {
+                            // Map each letter individually
+                            for (c in word) {
+                                val mapped = Calculator.operatorChar(c, layout)
+                                if (mapped != null) {
+                                    if (mapped in '0'..'9') {
+                                        tokens.add(Token.Number(mapped.toString()))
+                                    } else {
+                                        tokens.add(Token.Operator(mapped))
+                                    }
+                                } else {
+                                    // Should not happen if canMapLetter check above is correct
+                                    tokens.add(Token.Word(word))
+                                    break
+                                }
+                            }
+                            i += len
+                        }
+                    } else {
+                        // Single unmappable letter
+                        return null
                     }
                 }
                 
-                // Currency symbols
-                ch == '$' || ch == '€' || ch == '£' || ch == '¥' -> {
-                    val code = when (ch) {
-                        '$' -> "USD"
-                        '€' -> "EUR"
-                        '£' -> "GBP"
-                        '¥' -> "JPY"
-                        else -> null
-                    }
-                    if (code != null) {
-                        tokens.add(Token.Currency(code, ch.toString()))
-                    }
-                    i++
-                }
-                
-                else -> {
-                    // Unknown character - reject
-                    return null
-                }
+                else -> return null
             }
         }
         
         return tokens
     }
-    
-    /**
-     * Try to match a currency code (ISO 3-letter) or alias at position i.
-     * Returns (code, matchedText) or null.
-     */
-    private fun matchCurrency(query: String, i: Int): Pair<String, String>? {
-        val remaining = query.substring(i).lowercase()
-        
-        // Try aliases first (longer matches first to avoid "try" matching when "trys" is typed)
-        val aliases = CurrencyConverter.CURRENCY_NAME_ALIASES.entries.sortedByDescending { it.key.length }
-        for ((alias, code) in aliases) {
-            if (remaining.startsWith(alias)) {
-                // Check word boundary after
-                val end = i + alias.length
-                if (end >= query.length || !query[end].isLetter()) {
-                    return Pair(code, query.substring(i, end))
-                }
-            }
-        }
-        
-        // Try ISO 3-letter code
-        if (remaining.length >= 3) {
-            val potential = remaining.substring(0, 3).uppercase()
-            if (potential.all { it.isLetter() } && CurrencyConverter.isKnownCurrency(potential)) {
-                // Check word boundary
-                val end = i + 3
-                if (end >= query.length || !query[end].isLetter()) {
-                    return Pair(potential, query.substring(i, end))
-                }
-            }
-        }
-        
-        return null
+
+    private fun matchWord(str: String, start: Int): Pair<String, Int>? {
+        var end = start
+        while (end < str.length && str[end].isLetter()) end++
+        if (end == start) return null
+        return Pair(str.substring(start, end), end - start)
     }
-    
-    /**
-     * Check if tokens represent a valid calculator expression (no currency or word tokens).
-     */
-    fun isCalculatorExpression(tokens: List<Token>): Boolean {
-        return tokens.none { it is Token.Currency || it is Token.Word }
+
+    private fun canMapLetter(ch: Char, layout: Int): Boolean {
+        return Calculator.operatorChar(ch.lowercaseChar(), layout) != null
     }
-    
-    /**
-     * Check if tokens represent a currency query (has at least one currency token).
-     */
+
     fun isCurrencyQuery(tokens: List<Token>): Boolean {
-        return tokens.any { it is Token.Currency }
+        return tokens.any { it is Token.Currency || it is Token.Keyword }
     }
-    
-    /**
-     * Build a calculator expression string from tokens (only numbers and operators).
-     * Returns null if tokens contain currency or words.
-     */
-    fun toCalculatorExpression(tokens: List<Token>): String? {
-        if (!isCalculatorExpression(tokens)) return null
-        
+
+    fun hasOperator(tokens: List<Token>): Boolean {
+        return tokens.any { it is Token.Operator && it.op in "+-*/%()=" }
+    }
+
+    fun toCalculatorExpression(tokens: List<Token>, includeCurrency: Boolean = false): String? {
         val sb = StringBuilder()
+        var hasDigit = false
+        var hasOperator = false
+        
         for (token in tokens) {
             when (token) {
-                is Token.Number -> sb.append(token.value)
-                is Token.Operator -> sb.append(token.op)
-                is Token.Whitespace -> {} // Skip whitespace
-                else -> return null
+                is Token.Number -> { sb.append(token.value); hasDigit = true }
+                is Token.Operator -> { 
+                    sb.append(token.op)
+                    if (token.op in "+-*/%") hasOperator = true
+                }
+                is Token.Currency -> {
+                    // When includeCurrency=true, skip currency tokens (just use the numbers)
+                    // e.g., "100 yen * 10" → "100*10"
+                    if (!includeCurrency) return null
+                }
+                is Token.Keyword, is Token.Word -> return null
             }
         }
         
-        // Require at least one digit
-        return if (sb.any { it.isDigit() }) sb.toString() else null
-    }
-    
-    /**
-     * Reconstruct the original-ish query from tokens (useful for currency queries).
-     */
-    fun toOriginalForm(tokens: List<Token>): String {
-        val sb = StringBuilder()
-        for (token in tokens) {
-            when (token) {
-                is Token.Number -> sb.append(token.value)
-                is Token.Operator -> sb.append(token.op)
-                is Token.Currency -> sb.append(token.originalText)
-                is Token.Word -> sb.append(token.text)
-                is Token.Whitespace -> sb.append(token.text)
-            }
-        }
-        return sb.toString()
+        // Require at least one digit AND at least one operator to be a calculator expression
+        // Single numbers without operators are NOT calculator expressions (they're just amounts)
+        return if (hasDigit && hasOperator) sb.toString() else null
     }
 }

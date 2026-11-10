@@ -60,75 +60,23 @@ object Calculator {
     fun toExpression(query: String, layout: Int = DialNumber.LAYOUT_QWERTY): String? {
         if (query.isEmpty()) return null
         
-        val normalized = query.trim().lowercase()
+        // Use unified tokenizer to handle currency detection before letter-digit mapping
+        val tokens = QueryTokenizer.tokenize(query, layout) ?: return null
         
-        // Reject queries containing currency ISO codes (3 consecutive letters that are known currencies)
-        if (containsCurrencyCode(normalized)) return null
+        // Check if there are operators (arithmetic)
+        val hasOperators = QueryTokenizer.hasOperator(tokens)
         
-        // Reject queries containing currency aliases (yen, tl, try, rupiah, dollar, euro, pound, lira)
-        for (alias in CurrencyConverter.CURRENCY_NAME_ALIASES.keys) {
-            if (containsWord(normalized, alias)) return null
-        }
+        // If there are currency tokens:
+        // - WITH arithmetic operators → allow (e.g., "100 yen * 10" → calculator shows arithmetic)
+        // - WITHOUT arithmetic operators → reject (pure currency query, e.g., "100 yen")
+        val hasCurrency = tokens.any { it is QueryTokenizer.Token.Currency }
+        if (hasCurrency && !hasOperators) return null
         
-        // Reject queries containing "to" or "in" keywords (currency conversion indicators)
-        if (containsWord(normalized, "to") || containsWord(normalized, "in")) return null
+        // Reject conversion keywords even with operators (e.g., "100 yen to usd" is currency conversion)
+        if (tokens.any { it is QueryTokenizer.Token.Keyword }) return null
         
-        // Now apply letter-digit mapping
-        val sb = StringBuilder(query.length)
-        var hasDigit = false
-        for (ch in query) {
-            when {
-                ch in '0'..'9' -> { sb.append(ch); hasDigit = true }
-                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> sb.append(ch)
-                ch == '.' || ch == ',' -> sb.append(ch)
-                ch == '(' || ch == ')' -> sb.append(ch)
-                ch == ' ' || ch == '\t' || ch == '−' -> {} // ignore whitespace and unicode minus
-                else -> {
-                    // Try to map letter to operator/digit
-                    val mapped = operatorChar(ch, layout)
-                    if (mapped != null) {
-                        sb.append(mapped)
-                        if (mapped in '0'..'9') hasDigit = true
-                    } else {
-                        // Unmappable character
-                        return null
-                    }
-                }
-            }
-        }
-        // Require at least one digit
-        return if (hasDigit) sb.toString() else null
-    }
-    
-    /**
-     * Check if query contains a currency ISO code (3 consecutive letters that form a known currency).
-     */
-    private fun containsCurrencyCode(query: String): Boolean {
-        var i = 0
-        while (i <= query.length - 3) {
-            val potential = query.substring(i, i + 3)
-            if (potential.all { it.isLetter() }) {
-                if (CurrencyConverter.isKnownCurrency(potential.uppercase())) {
-                    // Check word boundaries
-                    val before = i == 0 || !query[i - 1].isLetter()
-                    val after = i + 3 >= query.length || !query[i + 3].isLetter()
-                    if (before && after) return true
-                }
-            }
-            i++
-        }
-        return false
-    }
-    
-    /**
-     * Check if query contains a word as a standalone token (word boundaries).
-     */
-    private fun containsWord(query: String, word: String): Boolean {
-        val index = query.indexOf(word)
-        if (index < 0) return false
-        val before = index == 0 || !query[index - 1].isLetter()
-        val after = index + word.length >= query.length || !query[index + word.length].isLetter()
-        return before && after
+        // Convert tokens to calculator expression (ignoring currency tokens)
+        return QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
     }
 
     /**

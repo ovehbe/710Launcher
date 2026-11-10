@@ -391,6 +391,7 @@ class SearchOverlay @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
             visibility = GONE
             setPadding(0, dp(6), 0, dp(2))
+            tag = "calculatorRow"  // For testing
         }
         calculatorText = TextView(context).apply {
             textSize = 14f
@@ -1220,45 +1221,24 @@ class SearchOverlay @JvmOverloads constructor(
         
         val expression = Calculator.toExpression(query, layout)
         if (expression != null) {
-            // Only show calculator if expression contains at least one digit (mapped or raw)
-            val hasDigit = expression.any { it.isDigit() }
-            if (hasDigit) {
-                // Check if query genuinely looks like math:
-                // 1. Original query contains real digits or operators (not just plain letters)
-                // 2. Expression is evaluable (has operators, not just a mapped plain number)
-                val queryHasDigitOrOperator = query.any { it.isDigit() || it in "+-*/%().,=" }
-                val expressionIsPlainNumber = expression.all { it.isDigit() || it == '.' }
-                val isPlainWord = query.all { it.isLetter() || it.isWhitespace() }
-                
-                // Skip calculator if original query is plain word with no digits/operators
-                if (isPlainWord && !queryHasDigitOrOperator) {
-                    updateCalculatorRow()
-                    return
+            // Calculator.toExpression now uses QueryTokenizer which properly handles
+            // currency detection and letter-digit mapping. Trust its return value.
+            
+            // Try to evaluate the expression
+            val result = Calculator.evaluate(expression, allowPlainNumber = !hasResults)
+            
+            if (!hasResults) {
+                // No app/contact matches: show expression even if not yet evaluated
+                queryCalculatorExpression = expression
+                queryCalculatorShowIncomplete = true
+                if (result != null) {
+                    queryCalculatorResult = result
                 }
-                
-                // When there are no app/contact matches, show expression if it's evaluable
-                if (!hasResults) {
-                    // Don't show plain mapped numbers from pure letter strings
-                    if (expressionIsPlainNumber && isPlainWord) {
-                        updateCalculatorRow()
-                        return
-                    }
+            } else {
+                // Have matches: only show calculator if expression evaluates successfully
+                if (result != null) {
+                    queryCalculatorResult = result
                     queryCalculatorExpression = expression
-                    queryCalculatorShowIncomplete = true
-                    // Try to evaluate - if successful, show the result
-                    val allowPlainNumber = queryHasDigitOrOperator
-                    val result = Calculator.evaluate(expression, allowPlainNumber)
-                    if (result != null) {
-                        queryCalculatorResult = result
-                    }
-                } else {
-                    // When there are matches, require a valid evaluation
-                    val allowPlainNumber = false
-                    val result = Calculator.evaluate(expression, allowPlainNumber)
-                    if (result != null) {
-                        queryCalculatorResult = result
-                        queryCalculatorExpression = expression
-                    }
                 }
             }
         }
