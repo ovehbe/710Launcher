@@ -371,6 +371,7 @@ class SearchOverlay @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
             visibility = GONE
             setPadding(0, dp(6), 0, dp(2))
+            tag = "dialRow"  // For testing
         }
         dialText = TextView(context).apply {
             textSize = 14f

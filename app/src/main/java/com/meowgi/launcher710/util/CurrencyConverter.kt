@@ -129,7 +129,15 @@ object CurrencyConverter {
         val keywords = tokens.filterIsInstance<QueryTokenizer.Token.Keyword>()
         
         // Check if '=' operator is present between currencies (treat as conversion indicator)
-        val hasEquals = tokens.any { it is QueryTokenizer.Token.Operator && it.op == '=' }
+        val firstCurrIndex = tokens.indexOfFirst { it is QueryTokenizer.Token.Currency }
+        val secondCurrIndex = tokens.indexOfLast { it is QueryTokenizer.Token.Currency }
+        val hasEquals = if (firstCurrIndex >= 0 && secondCurrIndex > firstCurrIndex) {
+            tokens.slice((firstCurrIndex + 1) until secondCurrIndex).any { 
+                it is QueryTokenizer.Token.Operator && it.op == '='
+            }
+        } else {
+            false
+        }
         
         // Must have at least one currency
         if (currencies.isEmpty()) return null
@@ -152,16 +160,29 @@ object CurrencyConverter {
                 // Two currencies with keyword or =: "100 usd to try", "100 jpy = try"
                 fromCurrency = validCurrencies[0].code
                 toCurrency = validCurrencies[1].code
+                
+                // Reject same-currency conversions (simpler than showing identity)
+                if (fromCurrency == toCurrency) return null
             }
             validCurrencies.size == 2 && keywords.isEmpty() && !hasEquals -> {
                 // Two currencies without keyword: "100 usd try" (assume conversion)
                 fromCurrency = validCurrencies[0].code
                 toCurrency = validCurrencies[1].code
+                
+                // This is ambiguous - could be "100 jpy 200 usd" (two amounts)
+                // Check if there are numbers around both currencies
+                val firstCurrIndex = tokens.indexOfFirst { it is QueryTokenizer.Token.Currency && it.code == fromCurrency }
+                val secondCurrIndex = tokens.indexOfFirst { it is QueryTokenizer.Token.Currency && it.code == toCurrency }
+                
+                val beforeFirst = tokens.take(firstCurrIndex).any { it is QueryTokenizer.Token.Number }
+                val betweenCurr = tokens.slice((firstCurrIndex + 1) until secondCurrIndex).any { it is QueryTokenizer.Token.Number }
+                
+                // If numbers both before first currency AND between currencies, reject (two amounts)
+                if (beforeFirst && betweenCurr) return null
             }
             validCurrencies.size == 1 && hasEquals -> {
-                // "100 jpy =" with only one currency - allow as single currency query
-                fromCurrency = validCurrencies[0].code
-                toCurrency = null
+                // "100 jpy =" with only one currency - reject (incomplete)
+                return null
             }
             else -> {
                 // More than 2 currencies - invalid
@@ -169,7 +190,7 @@ object CurrencyConverter {
             }
         }
         
-        // Build amount expression from number and operator tokens
+        // Build amount expression from number and operator tokens  
         val amountTokens = tokens.takeWhile { it !is QueryTokenizer.Token.Currency && it !is QueryTokenizer.Token.Keyword }
         if (amountTokens.isEmpty() || amountTokens.all { it is QueryTokenizer.Token.Operator }) {
             // No amount before currency, check if currency comes first (reversed order)

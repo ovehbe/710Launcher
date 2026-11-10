@@ -138,14 +138,17 @@ object QueryTokenizer {
     fun toCalculatorExpression(tokens: List<Token>, includeCurrency: Boolean = false): String? {
         val sb = StringBuilder()
         var hasDigit = false
-        var hasOperator = false
+        var hasBinaryOperator = false  // Operators that require two operands
         
         for (token in tokens) {
             when (token) {
                 is Token.Number -> { sb.append(token.value); hasDigit = true }
                 is Token.Operator -> { 
                     sb.append(token.op)
-                    if (token.op in "+-*/%") hasOperator = true
+                    // Only count binary operators (not unary minus)
+                    if (token.op in "+*/%") hasBinaryOperator = true
+                    // Minus is binary only if it's not at the start
+                    if (token.op == '-' && sb.length > 1) hasBinaryOperator = true
                 }
                 is Token.Currency -> {
                     // When includeCurrency=true, skip currency tokens (just use the numbers)
@@ -156,8 +159,32 @@ object QueryTokenizer {
             }
         }
         
-        // Require at least one digit AND at least one operator to be a calculator expression
-        // Single numbers without operators are NOT calculator expressions (they're just amounts)
-        return if (hasDigit && hasOperator) sb.toString() else null
+        // Require at least one digit AND at least one BINARY operator
+        // Plain numbers (including negatives like "-100") are NOT calculator expressions
+        if (!hasDigit || !hasBinaryOperator) return null
+        
+        val expr = sb.toString()
+        
+        // Reject expressions with trailing operators (incomplete)
+        if (expr.isNotEmpty() && expr.last() in "+-*/%") return null
+        
+        // Reject expressions with leading operators (except unary minus)
+        if (expr.length > 1 && expr[0] in "+*/%") return null
+        if (expr.length > 1 && expr[0] == '-' && expr[1] in "+-*/%") return null
+        
+        // Reject expressions starting with closing paren or having unmatched parens
+        var parenDepth = 0
+        for (ch in expr) {
+            when (ch) {
+                '(' -> parenDepth++
+                ')' -> {
+                    parenDepth--
+                    if (parenDepth < 0) return null  // Closing before opening
+                }
+            }
+        }
+        if (parenDepth != 0) return null  // Unmatched parens
+        
+        return expr
     }
 }
