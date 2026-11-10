@@ -1214,7 +1214,8 @@ class LauncherActivity : AppCompatActivity() {
             return true
         }
         // If calculator/currency/dial has valid result with no selection, activate it
-        if (searchOverlay.hasCalculatorOrCurrency() && searchOverlay.activateCalculatorOrCurrency()) {
+        // BUT only when there are NO real results (apps, contacts, suggestions)
+        if (!searchOverlay.hasRealResults() && searchOverlay.hasCalculatorOrCurrency() && searchOverlay.activateCalculatorOrCurrency()) {
             return true
         }
         if (!runQuery) return false

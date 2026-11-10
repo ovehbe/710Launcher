@@ -1583,6 +1583,30 @@ class SearchOverlay @JvmOverloads constructor(
         justActivatedResult = false
         justActivatedQuery = null
     }
+    
+    /** Check if there are any "real results" (apps, contacts, suggestions) that Enter should open.
+     * Prioritizes app/contact results. Google suggestions only block calculator adoption when
+     * there's no calculator row (prevents blocking chaining scenarios like "2+2" → "4+2"). */
+    fun hasRealResults(): Boolean {
+        // Always prioritize app/contact results
+        if (resultsRecycler.visibility == VISIBLE && currentResults.isNotEmpty()) {
+            return true
+        }
+        
+        // Google suggestions block adoption ONLY if there's no calculator/currency row
+        // (this allows chaining like "2+2" → "4+2" even when Google shows suggestions)
+        if (suggestionsBox.visibility == VISIBLE) {
+            val hasCalcOrCurrency = when {
+                dialRow.visibility == VISIBLE && currentDialDigits.isNotEmpty() -> true
+                calculatorRow.visibility == VISIBLE && queryCalculatorResult != null -> true
+                currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> true
+                else -> false
+            }
+            return !hasCalcOrCurrency
+        }
+        
+        return false
+    }
 
     fun activateCalculatorOrCurrency(): Boolean {
         // Activate first visible special row in priority order: dial, calculator, currency
