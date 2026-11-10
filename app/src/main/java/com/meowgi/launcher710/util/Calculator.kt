@@ -79,19 +79,9 @@ object Calculator {
         if (tokens.any { it is QueryTokenizer.Token.Keyword }) return null
         
         // Convert tokens to calculator expression (ignoring currency tokens)
-        val expr = QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
-        
-        // Additional validation: reject if query is just a single letter or plain mapped number
-        if (expr != null) {
-            // Reject single-character queries that map to single digits
-            if (query.trim().length == 1 && expr.length == 1 && expr[0].isDigit()) return null
-            
-            // Reject queries that are just plain numbers without any operators in original query
-            val queryHasRawOperator = query.any { it in "+-*/%().,=" }
-            if (!queryHasRawOperator && expr.all { it.isDigit() || it == '.' }) return null
-        }
-        
-        return expr
+        // NOTE: This may return plain numbers or incomplete expressions (e.g., "2+")
+        // Display logic in SearchOverlay decides whether to show these
+        return QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
     }
 
     /**

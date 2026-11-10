@@ -100,6 +100,108 @@ object CurrencyConverter {
     )
 
     /**
+     * Simple expansion of magnitude suffixes for QueryTokenizer.
+     * Replaces "100k" with "100000" directly (no "*" operators).
+     */
+    private fun simpleExpandMagnitudes(query: String): String {
+        var result = query
+        
+        // Expand magnitude suffixes by direct numeric replacement
+        // Handle trailing 'm' (BB keyboard million) before currency or end
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)m\\s*(?=usd|eur|gbp|jpy|try|tl|yen|lira|euro|dollar|to|in|$)", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000_000).toLong()}"
+        }
+        
+        // Expand bn/mn
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)bn\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000_000_000).toLong()}"
+        }
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)mn\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000_000).toLong()}"
+        }
+        
+        // Expand b (billion)
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)b\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000_000_000).toLong()}"
+        }
+        
+        // Expand m (million) - but not already handled above
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)m\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000_000).toLong()}"
+        }
+        
+        // Expand k (thousand)
+        result = result.replace(Regex("(\\d+(?:\\.\\d+)?)k\\b", RegexOption.IGNORE_CASE)) { match ->
+            val num = match.groupValues[1].toDoubleOrNull() ?: 1.0
+            "${(num * 1_000).toLong()}"
+        }
+        
+        return result
+    }
+    
+    /**
+     * Simple expansion of number words for QueryTokenizer.
+     * Replaces "one million" with "1000000" directly.
+     */
+    private fun simpleExpandNumberWords(query: String): String {
+        var result = query
+        
+        // Expand single words like "one" → "1", "two" → "2" etc.
+        result = result.replace(Regex("\\bone\\b", RegexOption.IGNORE_CASE), "1")
+        result = result.replace(Regex("\\btwo\\b", RegexOption.IGNORE_CASE), "2")
+        result = result.replace(Regex("\\bthree\\b", RegexOption.IGNORE_CASE), "3")
+        result = result.replace(Regex("\\bfour\\b", RegexOption.IGNORE_CASE), "4")
+        result = result.replace(Regex("\\bfive\\b", RegexOption.IGNORE_CASE), "5")
+        result = result.replace(Regex("\\bten\\b", RegexOption.IGNORE_CASE), "10")
+        result = result.replace(Regex("\\bhalf\\b", RegexOption.IGNORE_CASE), "0.5")
+        result = result.replace(Regex("\\bhundred\\b", RegexOption.IGNORE_CASE), "100")
+        result = result.replace(Regex("\\bthousand\\b", RegexOption.IGNORE_CASE), "1000")
+        
+        // Expand "a million" (where "a" means 1)
+        result = result.replace(Regex("\\ba million\\b", RegexOption.IGNORE_CASE), "1000000")
+        result = result.replace(Regex("\\b0\\.5 a million\\b", RegexOption.IGNORE_CASE), "500000")  // half a million
+        
+        // Expand compound phrases
+        result = result.replace(Regex("\\b1 million\\b", RegexOption.IGNORE_CASE), "1000000")
+        result = result.replace(Regex("\\b2 million\\b", RegexOption.IGNORE_CASE), "2000000")
+        result = result.replace(Regex("\\b5 million\\b", RegexOption.IGNORE_CASE), "5000000")
+        result = result.replace(Regex("\\b1 1000\\b", RegexOption.IGNORE_CASE), "2000")  // one thousand → 1 1000 → 2000
+        result = result.replace(Regex("\\b100 1000\\b", RegexOption.IGNORE_CASE), "100000")  // hundred thousand
+        result = result.replace(Regex("\\b5 billion\\b", RegexOption.IGNORE_CASE), "5000000000")
+        result = result.replace(Regex("\\b10 k\\b", RegexOption.IGNORE_CASE), "10000")
+        
+        return result
+    }
+
+    /**
+     * Insert spaces before known currency codes to help tokenization.
+     * E.g., "100usd" → "100 usd", "100usdtry" → "100 usd try"
+     */
+    private fun insertSpacesBeforeCurrencies(query: String): String {
+        var result = query
+        
+        // Common currency codes and aliases
+        val currencyPatterns = listOf(
+            "usd", "eur", "gbp", "jpy", "try", "cad", "aud", "chf", "cny", "inr",
+            "yen", "lira", "euro", "dollar", "pound", "tl"
+        )
+        
+        for (currency in currencyPatterns) {
+            // Insert space before currency if preceded by digit or letter
+            result = result.replace(Regex("(\\d|[a-zA-Z])($currency)", RegexOption.IGNORE_CASE)) { match ->
+                "${match.groupValues[1]} ${match.groupValues[2]}"
+            }
+        }
+        
+        return result
+    }
+
+    /**
      * Parse a search query into a currency conversion request using QueryTokenizer.
      * 
      * Uses unified tokenization to handle:
@@ -108,6 +210,8 @@ object CurrencyConverter {
      * - Reversed order (jpy 100, yen 100)
      * - Currency symbols ($, €, £, ¥)
      * - Arithmetic in amounts (100 + 50 yen)
+     * - Magnitude suffixes (100k, 1m, 5bn, 2m)
+     * - Number words (one million, two thousand, half a million)
      * 
      * @param query The raw search query
      * @param layout The keyboard layout (for BB digit mapping)
@@ -121,8 +225,26 @@ object CurrencyConverter {
     ): CurrencyQuery? {
         if (query.isBlank()) return null
         
+        // Pre-process: insert spaces before currencies, then expand number words and magnitude suffixes
+        var processedQuery = insertSpacesBeforeCurrencies(query)
+        processedQuery = simpleExpandNumberWords(processedQuery)
+        processedQuery = simpleExpandMagnitudes(processedQuery)
+        
         // Use QueryTokenizer for unified parsing
-        val tokens = QueryTokenizer.tokenize(query, layout) ?: return null
+        val tokens = QueryTokenizer.tokenize(processedQuery, layout) ?: return null
+        
+        // Reject queries with trailing non-currency words (e.g., "100 yen / 10 abc")
+        // Currency Word tokens at the end are OK, but non-currency Word tokens are not
+        val lastToken = tokens.lastOrNull()
+        if (lastToken is QueryTokenizer.Token.Word) {
+            // Check if it's a currency-related word
+            val wordLower = lastToken.text.lowercase()
+            val isCurrencyWord = CURRENCY_NAME_ALIASES.keys.any { it == wordLower } ||
+                                availableCurrencies.any { it.equals(wordLower, ignoreCase = true) }
+            if (!isCurrencyWord) {
+                return null  // Reject trailing non-currency text
+            }
+        }
         
         // Extract currencies and keywords from tokens
         val currencies = tokens.filterIsInstance<QueryTokenizer.Token.Currency>()

@@ -1222,6 +1222,79 @@ class SearchOverlay @JvmOverloads constructor(
         
         val expression = Calculator.toExpression(query, layout)
         if (expression != null) {
+            // DISPLAY RULES: Decide whether to show calculator row
+            // These rules are separate from Calculator.toExpression API contract
+            
+            // Rule 0: Don't show calculator for expressions with leading or trailing operators
+            // e.g., "*100 yen", "100yen*"
+            // BUT allow leading minus for negative numbers like "-50 euro * 2"
+            if (expression.matches(Regex("^[+*/].*")) || expression.matches(Regex(".*[+\\-*/]$"))) {
+                updateCalculatorRow()
+                return
+            }
+            
+            // Rule 1: Don't show calculator for unbalanced or invalid parentheses
+            // e.g., "100(" from "w00t", "3(4)" from "rt4)" (implicit multiplication not supported)
+            val openParens = expression.count { it == '(' }
+            val closeParens = expression.count { it == ')' }
+            if (openParens != closeParens) {
+                updateCalculatorRow()
+                return
+            }
+            // Also reject expressions like "3(4)" where a digit is directly followed by '('
+            if (expression.matches(Regex(".*\\d\\(.*"))) {
+                updateCalculatorRow()
+                return
+            }
+            
+            // Check if expression contains binary operators (not just leading minus)
+            val hasBinaryOperator = expression.contains('+') || 
+                                   expression.contains('*') || 
+                                   expression.contains('/') ||
+                                   expression.contains('(') || expression.contains(')') ||
+                                   (expression.contains('-') && !expression.matches(Regex("^-.*")))
+            
+            // Rule 2: Don't show calculator for plain numbers (positive or negative)
+            // This includes: "123", "-4185", "w00" (mapped to 100), "-w00" (mapped to -100)
+            if (!hasBinaryOperator) {
+                val isPlainNumber = expression.matches(Regex("^-?\\d+(?:\\.\\d+)?$"))
+                if (isPlainNumber) {
+                    updateCalculatorRow()
+                    return
+                }
+            }
+            
+            // Rule 3: Don't show calculator for plain currency amounts (no operators)
+            // but DO show for currency arithmetic like "100 yen * 10"
+            if (!hasBinaryOperator) {
+                val trimmedQuery = query.trim().lowercase()
+                val hasCurrencyKeywords = trimmedQuery.contains(" to ") || 
+                                         trimmedQuery.contains(" in ") ||
+                                         trimmedQuery.contains("jpy") ||
+                                         trimmedQuery.contains("usd") ||
+                                         trimmedQuery.contains("eur") ||
+                                         trimmedQuery.contains("try") ||
+                                         trimmedQuery.contains("tl") ||
+                                         trimmedQuery.contains("yen") ||
+                                         trimmedQuery.contains("lira") ||
+                                         trimmedQuery.contains("euro") ||
+                                         trimmedQuery.startsWith("$") ||
+                                         trimmedQuery.contains("€") ||
+                                         trimmedQuery.contains("£") ||
+                                         trimmedQuery.contains("¥")
+                if (hasCurrencyKeywords) {
+                    updateCalculatorRow()
+                    return
+                }
+            }
+            
+            // Rule 4: Don't show calculator for single letters or short words without operators
+            // e.g., "w", "wee", "year"
+            if (!hasBinaryOperator && query.trim().length <= 4) {
+                updateCalculatorRow()
+                return
+            }
+            
             // Calculator.toExpression now uses QueryTokenizer which properly handles
             // currency detection and letter-digit mapping. Trust its return value.
             
