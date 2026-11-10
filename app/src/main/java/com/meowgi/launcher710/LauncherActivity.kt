@@ -1093,6 +1093,10 @@ class LauncherActivity : AppCompatActivity() {
             setOnClickListener {
                 launchHeaderAction(prefs.headerDateAction, prefs.headerDateActionPackage, prefs.headerDateActionIntentUri)
             }
+            setOnLongClickListener {
+                launchHeaderAction(prefs.headerDateLongPressAction, prefs.headerDateLongPressActionPackage, prefs.headerDateLongPressActionIntentUri)
+                true
+            }
         }
         headerView.clockText.apply {
             isClickable = true
@@ -1102,6 +1106,10 @@ class LauncherActivity : AppCompatActivity() {
             foreground = prefs.getClickHighlightRipple(this@LauncherActivity)
             setOnClickListener {
                 launchHeaderAction(prefs.headerClockAction, prefs.headerClockActionPackage, prefs.headerClockActionIntentUri)
+            }
+            setOnLongClickListener {
+                launchHeaderAction(prefs.headerClockLongPressAction, prefs.headerClockLongPressActionPackage, prefs.headerClockLongPressActionIntentUri)
+                true
             }
         }
     }
@@ -1205,7 +1213,13 @@ class LauncherActivity : AppCompatActivity() {
             searchOverlay.activateCommand()
             return true
         }
+        // If calculator/currency/dial has valid result with no selection, activate it
+        if (searchOverlay.hasCalculatorOrCurrency() && searchOverlay.activateCalculatorOrCurrency()) {
+            return true
+        }
         if (!runQuery) return false
+        // About to perform search - clear activation flag so future queries can auto-activate
+        searchOverlay.clearActivationFlag()
         searchOverlay.performExtendedSearch()
         return true
     }

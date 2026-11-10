@@ -14,7 +14,7 @@ import java.net.URL
  * Uses Frankfurter API (api.frankfurter.app) which provides free ECB exchange rates
  * without requiring an API key.
  */
-class CurrencyRatesCache(context: Context) {
+class CurrencyRatesCache(context: Context) : CurrencyRatesCacheInterface {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("currency_rates_cache", Context.MODE_PRIVATE)
@@ -47,7 +47,7 @@ class CurrencyRatesCache(context: Context) {
      * Always returns immediately with cache if available, even if stale.
      * On IO dispatcher - never blocks main thread.
      */
-    suspend fun getRates(forceRefresh: Boolean = false): RatesResult = withContext(Dispatchers.IO) {
+    override suspend fun getRates(forceRefresh: Boolean): RatesResult = withContext(Dispatchers.IO) {
         val cached = getCachedRates()
         val now = System.currentTimeMillis()
         

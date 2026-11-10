@@ -10,6 +10,8 @@ import com.meowgi.launcher710.util.LauncherPrefs
 internal enum class TapAction(val title: String, val defaultLabel: String) {
     HEADER_DATE("Date tap action", "Nothing"),
     HEADER_CLOCK("Clock tap action", "Nothing"),
+    HEADER_DATE_LONG_PRESS("Date long-press action", "Nothing"),
+    HEADER_CLOCK_LONG_PRESS("Clock long-press action", "Nothing"),
     ACTION_BAR_TAP("Action bar tap", "Notification hub"),
     ACTION_BAR_LONG_PRESS("Action bar long press", "Notification hub"),
     VOICE_SEARCH_KEY("Voice search key", "Long-press 0")
@@ -20,6 +22,8 @@ internal class TapActionValue(val action: Int, val pkg: String?, val intentUri: 
 internal fun LauncherPrefs.readTapAction(slot: TapAction): TapActionValue = when (slot) {
     TapAction.HEADER_DATE -> TapActionValue(headerDateAction, headerDateActionPackage, headerDateActionIntentUri, headerDateActionName)
     TapAction.HEADER_CLOCK -> TapActionValue(headerClockAction, headerClockActionPackage, headerClockActionIntentUri, headerClockActionName)
+    TapAction.HEADER_DATE_LONG_PRESS -> TapActionValue(headerDateLongPressAction, headerDateLongPressActionPackage, headerDateLongPressActionIntentUri, headerDateLongPressActionName)
+    TapAction.HEADER_CLOCK_LONG_PRESS -> TapActionValue(headerClockLongPressAction, headerClockLongPressActionPackage, headerClockLongPressActionIntentUri, headerClockLongPressActionName)
     TapAction.ACTION_BAR_TAP -> TapActionValue(actionBarCenterAction, actionBarCenterActionPackage, actionBarCenterActionIntentUri, actionBarCenterActionName)
     TapAction.ACTION_BAR_LONG_PRESS -> TapActionValue(
         actionBarCenterLongPressAction, actionBarCenterLongPressActionPackage,
@@ -41,6 +45,18 @@ internal fun LauncherPrefs.writeTapAction(slot: TapAction, action: Int, pkg: Str
             headerClockActionPackage = pkg
             headerClockActionIntentUri = intentUri
             headerClockActionName = name
+        }
+        TapAction.HEADER_DATE_LONG_PRESS -> {
+            headerDateLongPressAction = action
+            headerDateLongPressActionPackage = pkg
+            headerDateLongPressActionIntentUri = intentUri
+            headerDateLongPressActionName = name
+        }
+        TapAction.HEADER_CLOCK_LONG_PRESS -> {
+            headerClockLongPressAction = action
+            headerClockLongPressActionPackage = pkg
+            headerClockLongPressActionIntentUri = intentUri
+            headerClockLongPressActionName = name
         }
         TapAction.ACTION_BAR_TAP -> {
             actionBarCenterAction = action

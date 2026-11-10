@@ -86,6 +86,39 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("headerClockActionName", null)
         set(v) = prefs.edit().putString("headerClockActionName", v).apply()
 
+    // Long-press actions (separate from tap actions)
+    var headerDateLongPressAction: Int
+        get() = prefs.getInt("headerDateLongPressAction", 0)
+        set(v) = prefs.edit().putInt("headerDateLongPressAction", v).apply()
+
+    var headerDateLongPressActionPackage: String?
+        get() = prefs.getString("headerDateLongPressActionPackage", null)
+        set(v) = prefs.edit().putString("headerDateLongPressActionPackage", v).apply()
+
+    var headerDateLongPressActionIntentUri: String?
+        get() = prefs.getString("headerDateLongPressActionIntentUri", null)
+        set(v) = prefs.edit().putString("headerDateLongPressActionIntentUri", v).apply()
+
+    var headerDateLongPressActionName: String?
+        get() = prefs.getString("headerDateLongPressActionName", null)
+        set(v) = prefs.edit().putString("headerDateLongPressActionName", v).apply()
+
+    var headerClockLongPressAction: Int
+        get() = prefs.getInt("headerClockLongPressAction", 0)
+        set(v) = prefs.edit().putInt("headerClockLongPressAction", v).apply()
+
+    var headerClockLongPressActionPackage: String?
+        get() = prefs.getString("headerClockLongPressActionPackage", null)
+        set(v) = prefs.edit().putString("headerClockLongPressActionPackage", v).apply()
+
+    var headerClockLongPressActionIntentUri: String?
+        get() = prefs.getString("headerClockLongPressActionIntentUri", null)
+        set(v) = prefs.edit().putString("headerClockLongPressActionIntentUri", v).apply()
+
+    var headerClockLongPressActionName: String?
+        get() = prefs.getString("headerClockLongPressActionName", null)
+        set(v) = prefs.edit().putString("headerClockLongPressActionName", v).apply()
+
     var tabBarAlpha: Int
         get() = prefs.getInt("tabBarAlpha", 125)
         set(v) = prefs.edit().putInt("tabBarAlpha", v).apply()
@@ -1030,6 +1063,8 @@ class LauncherPrefs(context: Context) {
         "mainBackgroundAlpha", "statusBarAlpha", "headerAlpha", "headerVisible", "headerShowDate", "headerShowClock", "headerLayout",
         "headerDateAction", "headerDateActionPackage", "headerDateActionIntentUri", "headerDateActionName",
         "headerClockAction", "headerClockActionPackage", "headerClockActionIntentUri", "headerClockActionName",
+        "headerDateLongPressAction", "headerDateLongPressActionPackage", "headerDateLongPressActionIntentUri", "headerDateLongPressActionName",
+        "headerClockLongPressAction", "headerClockLongPressActionPackage", "headerClockLongPressActionIntentUri", "headerClockLongPressActionName",
         "tabBarAlpha", "tabBarHighlightAlpha", "tabBarHighlightUseAccent", "tabBarHighlightCustomColor", "dockAlpha", "dockBackgroundColor", "accentColor",
         "clickHighlightAlpha", "clickHighlightUseAccent", "clickHighlightCustomColor",
         "gridColumns", "iconSizeIndex", "appViewMode", "appViewModeAllOnly", "listViewPages", "listViewColumns", "listViewBgAlpha",
@@ -1090,6 +1125,14 @@ class LauncherPrefs(context: Context) {
         putEntry(arr, "headerClockActionPackage", "s", headerClockActionPackage)
         putEntry(arr, "headerClockActionIntentUri", "s", headerClockActionIntentUri)
         putEntry(arr, "headerClockActionName", "s", headerClockActionName)
+        putEntry(arr, "headerDateLongPressAction", "i", headerDateLongPressAction)
+        putEntry(arr, "headerDateLongPressActionPackage", "s", headerDateLongPressActionPackage)
+        putEntry(arr, "headerDateLongPressActionIntentUri", "s", headerDateLongPressActionIntentUri)
+        putEntry(arr, "headerDateLongPressActionName", "s", headerDateLongPressActionName)
+        putEntry(arr, "headerClockLongPressAction", "i", headerClockLongPressAction)
+        putEntry(arr, "headerClockLongPressActionPackage", "s", headerClockLongPressActionPackage)
+        putEntry(arr, "headerClockLongPressActionIntentUri", "s", headerClockLongPressActionIntentUri)
+        putEntry(arr, "headerClockLongPressActionName", "s", headerClockLongPressActionName)
         putEntry(arr, "tabBarAlpha", "i", tabBarAlpha)
         putEntry(arr, "tabBarHighlightAlpha", "i", tabBarHighlightAlpha)
         putEntry(arr, "tabBarHighlightUseAccent", "b", tabBarHighlightUseAccent)

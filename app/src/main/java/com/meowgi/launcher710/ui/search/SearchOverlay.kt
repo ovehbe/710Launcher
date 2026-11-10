@@ -33,6 +33,7 @@ import com.meowgi.launcher710.util.Calculator
 import com.meowgi.launcher710.util.ContactSearchHelper
 import com.meowgi.launcher710.util.CurrencyConverter
 import com.meowgi.launcher710.util.CurrencyRatesCache
+import com.meowgi.launcher710.util.CurrencyRatesCacheInterface
 import com.meowgi.launcher710.util.DialNumber
 import com.meowgi.launcher710.util.LauncherPrefs
 import com.meowgi.launcher710.util.PlainWordsCommands
@@ -127,7 +128,9 @@ private fun addVoiceDiagnostic(message: String) = VoiceDiagnostics.addVoiceDiagn
 fun getVoiceDiagnosticLog(context: Context) = VoiceDiagnostics.getDiagnosticLog(context)
 
 class SearchOverlay @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null
+    context: Context, 
+    attrs: AttributeSet? = null,
+    internal val ratesCacheForTest: CurrencyRatesCacheInterface? = null  // internal for testing
 ) : LinearLayout(context, attrs) {
 
     private companion object {
@@ -135,14 +138,23 @@ class SearchOverlay @JvmOverloads constructor(
     }
 
     private val prefs = LauncherPrefs(context)
-    private val ratesCache = CurrencyRatesCache(context)
+    private val ratesCache = ratesCacheForTest ?: CurrencyRatesCache(context)
+    
+    // Test-only: allow replacing rates cache after construction
+    internal var testRatesCache: CurrencyRatesCacheInterface? = null
+        set(value) {
+            field = value
+        }
+    
+    // Test-only: skip post() and call updateCurrencyRows() synchronously
+    internal var testSynchronousUpdate: Boolean = false
     private val lifecycleOwner: androidx.lifecycle.LifecycleOwner?
         get() = context as? androidx.lifecycle.LifecycleOwner
     private val dialRow: LinearLayout
     private val dialText: TextView
     private val calculatorRow: LinearLayout
     private val calculatorText: TextView
-    private val currencyRowsContainer: LinearLayout
+    internal val currencyRowsContainer: LinearLayout  // internal for testing
     private val commandRow: LinearLayout
     private val commandText: TextView
     private val commandSecondary: TextView
@@ -246,6 +258,7 @@ class SearchOverlay @JvmOverloads constructor(
     /** Calculator result for the current query, or null; set before results are published. */
     private var queryCalculatorResult: String? = null
     private var queryCalculatorExpression: String? = null
+    private var queryCalculatorCurrencyCode: String? = null
     /** Whether to show calculator row even without a valid result (when no app matches) */
     private var queryCalculatorShowIncomplete: Boolean = false
     
@@ -286,6 +299,10 @@ class SearchOverlay @JvmOverloads constructor(
         builtInIndex = null
         cachedContactIcon = null
         cachedCommandIcon = null
+        adoptedCurrencyCode = null
+        adoptedFromQuery = null
+        justActivatedResult = false
+        justActivatedQuery = null
         ContactSearchHelper.invalidateCache()
         webSuggestionsEnabled = prefs.searchWebSuggestions
         aiSession.cancel()
@@ -298,24 +315,46 @@ class SearchOverlay @JvmOverloads constructor(
         if (webSuggestionsEnabled) webSuggestions.prewarm()
     }
 
-    private fun copyCalculatorResult() {
-        val result = queryCalculatorResult
-        val expression = queryCalculatorExpression ?: return
-        val toCopy = result ?: expression // Copy result if available, otherwise the expression
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("Calculator", toCopy)
-        clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "Copied: $toCopy", Toast.LENGTH_SHORT).show()
+    private fun acceptCalculatorResult() {
+        val result = queryCalculatorResult ?: return
+        // Append currency code if present (e.g., "10" becomes "10 JPY")
+        val resultWithCurrency = if (queryCalculatorCurrencyCode != null) {
+            "$result ${queryCalculatorCurrencyCode}"
+        } else {
+            result
+        }
+        justActivatedResult = true
+        justActivatedQuery = resultWithCurrency
+        // Replace entire query with result, cursor at end, search stays open
+        onUpdateSearchText?.invoke(resultWithCurrency)
     }
 
-    private fun copyCurrencyResult(index: Int) {
+    private fun formatCurrencyAmount(amount: Double): String {
+        // m1: Format without toLong() clamping for large values
+        // Use String format with 8 decimals, then strip trailing zeros
+        if (!amount.isFinite()) {
+            return amount.toString()
+        }
+        
+        // Format with 8 decimal places, then strip trailing zeros
+        val formatted = String.format(java.util.Locale.ROOT, "%.8f", amount)
+        return formatted.trimEnd('0').trimEnd('.')
+    }
+
+    private fun acceptCurrencyResult(index: Int) {
         val result = queryCurrencyResults.getOrNull(index) ?: return
-        val toCopy = result.toAmount.toString()
-        val clip = android.content.ClipData.newPlainText("Currency", toCopy)
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        clipboard.setPrimaryClip(clip)
-        val formatted = CurrencyConverter.formatResult(result)
-        Toast.makeText(context, "Copied: $toCopy ($formatted)", Toast.LENGTH_SHORT).show()
+        // Format: "{amount} {code}" (lowercase code, no grouping)
+        val amount = formatCurrencyAmount(result.toAmount)
+        val code = result.toCurrency.lowercase()
+        
+        // R1: Track adopted currency for chaining
+        adoptedCurrencyCode = result.toCurrency
+        adoptedFromQuery = "$amount $code"
+        
+        justActivatedResult = true
+        justActivatedQuery = "$amount $code"
+        // Replace entire query with result, cursor at end, search stays open
+        onUpdateSearchText?.invoke("$amount $code")
     }
 
     private fun publish(results: List<LaunchableItem>) {
@@ -339,6 +378,7 @@ class SearchOverlay @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
             visibility = GONE
             setPadding(0, dp(6), 0, dp(2))
+            tag = "dialRow"  // For testing
         }
         dialText = TextView(context).apply {
             textSize = 14f
@@ -359,6 +399,7 @@ class SearchOverlay @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
             visibility = GONE
             setPadding(0, dp(6), 0, dp(2))
+            tag = "calculatorRow"  // For testing
         }
         calculatorText = TextView(context).apply {
             textSize = 14f
@@ -371,7 +412,7 @@ class SearchOverlay @JvmOverloads constructor(
         }
         calculatorRow.addView(calculatorText)
         calculatorRow.addView(equalsIcon)
-        calculatorRow.setOnClickListener { copyCalculatorResult() }
+        calculatorRow.setOnClickListener { acceptCalculatorResult() }
         addView(calculatorRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         currencyRowsContainer = LinearLayout(context).apply {
@@ -631,8 +672,8 @@ class SearchOverlay @JvmOverloads constructor(
         invalidate()
         when (target) {
             NavTarget.Dial -> dial(currentDialDigits)
-            NavTarget.Calculator -> copyCalculatorResult()
-            is NavTarget.Currency -> copyCurrencyResult(target.index)
+            NavTarget.Calculator -> acceptCalculatorResult()
+            is NavTarget.Currency -> acceptCurrencyResult(target.index)
             NavTarget.Command -> executeCommand()
             is NavTarget.Suggestion -> suggestionsBox.getChildAt(target.index)?.performClick()
             is NavTarget.Result -> currentResults.getOrNull(target.position)?.let(::openResult)
@@ -1077,6 +1118,12 @@ class SearchOverlay @JvmOverloads constructor(
     private var shownContacts: List<LaunchableItem.Contact> = emptyList()
 
     private fun onSearch(query: String) {
+        // Clear activation flag if user edited the query (not the just-activated query)
+        if (justActivatedResult && query != justActivatedQuery) {
+            justActivatedResult = false
+            justActivatedQuery = null
+        }
+        
         val trigger = commandTriggerProvider?.invoke()
         if (!trigger.isNullOrEmpty() && query.startsWith(trigger)) {
             webSuggestionsAllowed = false
@@ -1174,53 +1221,110 @@ class SearchOverlay @JvmOverloads constructor(
         queryCalculatorResult = null
         queryCalculatorExpression = null
         queryCalculatorShowIncomplete = false
+        queryCalculatorCurrencyCode = null
         
         if (!prefs.searchCalculatorEnabled) {
             updateCalculatorRow()
             return
         }
         
-        val expression = Calculator.toExpression(query, layout)
-        if (expression != null) {
-            // Only show calculator if expression contains at least one digit (mapped or raw)
-            val hasDigit = expression.any { it.isDigit() }
-            if (hasDigit) {
-                // Check if query genuinely looks like math:
-                // 1. Original query contains real digits or operators (not just plain letters)
-                // 2. Expression is evaluable (has operators, not just a mapped plain number)
-                val queryHasDigitOrOperator = query.any { it.isDigit() || it in "+-*/%().,=" }
-                val expressionIsPlainNumber = expression.all { it.isDigit() || it == '.' }
-                val isPlainWord = query.all { it.isLetter() || it.isWhitespace() }
-                
-                // Skip calculator if original query is plain word with no digits/operators
-                if (isPlainWord && !queryHasDigitOrOperator) {
+        val exprResult = Calculator.toExpressionWithCurrency(query, layout)
+        if (exprResult != null) {
+            val expression = exprResult.expression
+            val currencyCode = exprResult.currencyCode
+            // DISPLAY RULES: Decide whether to show calculator row
+            // These rules are separate from Calculator.toExpression API contract
+            
+            // Rule 0: Don't show calculator for expressions with leading or trailing operators
+            // e.g., "*100 yen", "100yen*"
+            // BUT allow leading minus for negative numbers like "-50 euro * 2"
+            if (expression.matches(Regex("^[+*/].*")) || expression.matches(Regex(".*[+\\-*/]$"))) {
+                updateCalculatorRow()
+                return
+            }
+            
+            // Rule 1: Don't show calculator for unbalanced or invalid parentheses
+            // e.g., "100(" from "w00t", "3(4)" from "rt4)" (implicit multiplication not supported)
+            val openParens = expression.count { it == '(' }
+            val closeParens = expression.count { it == ')' }
+            if (openParens != closeParens) {
+                updateCalculatorRow()
+                return
+            }
+            // Also reject expressions like "3(4)" where a digit is directly followed by '('
+            if (expression.matches(Regex(".*\\d\\(.*"))) {
+                updateCalculatorRow()
+                return
+            }
+            
+            // Check if expression contains binary operators (not just leading minus)
+            val hasBinaryOperator = expression.contains('+') || 
+                                   expression.contains('*') || 
+                                   expression.contains('/') ||
+                                   expression.contains('(') || expression.contains(')') ||
+                                   (expression.contains('-') && expression.indexOf('-') > 0) // minus not at start
+            
+            // Rule 2: Don't show calculator for plain numbers (positive or negative)
+            // This includes: "123", "-4185", "w00" (mapped to 100), "-w00" (mapped to -100)
+            if (!hasBinaryOperator) {
+                val isPlainNumber = expression.matches(Regex("^-?\\d+(?:\\.\\d+)?$"))
+                if (isPlainNumber) {
                     updateCalculatorRow()
                     return
                 }
-                
-                // When there are no app/contact matches, show expression if it's evaluable
-                if (!hasResults) {
-                    // Don't show plain mapped numbers from pure letter strings
-                    if (expressionIsPlainNumber && isPlainWord) {
-                        updateCalculatorRow()
-                        return
-                    }
+            }
+            
+            // Rule 3: Don't show calculator for plain currency amounts (no operators)
+            // but DO show for currency arithmetic like "100 yen * 10"
+            if (!hasBinaryOperator) {
+                val trimmedQuery = query.trim().lowercase()
+                val hasCurrencyKeywords = trimmedQuery.contains(" to ") || 
+                                         trimmedQuery.contains(" in ") ||
+                                         trimmedQuery.contains("jpy") ||
+                                         trimmedQuery.contains("usd") ||
+                                         trimmedQuery.contains("eur") ||
+                                         trimmedQuery.contains("try") ||
+                                         trimmedQuery.contains("tl") ||
+                                         trimmedQuery.contains("yen") ||
+                                         trimmedQuery.contains("lira") ||
+                                         trimmedQuery.contains("euro") ||
+                                         trimmedQuery.startsWith("$") ||
+                                         trimmedQuery.contains("€") ||
+                                         trimmedQuery.contains("£") ||
+                                         trimmedQuery.contains("¥")
+                if (hasCurrencyKeywords) {
+                    updateCalculatorRow()
+                    return
+                }
+            }
+            
+            // Rule 4: Don't show calculator for single letters or short words without operators
+            // e.g., "w", "wee", "year"
+            if (!hasBinaryOperator && query.trim().length <= 4) {
+                updateCalculatorRow()
+                return
+            }
+            
+            // Calculator.toExpression now uses QueryTokenizer which properly handles
+            // currency detection and letter-digit mapping. Trust its return value.
+            
+            // Try to evaluate the expression
+            val result = Calculator.evaluate(expression, allowPlainNumber = !hasResults)
+            
+            if (!hasResults) {
+                // No app/contact matches: show expression even if not yet evaluated
+                queryCalculatorExpression = expression
+                queryCalculatorCurrencyCode = currencyCode
+                queryCalculatorShowIncomplete = true
+                if (result != null) {
+                    queryCalculatorResult = result
+                }
+            } else {
+                // Have matches: only show calculator if expression evaluates successfully
+                if (result != null) {
+                    queryCalculatorResult = result
                     queryCalculatorExpression = expression
-                    queryCalculatorShowIncomplete = true
-                    // Try to evaluate - if successful, show the result
-                    val allowPlainNumber = queryHasDigitOrOperator
-                    val result = Calculator.evaluate(expression, allowPlainNumber)
-                    if (result != null) {
-                        queryCalculatorResult = result
-                    }
-                } else {
-                    // When there are matches, require a valid evaluation
-                    val allowPlainNumber = false
-                    val result = Calculator.evaluate(expression, allowPlainNumber)
-                    if (result != null) {
-                        queryCalculatorResult = result
-                        queryCalculatorExpression = expression
-                    }
+                    queryCalculatorCurrencyCode = currencyCode
                 }
             }
         }
@@ -1231,6 +1335,7 @@ class SearchOverlay @JvmOverloads constructor(
     private fun updateCalculatorRow() {
         val result = queryCalculatorResult
         val expression = queryCalculatorExpression
+        val currencyCode = queryCalculatorCurrencyCode
         val showIncomplete = queryCalculatorShowIncomplete
         
         // Hide row if a command is present (commands take precedence)
@@ -1249,7 +1354,9 @@ class SearchOverlay @JvmOverloads constructor(
         
         // Determine text to show
         val displayText = if (result != null) {
-            "$expression = $result"
+            // Append currency code to result if present (e.g., "100 yen / 10 = 10 JPY")
+            val resultWithCurrency = if (currencyCode != null) "$result $currencyCode" else result
+            "$expression = $resultWithCurrency"
         } else if (showIncomplete) {
             expression // Show incomplete expression without result
         } else {
@@ -1266,6 +1373,18 @@ class SearchOverlay @JvmOverloads constructor(
         calculatorText.text = displayText
     }
 
+    // R2: Track query generation to prevent stale async overwrites
+    private var currencyQueryGeneration = 0
+    
+    // R1: Track if current query is from adopted currency result
+    internal var adoptedCurrencyCode: String? = null  // internal for testing
+    private var adoptedFromQuery: String? = null  // Track query that led to adoption
+    
+    /** Track if a result was just activated to prevent immediate re-activation */
+    private var justActivatedResult = false
+    /** Track the query text that was set by activation */
+    private var justActivatedQuery: String? = null
+    
     private fun evaluateCurrency(query: String, layout: Int, lifecycleScope: LifecycleCoroutineScope) {
         queryCurrencyResults = emptyList()
         
@@ -1274,9 +1393,28 @@ class SearchOverlay @JvmOverloads constructor(
             return
         }
         
+        // Clear adopted currency for fresh queries (not arithmetic chaining)
+        // Adoption should persist only if current query is a continuation of the adopted result
+        val adoptedQuery = adoptedFromQuery
+        if (adoptedCurrencyCode != null && adoptedQuery != null) {
+            // Check if current query starts with the adopted result (arithmetic chaining)
+            // or if query is completely different (fresh query after clear/dismiss)
+            if (!query.startsWith(adoptedQuery, ignoreCase = true)) {
+                // Not a continuation - clear adoption
+                adoptedCurrencyCode = null
+                adoptedFromQuery = null
+            }
+        }
+        
+        // R2: Increment generation for this query
+        val thisGeneration = ++currencyQueryGeneration
+        
+        // Use test cache if available, otherwise prod cache
+        val effectiveCache = testRatesCache ?: ratesCache
+        
         // Try to parse as currency query
         lifecycleScope.launch {
-            val ratesResult = ratesCache.getRates()
+            val ratesResult = effectiveCache.getRates()
             
             when (ratesResult) {
                 is CurrencyRatesCache.RatesResult.Success,
@@ -1299,17 +1437,34 @@ class SearchOverlay @JvmOverloads constructor(
                         val parsedQuery = CurrencyConverter.parse(query, layout, rates.keys)
                         if (parsedQuery != null) {
                             val displayCurrencies = prefs.getSearchCurrencyList()
-                            val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies)
-                            queryCurrencyResults = results
+                            // R1: Pass adopted currency for chaining behavior
+                            val results = CurrencyConverter.convert(parsedQuery, rates, displayCurrencies, adoptedCurrencyCode)
+                            
+                            // R2: Only update if this is still the current query
+                            if (thisGeneration == currencyQueryGeneration) {
+                                queryCurrencyResults = results
+                            }
                         }
                     }
                     
-                    // Update UI on main thread
-                    post { updateCurrencyRows() }
+                    // Update UI on main thread (only if still current)
+                    if (thisGeneration == currencyQueryGeneration) {
+                        if (testSynchronousUpdate) {
+                            updateCurrencyRows()
+                        } else {
+                            post { updateCurrencyRows() }
+                        }
+                    }
                 }
                 is CurrencyRatesCache.RatesResult.Error -> {
                     currencyRatesAvailable = false
-                    post { updateCurrencyRows() }
+                    if (thisGeneration == currencyQueryGeneration) {
+                        if (testSynchronousUpdate) {
+                            updateCurrencyRows()
+                        } else {
+                            post { updateCurrencyRows() }
+                        }
+                    }
                 }
             }
         }
@@ -1330,7 +1485,7 @@ class SearchOverlay @JvmOverloads constructor(
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(6), 0, dp(2))
-                setOnClickListener { copyCurrencyResult(index) }
+                setOnClickListener { acceptCurrencyResult(index) }
             }
             
             val text = TextView(context).apply {
@@ -1406,6 +1561,47 @@ class SearchOverlay @JvmOverloads constructor(
 
     fun activateCommand() {
         executeCommand()
+    }
+
+    /** Check if calculator/currency/dial is visible AND has valid result to activate 
+     * AND was not just activated (to allow second Enter to search) */
+    fun hasCalculatorOrCurrency(): Boolean {
+        if (justActivatedResult) {
+            // Just activated, let next Enter search instead
+            return false
+        }
+        return when {
+            dialRow.visibility == VISIBLE && currentDialDigits.isNotEmpty() -> true
+            calculatorRow.visibility == VISIBLE && queryCalculatorResult != null -> true
+            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> true
+            else -> false
+        }
+    }
+    
+    /** Clear the activation flag to allow future auto-activation */
+    fun clearActivationFlag() {
+        justActivatedResult = false
+        justActivatedQuery = null
+    }
+
+    fun activateCalculatorOrCurrency(): Boolean {
+        // Activate first visible special row in priority order: dial, calculator, currency
+        // Return true if activation succeeded
+        return when {
+            dialRow.visibility == VISIBLE && currentDialDigits.isNotEmpty() -> {
+                dial(currentDialDigits)
+                true
+            }
+            calculatorRow.visibility == VISIBLE && queryCalculatorResult != null -> {
+                acceptCalculatorResult()
+                true
+            }
+            currencyRowsContainer.visibility == VISIBLE && queryCurrencyResults.isNotEmpty() -> {
+                acceptCurrencyResult(0)
+                true
+            }
+            else -> false
+        }
     }
 
     private fun executeCommand() {
