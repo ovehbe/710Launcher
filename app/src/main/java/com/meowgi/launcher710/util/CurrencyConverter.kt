@@ -100,14 +100,14 @@ object CurrencyConverter {
     )
 
     /**
-     * Parse a search query into a currency conversion request.
+     * Parse a search query into a currency conversion request using QueryTokenizer.
      * 
-     * Strategy:
-     * 1. Match keywords (to/in) and 3-letter currency codes as LITERAL words first
-     * 2. Extract the amount token
-     * 3. Apply BB keyboard mapping to the amount part only
-     * 4. Evaluate amount as calculator expression if needed
-     * 5. Validate currency codes against available rates
+     * Uses unified tokenization to handle:
+     * - Currency codes/aliases/symbols recognized BEFORE letter-digit mapping
+     * - Negative amounts (-, −, and "- amount")
+     * - Reversed order (jpy 100, yen 100)
+     * - Currency symbols ($, €, £, ¥)
+     * - Arithmetic in amounts (100 + 50 yen)
      * 
      * @param query The raw search query
      * @param layout The keyboard layout (for BB digit mapping)
@@ -121,113 +121,47 @@ object CurrencyConverter {
     ): CurrencyQuery? {
         if (query.isBlank()) return null
         
-        val normalized = query.trim().lowercase()
+        // Use QueryTokenizer for unified parsing
+        val tokens = QueryTokenizer.tokenize(query, layout) ?: return null
         
-        // Pattern: [amount] [from_currency] [optional: to/in] [optional: to_currency]
-        // Currency codes are 3-letter words, keywords are "to" or "in"
+        // Extract currencies and keywords from tokens
+        val currencies = tokens.filterIsInstance<QueryTokenizer.Token.Currency>()
+        val keywords = tokens.filterIsInstance<QueryTokenizer.Token.Keyword>()
         
-        // Track matches as (position, code, matchedLength) to correctly compute overlap
-        data class CurrencyMatch(val position: Int, val code: String, val matchedLength: Int)
+        // Check if '=' operator is present between currencies (treat as conversion indicator)
+        val hasEquals = tokens.any { it is QueryTokenizer.Token.Operator && it.op == '=' }
         
-        // First, search for currency names (longer matches first to avoid partial matches)
-        val nameMatches = mutableListOf<CurrencyMatch>()
-        for ((name, code) in CURRENCY_NAME_ALIASES.entries.sortedByDescending { it.key.length }) {
-            var pos = 0
-            while (pos <= normalized.length - name.length) {
-                val found = normalized.indexOf(name, pos)
-                if (found < 0) break
-                // Check word boundaries
-                val beforeOk = found == 0 || !normalized[found - 1].isLetter()
-                val afterOk = found + name.length >= normalized.length || !normalized[found + name.length].isLetter()
-                if (beforeOk && afterOk && code in availableCurrencies) {
-                    nameMatches.add(CurrencyMatch(found, code, name.length))
-                    pos = found + name.length
-                } else {
-                    pos = found + 1
-                }
-            }
-        }
+        // Must have at least one currency
+        if (currencies.isEmpty()) return null
         
-        // Then, find 3-letter ISO currency codes
-        val codeMatches = mutableListOf<CurrencyMatch>()
-        var i = 0
-        while (i <= normalized.length - 3) {
-            val threeLetters = normalized.substring(i, i + 3)
-            if (threeLetters.all { it.isLetter() }) {
-                val code = threeLetters.uppercase()
-                if (code in availableCurrencies) {
-                    codeMatches.add(CurrencyMatch(i, code, 3))
-                    i += 3 // Skip past this match
-                    continue
-                }
-            }
-            i++
-        }
+        // Validate currencies against available rates
+        val validCurrencies = currencies.filter { it.code in availableCurrencies }
+        if (validCurrencies.isEmpty()) return null
         
-        // Merge name and code matches, removing overlaps (prefer longer name matches)
-        val allMatches = (nameMatches + codeMatches).sortedBy { it.position }
-        val currencyMatches = mutableListOf<Pair<Int, String>>()
-        var lastEnd = -1
-        for (match in allMatches) {
-            if (match.position >= lastEnd) {
-                currencyMatches.add(match.position to match.code)
-                lastEnd = match.position + match.matchedLength
-            }
-        }
-        
-        if (currencyMatches.isEmpty()) return null
-        
-        // Find "to" or "in" keywords
-        var keywordPos: Int? = null
-        var keywordLength = 0
-        listOf("to", "in").forEach { keyword ->
-            val pos = normalized.indexOf(keyword)
-            if (pos >= 0) {
-                // Check if it's a word boundary (not part of another word)
-                val beforeOk = pos == 0 || !normalized[pos - 1].isLetter()
-                val afterOk = pos + keyword.length >= normalized.length || !normalized[pos + keyword.length].isLetter()
-                if (beforeOk && afterOk) {
-                    keywordPos = pos
-                    keywordLength = keyword.length
-                }
-            }
-        }
-        
-        // Determine from/to currencies based on positions
+        // Determine from/to currencies
         val fromCurrency: String
         val toCurrency: String?
-        val firstCurrencyStart: Int
-        val firstCurrencyEnd: Int
         
         when {
-            currencyMatches.size == 1 -> {
-                // Single currency: "100 usd", "100 yen / 10", or "3250 try / 2"
-                fromCurrency = currencyMatches[0].second
-                firstCurrencyStart = currencyMatches[0].first
-                firstCurrencyEnd = findCurrencyEndPosition(normalized, currencyMatches[0])
-                
-                // Single currency queries don't specify explicit target
-                // convert() will show conversions to display currencies
+            validCurrencies.size == 1 && !hasEquals -> {
+                // Single currency: "100 usd" or "100 yen / 10"
+                fromCurrency = validCurrencies[0].code
                 toCurrency = null
             }
-            currencyMatches.size == 2 -> {
-                // Two currencies
-                val first = currencyMatches[0]
-                val second = currencyMatches[1]
-                
-                // If there's a keyword between them, use it as delimiter
-                if (keywordPos != null && keywordPos!! > first.first && keywordPos!! < second.first) {
-                    fromCurrency = first.second
-                    toCurrency = second.second
-                    firstCurrencyStart = first.first
-                    firstCurrencyEnd = findCurrencyEndPosition(normalized, first)
-                } else {
-                    // No keyword or keyword not between them - assume "100 usd try"
-                    fromCurrency = first.second
-                    toCurrency = second.second
-                    firstCurrencyStart = first.first
-                    firstCurrencyEnd = findCurrencyEndPosition(normalized, first)
-                }
+            validCurrencies.size == 2 && (keywords.isNotEmpty() || hasEquals) -> {
+                // Two currencies with keyword or =: "100 usd to try", "100 jpy = try"
+                fromCurrency = validCurrencies[0].code
+                toCurrency = validCurrencies[1].code
+            }
+            validCurrencies.size == 2 && keywords.isEmpty() && !hasEquals -> {
+                // Two currencies without keyword: "100 usd try" (assume conversion)
+                fromCurrency = validCurrencies[0].code
+                toCurrency = validCurrencies[1].code
+            }
+            validCurrencies.size == 1 && hasEquals -> {
+                // "100 jpy =" with only one currency - allow as single currency query
+                fromCurrency = validCurrencies[0].code
+                toCurrency = null
             }
             else -> {
                 // More than 2 currencies - invalid
@@ -235,174 +169,73 @@ object CurrencyConverter {
             }
         }
         
-        if (firstCurrencyStart == 0) return null
-        
-        // Extract amount: left part (before currency) + right part (arithmetic after currency)
-        val leftPart = normalized.substring(0, firstCurrencyStart).trim()
-        
-        // Extract right part: arithmetic after currency (before keyword or second currency)
-        var rightEnd = normalized.length
-        if (toCurrency != null) {
-            // Find position of "to"/"in" keyword or second currency, whichever comes first
-            if (keywordPos != null && keywordPos!! > firstCurrencyEnd) {
-                rightEnd = keywordPos!!
-            } else {
-                // Find second currency position
-                if (currencyMatches.size >= 2) {
-                    rightEnd = currencyMatches[1].first
-                }
+        // Build amount expression from number and operator tokens
+        val amountTokens = tokens.takeWhile { it !is QueryTokenizer.Token.Currency && it !is QueryTokenizer.Token.Keyword }
+        if (amountTokens.isEmpty() || amountTokens.all { it is QueryTokenizer.Token.Operator }) {
+            // No amount before currency, check if currency comes first (reversed order)
+            val firstCurrencyIndex = tokens.indexOfFirst { it is QueryTokenizer.Token.Currency }
+            if (firstCurrencyIndex == 0) {
+                // Reversed order: "jpy 100", "yen 100"
+                val afterCurrency = tokens.drop(1).takeWhile { it !is QueryTokenizer.Token.Currency && it !is QueryTokenizer.Token.Keyword }
+                if (afterCurrency.isEmpty()) return null
+                
+                val amountExpr = buildAmountExpression(afterCurrency)
+                val amount = evaluateAmount(amountExpr) ?: return null
+                
+                return CurrencyQuery(amount, fromCurrency, toCurrency)
             }
-        }
-        
-        val rightPart = normalized.substring(firstCurrencyEnd, rightEnd).trim()
-        
-        // R3: Validate text after explicit target currency (when using "to"/"in" keyword)
-        if (toCurrency != null && keywordPos != null) {
-            // Find where target currency ends
-            val targetCurrEnd = if (currencyMatches.size >= 2) {
-                findCurrencyEndPosition(normalized, currencyMatches[1])
-            } else {
-                normalized.length
-            }
-            
-            if (targetCurrEnd < normalized.length) {
-                val afterTarget = normalized.substring(targetCurrEnd).trim()
-                if (afterTarget.isNotEmpty()) {
-                    // Text/arithmetic after explicit target - reject
-                    return null
-                }
-            }
-        }
-        
-        // Validate rightPart contains only arithmetic: operators, numbers, whitespace, parens
-        // Reject if there's trailing non-arithmetic text or incomplete expressions
-        val arithmeticChars = setOf('+', '-', '*', '/', '%', '(', ')', '.', ',', ' ', '\t')
-        val rightArithmetic = if (rightPart.isNotEmpty()) {
-            // Check every character is valid arithmetic
-            if (!rightPart.all { ch -> ch.isDigit() || ch in arithmeticChars }) {
-                // Found non-arithmetic character - reject the query
-                return null
-            }
-            rightPart.trim()
-        } else {
-            ""
-        }
-        
-        // R3: Check for ambiguous multi-currency arithmetic
-        // Shorthand "100 usd eur" is OK, but "100 usd + 50 eur" is ambiguous
-        if (toCurrency != null && keywordPos == null && currencyMatches.size == 2) {
-            // Two currencies without keyword (shorthand) - reject if arithmetic between them
-            if (rightArithmetic.isNotEmpty() && rightArithmetic.any { it in setOf('+', '-', '*', '/', '%') }) {
-                // Arithmetic between currencies without explicit "to" - reject
-                return null
-            }
-        }
-        
-        // Combine left + right arithmetic
-        val amountStr = if (rightArithmetic.isNotEmpty()) {
-            "$leftPart $rightArithmetic".trim()
-        } else {
-            leftPart
-        }
-        
-        // Reject expressions ending with an operator (incomplete)
-        if (amountStr.isNotEmpty() && amountStr.last() in setOf('+', '-', '*', '/', '%')) {
             return null
         }
         
-        // Apply BB keyboard mapping to amount string
-        val mappedAmount = mapAmountString(amountStr, layout) ?: return null
+        // Normal order: amount before currency
+        val amountExpr = buildAmountExpression(amountTokens)
         
-        // Evaluate amount as calculator expression
-        val amount = evaluateAmount(mappedAmount) ?: return null
+        // Check for arithmetic after currency (e.g., "100 yen / 10")
+        val firstCurrencyIndex = tokens.indexOfFirst { it is QueryTokenizer.Token.Currency }
+        val afterCurrency = tokens.drop(firstCurrencyIndex + 1)
+            .takeWhile { it !is QueryTokenizer.Token.Currency && it !is QueryTokenizer.Token.Keyword }
+        
+        val fullExpr = if (afterCurrency.isNotEmpty() && afterCurrency.any { it is QueryTokenizer.Token.Operator }) {
+            // Has arithmetic after currency
+            val rightExpr = buildAmountExpression(afterCurrency)
+            if (rightExpr.isNotEmpty()) {
+                "$amountExpr$rightExpr"
+            } else {
+                amountExpr
+            }
+        } else {
+            amountExpr
+        }
+        
+        // Validate: check for text after target currency
+        if (toCurrency != null) {
+            val secondCurrencyIndex = tokens.indexOfFirst { token ->
+                token is QueryTokenizer.Token.Currency && token.code == toCurrency
+            }
+            if (secondCurrencyIndex >= 0 && secondCurrencyIndex < tokens.size - 1) {
+                // Text after target currency - invalid
+                return null
+            }
+        }
+        
+        val amount = evaluateAmount(fullExpr) ?: return null
         
         return CurrencyQuery(amount, fromCurrency, toCurrency)
     }
-
+    
     /**
-     * Find the end position of a currency match in the normalized string.
-     * For ISO codes, it's start + 3.
-     * For name aliases, we need to find which name was matched.
+     * Build amount expression string from tokens.
      */
-    private fun findCurrencyEndPosition(normalized: String, match: Pair<Int, String>): Int {
-        val start = match.first
-        val code = match.second
-        
-        // Check if this was matched by a currency name
-        for ((name, aliasCode) in CURRENCY_NAME_ALIASES) {
-            if (aliasCode == code && start + name.length <= normalized.length) {
-                val substring = normalized.substring(start, start + name.length)
-                if (substring == name) {
-                    return start + name.length
-                }
+    private fun buildAmountExpression(tokens: List<QueryTokenizer.Token>): String {
+        val sb = StringBuilder()
+        for (token in tokens) {
+            when (token) {
+                is QueryTokenizer.Token.Number -> sb.append(token.value)
+                is QueryTokenizer.Token.Operator -> sb.append(token.op)
+                else -> {} // Skip other tokens
             }
         }
-        
-        // Otherwise, it's a 3-letter ISO code
-        return start + 3
-    }
-
-    /**
-     * Map BB keyboard letters to digits/operators in amount string only.
-     * Handles magnitude suffixes (k, m, b) and number words.
-     * 
-     * Strategy:
-     * - Map each character: digits stay, BB letters map to their values
-     * - ONLY trailing k/m/b/bn/mn (at end of amount) are magnitude suffixes
-     * - All other letters map through BB keyboard
-     */
-    private fun mapAmountString(str: String, layout: Int): String? {
-        if (str.isEmpty()) return null
-        
-        // First, expand number words (e.g., "one million" -> "1000000")
-        val withWords = expandNumberWords(str)
-        
-        // Check for trailing magnitude suffix (k, m, b, bn, mn) at the END
-        val trimmed = withWords.trim()
-        val hasBn = trimmed.endsWith("bn", ignoreCase = true)
-        val hasMn = trimmed.endsWith("mn", ignoreCase = true)
-        val hasK = !hasBn && !hasMn && trimmed.endsWith("k", ignoreCase = true)
-        val hasM = !hasBn && !hasMn && trimmed.endsWith("m", ignoreCase = true)
-        val hasB = !hasBn && !hasMn && trimmed.endsWith("b", ignoreCase = true)
-        
-        val (baseAmount, multiplier) = when {
-            hasBn -> trimmed.dropLast(2) to "*1000000000"
-            hasMn -> trimmed.dropLast(2) to "*1000000"
-            hasK -> trimmed.dropLast(1) to "*1000"
-            hasM -> trimmed.dropLast(1) to "*1000000"
-            hasB -> trimmed.dropLast(1) to "*1000000000"
-            else -> trimmed to ""
-        }
-        
-        // Now map BB keyboard letters in baseAmount
-        val sb = StringBuilder(baseAmount.length * 2)
-        var hasDigit = false
-        
-        for (ch in baseAmount) {
-            when {
-                ch in '0'..'9' -> { sb.append(ch); hasDigit = true }
-                ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' -> sb.append(ch)
-                ch == '.' || ch == ',' -> sb.append(ch)
-                ch == '(' || ch == ')' -> sb.append(ch)
-                ch == ' ' || ch == '\t' -> {} // ignore whitespace
-                else -> {
-                    // Map letter to operator/digit via BB keyboard
-                    val mapped = Calculator.operatorChar(ch, layout)
-                    if (mapped != null) {
-                        sb.append(mapped)
-                        if (mapped in '0'..'9') hasDigit = true
-                    } else {
-                        // Character can't be mapped
-                        return null
-                    }
-                }
-            }
-        }
-        
-        // Append multiplier if any
-        sb.append(multiplier)
-        
-        return if (hasDigit) sb.toString() else null
+        return sb.toString()
     }
 
     /**

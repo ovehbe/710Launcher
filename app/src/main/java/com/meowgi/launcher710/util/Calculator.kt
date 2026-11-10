@@ -63,6 +63,9 @@ object Calculator {
         // Use unified tokenizer to handle currency detection before letter-digit mapping
         val tokens = QueryTokenizer.tokenize(query, layout) ?: return null
         
+        // Reject unmappable words (e.g., "year", "wee")
+        if (tokens.any { it is QueryTokenizer.Token.Word }) return null
+        
         // Check if there are operators (arithmetic)
         val hasOperators = QueryTokenizer.hasOperator(tokens)
         
@@ -76,7 +79,19 @@ object Calculator {
         if (tokens.any { it is QueryTokenizer.Token.Keyword }) return null
         
         // Convert tokens to calculator expression (ignoring currency tokens)
-        return QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
+        val expr = QueryTokenizer.toCalculatorExpression(tokens, includeCurrency = hasCurrency)
+        
+        // Additional validation: reject if query is just a single letter or plain mapped number
+        if (expr != null) {
+            // Reject single-character queries that map to single digits
+            if (query.trim().length == 1 && expr.length == 1 && expr[0].isDigit()) return null
+            
+            // Reject queries that are just plain numbers without any operators in original query
+            val queryHasRawOperator = query.any { it in "+-*/%().,=" }
+            if (!queryHasRawOperator && expr.all { it.isDigit() || it == '.' }) return null
+        }
+        
+        return expr
     }
 
     /**
