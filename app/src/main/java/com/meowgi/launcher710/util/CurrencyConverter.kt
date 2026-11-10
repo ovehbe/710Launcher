@@ -36,7 +36,7 @@ object CurrencyConverter {
      * - AUD: australian dollar, australian dollars
      * - CAD: canadian dollar, canadian dollars
      */
-    private val CURRENCY_NAME_ALIASES = mapOf(
+    val CURRENCY_NAME_ALIASES = mapOf(
         // Longest first to match "australian dollar" before "dollar"
         "australian dollars" to "AUD",
         "australian dollar" to "AUD",
@@ -62,6 +62,23 @@ object CurrencyConverter {
         "jpy" to "JPY",   // Case-insensitive ISO code alias
         "try" to "TRY"    // Case-insensitive ISO code alias (Turkish)
     )
+
+    /**
+     * Check if a currency code is commonly known/supported.
+     * Used by QueryTokenizer to recognize currency codes before letter-digit mapping.
+     */
+    fun isKnownCurrency(code: String): Boolean {
+        // List of commonly traded currencies that should be recognized
+        val knownCurrencies = setOf(
+            "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
+            "TRY", "RUB", "INR", "CNY", "KRW", "SGD", "HKD", "TWD",
+            "THB", "MYR", "IDR", "PHP", "VND", "BRL", "MXN", "ARS",
+            "ZAR", "SAR", "AED", "QAR", "KWD", "BHD", "OMR", "ILS",
+            "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN",
+            "HRK", "ISK"
+        )
+        return code.uppercase() in knownCurrencies
+    }
 
     /**
      * A parsed currency query.

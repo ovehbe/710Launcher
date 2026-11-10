@@ -327,6 +327,8 @@ private fun SettingsActivity.buildGestures() {
         if (prefs.headerVisible) {
             actionRow(TapAction.HEADER_DATE.title, tapActionLabel(TapAction.HEADER_DATE)) { showTapActionPicker(TapAction.HEADER_DATE) }
             actionRow(TapAction.HEADER_CLOCK.title, tapActionLabel(TapAction.HEADER_CLOCK)) { showTapActionPicker(TapAction.HEADER_CLOCK) }
+            actionRow(TapAction.HEADER_DATE_LONG_PRESS.title, tapActionLabel(TapAction.HEADER_DATE_LONG_PRESS)) { showTapActionPicker(TapAction.HEADER_DATE_LONG_PRESS) }
+            actionRow(TapAction.HEADER_CLOCK_LONG_PRESS.title, tapActionLabel(TapAction.HEADER_CLOCK_LONG_PRESS)) { showTapActionPicker(TapAction.HEADER_CLOCK_LONG_PRESS) }
         }
         actionRow(TapAction.ACTION_BAR_TAP.title, tapActionLabel(TapAction.ACTION_BAR_TAP)) { showTapActionPicker(TapAction.ACTION_BAR_TAP) }
         actionRow(TapAction.ACTION_BAR_LONG_PRESS.title, tapActionLabel(TapAction.ACTION_BAR_LONG_PRESS)) { showTapActionPicker(TapAction.ACTION_BAR_LONG_PRESS) }
