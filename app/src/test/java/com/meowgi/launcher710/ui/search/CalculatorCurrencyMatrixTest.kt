@@ -110,11 +110,7 @@ class CalculatorCurrencyMatrixTest {
     }
 
     private fun testCase(tc: TestCase) {
-        // Clear field first to ensure clean state
-        field.setText("")
-        settle()
-        
-        // Now set the actual test input
+        // Set the actual test input (setText triggers text change listeners which call search)
         field.setText(tc.input)
         field.setSelection(tc.input.length)
         settle()
@@ -123,8 +119,8 @@ class CalculatorCurrencyMatrixTest {
         val calcVisible = calcRow != null && calcRow.visibility == View.VISIBLE
         val currVisible = overlay.currencyRowsContainer.visibility == View.VISIBLE
         
-        // Debug first few letter-only failures
-        if ((tc.input == "w" || tc.input == "woe" || tc.input == "eoe") && (calcVisible != (tc.expectCalc != null))) {
+        // Debug plain number failures
+        if ((tc.input == "w" || tc.input == "w00" || tc.input == "s00" || tc.input == "-4185") && (calcVisible != (tc.expectCalc != null))) {
             val expr = com.meowgi.launcher710.util.Calculator.toExpression(tc.input)
             println("DEBUG '${tc.input}': expect=${tc.expectCalc}, toExpression=$expr, calcVisible=$calcVisible")
         }
