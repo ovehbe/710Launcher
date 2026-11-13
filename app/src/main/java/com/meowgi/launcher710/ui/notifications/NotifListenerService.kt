@@ -3,7 +3,9 @@ package com.meowgi.launcher710.ui.notifications
 import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
+import android.app.Notification
 import android.service.notification.StatusBarNotification
+import com.meowgi.launcher710.util.NotificationBadgeCounter
 
 class NotifListenerService : NotificationListenerService() {
 
@@ -14,7 +16,16 @@ class NotifListenerService : NotificationListenerService() {
             private set
         var onNotificationsChanged: (() -> Unit)? = null
         private val mainHandler = Handler(Looper.getMainLooper())
-        private val dispatchChange = Runnable { onNotificationsChanged?.invoke() }
+        private val dispatchChange = Runnable {
+            // Nobody is listening while the launcher is stopped, so skip the IPC then too.
+            val cb = onNotificationsChanged ?: return@Runnable
+            instance?.updateBadges()
+            cb()
+        }
+
+        /** Badge number per package, refreshed by [updateBadges]. Read on the main thread. */
+        @Volatile var badgeCounts: Map<String, Int> = emptyMap()
+            private set
     }
 
     override fun onCreate() {
@@ -25,6 +36,7 @@ class NotifListenerService : NotificationListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        badgeCounts = emptyMap()
         mainHandler.removeCallbacks(dispatchChange)
     }
 
@@ -35,6 +47,32 @@ class NotifListenerService : NotificationListenerService() {
     private fun notifyChange() {
         mainHandler.removeCallbacks(dispatchChange)
         mainHandler.postDelayed(dispatchChange, DEBOUNCE_MS)
+    }
+
+    override fun onListenerConnected() {
+        // After a rebind the activity would otherwise show nothing until the next change.
+        notifyChange()
+    }
+
+    override fun onListenerDisconnected() {
+        badgeCounts = emptyMap()
+    }
+
+    fun updateBadges() {
+        // A failed read (listener not connected yet, binder died) keeps the previous counts
+        // instead of wiping every badge; onListenerConnected resyncs.
+        val active = try { activeNotifications } catch (_: Exception) { null } ?: return
+        badgeCounts = NotificationBadgeCounter.count(active.map { sbn ->
+            NotificationBadgeCounter.Entry(
+                packageName = sbn.packageName,
+                // Not notification.group: the system's automatic summaries group their children
+                // through an override key that only sbn.groupKey reflects.
+                groupKey = sbn.groupKey,
+                isGroupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+                isOngoing = sbn.isOngoing,
+                number = sbn.notification.number
+            )
+        })
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {

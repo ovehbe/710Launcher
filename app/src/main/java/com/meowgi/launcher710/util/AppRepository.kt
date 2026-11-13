@@ -195,14 +195,17 @@ class AppRepository private constructor(private val context: Context) {
      * labels. This is what keeps the Frequent page current on resume now that the full re-index
      * (PackageManager query plus an icon load per app) no longer runs there.
      */
-    suspend fun refreshStats() = loadMutex.withLock {
+    /** Reloads usage stats from the DB. Returns true when they differ from what was loaded. */
+    suspend fun refreshStats(): Boolean = loadMutex.withLock {
         val stats = dao.getAll().associateBy { it.componentName }
+        if (stats == statsMap) return@withLock false
         setStats(stats)
         for (app in apps) {
             val stat = stats[app.componentName.flattenToString()]
             app.launchCount = stat?.launchCount ?: 0
             app.isFavorite = stat?.isFavorite ?: false
         }
+        true
     }
 
     private fun setStats(stats: Map<String, AppStats>) {

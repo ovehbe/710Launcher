@@ -134,6 +134,7 @@ class AppGridFragment : Fragment() {
             }
         }
 
+        listPopulated = false // a new view starts empty until its first refreshList
         adapter = AppAdapter(
             requireContext(),
             onClick = { item ->
@@ -179,7 +180,12 @@ class AppGridFragment : Fragment() {
                     }
                 })
             } else null,
-            isSparseMode = isSparseGrid
+            isSparseMode = isSparseGrid,
+            badgeResolver = { item ->
+                if (item is LaunchableItem.App)
+                    com.meowgi.launcher710.ui.notifications.NotifListenerService.badgeCounts[item.app.packageName] ?: 0
+                else 0
+            }
         )
         recycler.adapter = adapter
 
@@ -301,14 +307,24 @@ class AppGridFragment : Fragment() {
             if (listPages.contains(pageId)) prefs.appViewMode else 0
         }
         val spanCount = if (effectiveViewMode == 1) prefs.listViewColumns else prefs.gridColumns
-        isSparseGrid = (tab == TAB_FAVORITES || tab == TAB_CUSTOM) && effectiveViewMode != 1
+        val sparse = (tab == TAB_FAVORITES || tab == TAB_CUSTOM) && effectiveViewMode != 1
+        // The activity refreshes the lists when stats or settings changed; this only has to
+        // apply a different column count or sparse layout, so a plain return rebuilds nothing.
+        val layoutChanged = spanCount != currentColumns || sparse != isSparseGrid
+        isSparseGrid = sparse
         currentColumns = spanCount
         (recycler.layoutManager as? GridLayoutManager)?.spanCount = spanCount
-        refreshList()
+        if (layoutChanged || !listPopulated) refreshList()
     }
 
     fun getCurrentItems(): List<LaunchableItem> =
         if (::adapter.isInitialized) adapter.getCurrentList() else emptyList()
+
+    private var listPopulated = false
+
+    fun refreshBadges() {
+        if (::adapter.isInitialized) adapter.refreshBadges()
+    }
 
     fun refreshList() {
         if (!::adapter.isInitialized) return
@@ -340,6 +356,7 @@ class AppGridFragment : Fragment() {
         } else {
             adapter.submitList(items)
         }
+        listPopulated = true
     }
 
     fun addWidgetToPage(widgetId: Int, info: AppWidgetProviderInfo) {

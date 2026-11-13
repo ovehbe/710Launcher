@@ -131,6 +131,12 @@ class LauncherActivity : AppCompatActivity() {
     private var tickerTypingRunnable: Runnable? = null
     private var tickerDismissRunnable: Runnable? = null
     private var tickerRefreshRunnable: Runnable? = null
+
+    // Set by any settings write; onResume only rebuilds the grids, dock and click highlights
+    // when this is set or the usage stats changed. Starts true so the first resume renders.
+    private val uiDirty = java.util.concurrent.atomic.AtomicBoolean(true)
+    private val prefsChangeListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> uiDirty.set(true) }
     private var currentTickerNotificationKey: String? = null
     private val tickerTypingDelayMs = 45L
     private val tickerDisplayDurationMs = 5000L
@@ -273,6 +279,10 @@ class LauncherActivity : AppCompatActivity() {
         savedInstanceState?.remove("android:support:fragments")
         savedInstanceState?.remove("android:fragments")
         super.onCreate(savedInstanceState)
+        // Registered for the activity's whole life, not just while started: a write made from
+        // Settings while this activity is stopped must still mark the UI dirty.
+        getSharedPreferences("meowgi_launcher710_settings", MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         // Before anything reads prefs or the DB: undo a restore the process died in the middle of.
         BackupManager.recoverInterruptedRestore(this)
         // On a fresh install, apply the factory defaults before first render.
@@ -2683,8 +2693,12 @@ class LauncherActivity : AppCompatActivity() {
             runOnUiThread {
                 notificationHub.refresh(prefs.getNotificationAppWhitelist())
                 scheduleTickerRefresh()
+                pagerAdapter?.refreshBadges()
             }
         }
+        // Changes made while stopped weren't counted, so catch up now.
+        NotifListenerService.instance?.updateBadges()
+        pagerAdapter?.refreshBadges()
     }
 
     override fun onStop() {
@@ -2756,7 +2770,6 @@ class LauncherActivity : AppCompatActivity() {
             recreate()
             return
         }
-        window.decorView.post { clearHighlightTraces() }
         updateSoundProfileIcon()
         refreshWallpaper()
         applySystemUI()
@@ -2772,6 +2785,7 @@ class LauncherActivity : AppCompatActivity() {
             savedAllPagePack != allPageIconPackManager.currentPackage ||
             savedDockPack != dockIconPackManager.currentPackage
 
+        val dirty = uiDirty.getAndSet(false)
         if (pagerAdapter?.reloadPageOrder() == true) {
             pagerAdapter?.notifyDataSetChanged()
             buildTabBar()
@@ -2812,17 +2826,21 @@ class LauncherActivity : AppCompatActivity() {
             // Nothing structural changed — pick up launch counts and favourites so the Frequent
             // page stays current, then re-render from the icon cache.
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) { repository.refreshStats() }
-                pagerAdapter?.refreshAll()
-                dockBar.loadDock()
+                val statsChanged = withContext(Dispatchers.IO) { repository.refreshStats() }
+                if (statsChanged || dirty) {
+                    pagerAdapter?.refreshAll()
+                    dockBar.loadDock()
+                }
             }
         }
-        refreshClickHighlights()
+        if (dirty) refreshClickHighlights()
         window.decorView.post { clearHighlightTraces() }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        getSharedPreferences("meowgi_launcher710_settings", MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsChangeListener)
         repository.detach(this)
         NotifListenerService.onNotificationsChanged = null
         keyHandler.removeCallbacksAndMessages(null)
